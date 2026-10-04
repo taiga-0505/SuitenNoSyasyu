@@ -43,7 +43,7 @@ cbuffer WaterParams : register(b6)
     float4 gObstacleCount; // x: count, y: 反射の強さ, z: 反射の到達範囲(半径倍率)
 };
 
-Texture2D<float> gInteractiveWave : register(t4);
+Texture2D<float4> gInteractiveWave : register(t4); // r: 高さ, g: 引き波の泡, b: 波頭の白波（VS では高さだけ使う）
 SamplerState gSamplerClamp : register(s2);
 
 struct VertexShaderInput
@@ -246,14 +246,14 @@ VertexShaderOutput main(VertexShaderInput input)
     // インタラクティブ波紋のサンプリング
     // WaterPlaneのワールドサイズ(100x100)に合わせたUV変換
     float2 waveUV = (worldPos.xz / 100.0f) + 0.5f;
-    float interactiveHeight = gInteractiveWave.SampleLevel(gSamplerClamp, waveUV, 0);
+    float interactiveHeight = gInteractiveWave.SampleLevel(gSamplerClamp, waveUV, 0).r;
 
     // 波紋の法線計算のための有限差分
     float texel = 1.0f / 256.0f;
-    float hL = gInteractiveWave.SampleLevel(gSamplerClamp, waveUV + float2(-texel, 0), 0);
-    float hR = gInteractiveWave.SampleLevel(gSamplerClamp, waveUV + float2(texel, 0), 0);
-    float hU = gInteractiveWave.SampleLevel(gSamplerClamp, waveUV + float2(0, -texel), 0);
-    float hD = gInteractiveWave.SampleLevel(gSamplerClamp, waveUV + float2(0, texel), 0);
+    float hL = gInteractiveWave.SampleLevel(gSamplerClamp, waveUV + float2(-texel, 0), 0).r;
+    float hR = gInteractiveWave.SampleLevel(gSamplerClamp, waveUV + float2(texel, 0), 0).r;
+    float hU = gInteractiveWave.SampleLevel(gSamplerClamp, waveUV + float2(0, -texel), 0).r;
+    float hD = gInteractiveWave.SampleLevel(gSamplerClamp, waveUV + float2(0, texel), 0).r;
     
     // Y変位に対するX/Z方向の傾き
     // WorldPos = (x, y, z), scale is 100m, uv range 0~1.

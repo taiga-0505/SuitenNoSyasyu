@@ -14,15 +14,34 @@
 
 namespace RC {
 
+/// @brief WaveSimulation.CS.hlsl の SimulationParams と同じ並び（16 バイト境界を崩さないこと）
 struct WaveSimCB {
   float alpha;
   float damping;
   int sourceCount;
-  float padding;
+  float padding; // リセットフラグ
   Vector4 sources[64];
+  // ---- 引き波の泡（G チャンネル）----
+  float foamDecay;
+  float foamSpread;
+  int foamSourceCount;
+  float crestDecay; // 波頭（B チャンネル）の残存率
+  Vector4 foamSources[64];
+  // ---- 波頭の白波（B チャンネル）----
+  int crestSourceCount;
+  float crestPad[3];
+  Vector4 crestSources[128];
 };
+static_assert(sizeof(WaveSimCB) == 16 + 16 * 64 + 16 + 16 * 64 + 16 + 16 * 128,
+              "WaveSimCB layout must match WaveSimulation.CS.hlsl");
 
 static constexpr int TEX_SIZE = 256;
+/// @brief ハイトマップの形式。R = 高さ / G = 引き波の泡 / B = 波頭の白波 / A = 未使用
+/// @details 3 チャンネルの UAV 形式は無いので 4 チャンネル
+static constexpr DXGI_FORMAT kHeightMapFormat = DXGI_FORMAT_R32G32B32A32_FLOAT;
+static constexpr int kHeightMapChannels = 4;
+static constexpr int kMaxFoamSources = 64;
+static constexpr int kMaxCrestSources = 128;
 static Microsoft::WRL::ComPtr<ID3D12Resource> s_heightMaps[3];
 static SRVManager::Handle s_srvs[3];
 static SRVManager::Handle s_uavs[3];
@@ -32,6 +51,11 @@ static Microsoft::WRL::ComPtr<ID3D12Resource> s_simCB;
 static WaveSimCB* s_simCBMapped = nullptr;
 
 static std::vector<WaveSource> s_pendingSources;
+static std::vector<WaveSource> s_pendingFoamSources;  ///< 引き波の泡の波源（strength = 足す量）
+static std::vector<WaveSource> s_pendingCrestSources; ///< 波頭の白波の波源（strength = 足す量）
+static float s_foamDecay = 0.992f; ///< 引き波の泡の毎フレーム残存率
+static float s_foamSpread = 0.10f; ///< 引き波の泡の毎フレームの滲み
+static float s_crestDecay = 0.80f; ///< 波頭の白波の毎フレーム残存率
 static bool s_initialized = false;
 static int s_resetFrames = 3; // 最初の3フレームはテクスチャを0クリアする
 
@@ -161,9 +185,11 @@ static void ConsumeReadback() {
   if (SUCCEEDED(s_readback[best].buffer->Map(0, &readRange, &mapped)) && mapped) {
     const UINT rowPitch = s_readbackFootprint.Footprint.RowPitch;
     const auto* src = static_cast<const uint8_t*>(mapped);
+    // テクセルは (高さ, 引き波, 波頭, 未使用) の float4。CPU 側は高さ（R）だけを使う
     for (int y = 0; y < TEX_SIZE; ++y) {
-      std::memcpy(&s_cpuHeight[static_cast<size_t>(y) * TEX_SIZE], src + static_cast<size_t>(y) * rowPitch,
-                  sizeof(float) * TEX_SIZE);
+      const auto* row = reinterpret_cast<const float*>(src + static_cast<size_t>(y) * rowPitch);
+      float* dst = &s_cpuHeight[static_cast<size_t>(y) * TEX_SIZE];
+      for (int x = 0; x < TEX_SIZE; ++x) dst[x] = row[x * kHeightMapChannels];
     }
     const D3D12_RANGE noWrite{0, 0};
     s_readback[best].buffer->Unmap(0, &noWrite);
@@ -258,9 +284,9 @@ void InitInteractiveWater() {
 
   // テクスチャリソースの作成
   for (int i = 0; i < 3; ++i) {
-    s_heightMaps[i] = CreateUAVTexture2D(device, TEX_SIZE, TEX_SIZE, DXGI_FORMAT_R32_FLOAT);
-    s_srvs[i] = ctx.Ctx()->core->SRVMan().CreateTexture2D(s_heightMaps[i].Get(), DXGI_FORMAT_R32_FLOAT, 1);
-    s_uavs[i] = ctx.Ctx()->core->SRVMan().CreateTexture2DUAV(s_heightMaps[i].Get(), DXGI_FORMAT_R32_FLOAT);
+    s_heightMaps[i] = CreateUAVTexture2D(device, TEX_SIZE, TEX_SIZE, kHeightMapFormat);
+    s_srvs[i] = ctx.Ctx()->core->SRVMan().CreateTexture2D(s_heightMaps[i].Get(), kHeightMapFormat, 1);
+    s_uavs[i] = ctx.Ctx()->core->SRVMan().CreateTexture2DUAV(s_heightMaps[i].Get(), kHeightMapFormat);
   }
 
   // 定数バッファの作成
@@ -270,6 +296,11 @@ void InitInteractiveWater() {
     s_simCBMapped->alpha = 0.45f;
     s_simCBMapped->damping = 0.985f;
     s_simCBMapped->sourceCount = 0;
+    s_simCBMapped->foamDecay = s_foamDecay;
+    s_simCBMapped->foamSpread = s_foamSpread;
+    s_simCBMapped->foamSourceCount = 0;
+    s_simCBMapped->crestDecay = s_crestDecay;
+    s_simCBMapped->crestSourceCount = 0;
   }
 
   s_currIdx = 0;
@@ -331,6 +362,42 @@ bool AddWaveSourceAtWorld(float worldX, float worldZ, float radius, float streng
   return true;
 }
 
+/// @brief 泡系の波源をリストへ積む（範囲外・上限超えは捨てる）
+static bool PushFoamLike(std::vector<WaveSource>& list, size_t maxCount, float worldX, float worldZ, float radius,
+                         float amount) {
+  if (amount <= 0.0f) return false;
+  const float u = worldX / kInteractiveWaterWorldSize + 0.5f;
+  const float v = worldZ / kInteractiveWaterWorldSize + 0.5f;
+  if (u < 0.0f || u > 1.0f || v < 0.0f || v > 1.0f) return false;
+  if (list.size() >= maxCount) return false;
+  WaveSource s;
+  s.uv = {u, v};
+  s.radius = radius;
+  s.strength = amount;
+  list.push_back(s);
+  return true;
+}
+
+bool AddFoamSourceAtWorld(float worldX, float worldZ, float radius, float amount) {
+  return PushFoamLike(s_pendingFoamSources, kMaxFoamSources, worldX, worldZ, radius, amount);
+}
+
+bool AddCrestFoamSourceAtWorld(float worldX, float worldZ, float radius, float amount) {
+  return PushFoamLike(s_pendingCrestSources, kMaxCrestSources, worldX, worldZ, radius, amount);
+}
+
+void SetInteractiveFoamParams(float decayPerFrame, float spreadPerFrame, float crestDecayPerFrame) {
+  s_foamDecay = std::clamp(decayPerFrame, 0.0f, 1.0f);
+  s_foamSpread = std::clamp(spreadPerFrame, 0.0f, 0.25f);
+  s_crestDecay = std::clamp(crestDecayPerFrame, 0.0f, 0.99f);
+}
+
+void GetInteractiveFoamParams(float& outDecayPerFrame, float& outSpreadPerFrame, float& outCrestDecayPerFrame) {
+  outDecayPerFrame = s_foamDecay;
+  outSpreadPerFrame = s_foamSpread;
+  outCrestDecayPerFrame = s_crestDecay;
+}
+
 void UpdateInteractiveWater() {
   if (!s_initialized) return;
   auto& ctx = GetRenderContext();
@@ -365,8 +432,28 @@ void UpdateInteractiveWater() {
           s_pendingSources[i].radius,
           s_pendingSources[i].strength);
     }
+
+    // 引き波の泡
+    s_simCBMapped->foamDecay = s_foamDecay;
+    s_simCBMapped->foamSpread = s_foamSpread;
+    const int foamCount = std::min(kMaxFoamSources, (int)s_pendingFoamSources.size());
+    s_simCBMapped->foamSourceCount = foamCount;
+    for (int i = 0; i < foamCount; ++i) {
+      const WaveSource& f = s_pendingFoamSources[i];
+      s_simCBMapped->foamSources[i] = Vector4(f.uv.x, f.uv.y, f.radius, f.strength);
+    }
+    // 波頭の白波
+    s_simCBMapped->crestDecay = s_crestDecay;
+    const int crestCount = std::min(kMaxCrestSources, (int)s_pendingCrestSources.size());
+    s_simCBMapped->crestSourceCount = crestCount;
+    for (int i = 0; i < crestCount; ++i) {
+      const WaveSource& c = s_pendingCrestSources[i];
+      s_simCBMapped->crestSources[i] = Vector4(c.uv.x, c.uv.y, c.radius, c.strength);
+    }
   }
   s_pendingSources.clear();
+  s_pendingFoamSources.clear();
+  s_pendingCrestSources.clear();
 
   // 前のフレームまでにコピーが終わっているハイトマップを CPU へ写す（読み戻しが有効なときだけ）
   if (s_readbackEnabled && !s_readback[0].buffer) EnsureReadbackBuffers();

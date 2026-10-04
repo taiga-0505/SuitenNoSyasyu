@@ -101,6 +101,14 @@ inline bool PushWaveSource(float x, float z, float radius, float strength) {
 ///   "wakeArmStrength" / "wakeArmMin" / "wakeArmRadius" : V の山（根元の強さ / 末端の強さ / 半径 UV）
 ///   "wakeSpacing"    : 通った道筋を記録する間隔（m）。小さいほど V が滑らかだが波源数が増える
 ///   ※ 強さは 1.5 m/s のときの値で、速さに比例して増減する。V の長さは種類ごと（shark/ship の "wakeLength"、m）
+///   [引き波の泡（白波）] 波紋テクスチャの泡チャンネルへ置く。その場に残って滲みながら消える
+///   "foamEnabled"
+///   "foamStern" / "foamSternRadius" : 船尾の引き波（長く残る白濁。1 秒あたり、1.5 m/s 時）/ 半径（UV）
+///   "foamBow" / "foamBowRadius"     : 船首の砕け波（すぐ消える。1 フレームあたり @60fps）/ 半径
+///   "foamArm" / "foamArmRadius"     : V の腕の白い線（すぐ消える。根元の 1 フレームあたり @60fps）/ 半径
+///   "foamArmLength" / "foamArmStep" : 腕のうち白い範囲（V の長さに対する割合）/ 線を描く点の間隔（m）
+///   "foamDecay" / "foamSpread" / "crestDecay" : 引き波の残存率 / 滲み、波頭（船首・腕）の残存率（毎フレーム）
+///   種類ごとの量の倍率は shark/ship の "foam"
 ///   [種類ごと] "shark" / "drift" / "gull" / "ship" の各オブジェクトに
 ///   "enabled" / "weight"（選ばれやすさ）/ "maxActive" / "poolSize"（最初に作っておく数）
 ///   "speedMin" / "speedMax"（m/s）/ "scaleMin" / "scaleMax"
@@ -117,13 +125,32 @@ public:
   int maxActive = 3;
   float screenMargin = 2.0f;
   // ---- 航跡波（サメ・船共通）----
-  float wakeAngleDeg = 19.5f;     ///< V の半開き角（度）
+  float wakeAngleDeg = 19.5f;     ///< V の半開き角（度）。
   float wakeBowStrength = 0.008f; ///< 船首のへこみ：毎フレームの押し下げ量（1.5 m/s 時）
   float wakeBowRadius = 0.012f;   ///< 船首のへこみの半径（UV。0.01 = 1m）
   float wakeArmStrength = 0.008f; ///< V の山：根元の毎フレーム加算量（1.5 m/s 時）
   float wakeArmMin = 0.003f;      ///< V の山：末端の加算量
   float wakeArmRadius = 0.006f;   ///< V の山の半径（UV）。波紋テクスチャ 1 テクセル ≒ 0.0039
   float wakeSpacing = 0.8f;       ///< 道筋を記録する間隔（m）
+  // ---- 引き波の泡（白波。サメ・船共通）----
+  // 波紋テクスチャの G チャンネル（RenderInteractiveWater の泡）へ置く。泡は伝播せずその場に残り、
+  // 滲みながら消えるので、船が通ったあとに白い帯が尾を引く。量は「1 秒あたり」で、速さに比例させる
+  // （速さが変わってもテクセル 1 つが受け取る量 ≒ 同じ＝帯の白さが揃う）。値は 1.5 m/s のとき。
+  bool foamEnabled = true;
+  // 白は 2 種類：
+  //   引き波（長く残る）… 船尾がかき回した白濁の帯。V の内側の中心線に細く残る
+  //   波頭（すぐ消える）… 船首の砕け波と V の腕の白い線。毎フレーム今の位置に置き直すので V の形を保つ
+  float foamStern = 1.0f;          ///< 船尾の引き波：中心の量 / 秒（1.5 m/s 時）
+  float foamSternRadius = 0.006f;  ///< 船尾の引き波の半径（UV。0.01 = 1m）。船体の半幅が広ければそちらに合わせる
+  float foamBow = 0.22f;           ///< 船首の砕け波：1 フレームの量（@60fps。定常値 ≒ 量 / (1 - crestDecay)）
+  float foamBowRadius = 0.004f;    ///< 船首の砕け波の半径（UV）
+  float foamArm = 0.16f;           ///< V の腕の白線：根元の 1 フレームの量（@60fps。先へ行くほど 0）
+  float foamArmLength = 0.7f;      ///< V の腕のうち白線が見える範囲（V の長さに対する割合）
+  float foamArmRadius = 0.0035f;   ///< V の腕の白線の半径（UV）。テクスチャ 1 テクセル ≒ 0.0039
+  float foamArmStep = 0.4f;        ///< 白線を描く点の間隔（m）。道筋の記録点の間を補間して線を途切れさせない
+  float foamDecay = 0.992f;        ///< 引き波の毎フレーム残存率（0.992 で約 1.4 秒で半減 @60fps）
+  float foamSpread = 0.10f;        ///< 引き波の毎フレームの滲み（大きいほど後ろで帯が広がる）
+  float crestDecay = 0.80f;        ///< 波頭（船首・腕）の毎フレーム残存率（小さいほど線がくっきり）
 
   /// @brief 種類ごとの共通設定
   struct KindParams {
@@ -155,6 +182,7 @@ public:
   float sharkWagFrequency = 1.1f;        ///< 尾振りの回数（Hz）
   bool sharkWake = true;                 ///< 頭の位置から航跡波を出す
   float sharkWakeLength = 8.0f;          ///< V の長さ（m）
+  float sharkFoam = 0.7f;                ///< 白波の量の倍率（背ビレと背中しか出ていないので船より控えめ）
 
   // ---- 漂流物 ----
   KindParams drift = MakeDrift();
@@ -178,6 +206,7 @@ public:
   float shipTiltScale = 0.8f;
   bool shipWake = true;                  ///< 船首から航跡波を出す
   float shipWakeLength = 10.0f;          ///< V の長さ（m）
+  float shipFoam = 1.0f;                 ///< 泡の量の倍率
   RC::Vector4 shipHullColor = {0.36f, 0.22f, 0.12f, 1.0f};
   RC::Vector4 shipSailColor = {0.96f, 0.94f, 0.88f, 1.0f};
 
@@ -196,6 +225,18 @@ public:
     j["wakeArmMin"] = wakeArmMin;
     j["wakeArmRadius"] = wakeArmRadius;
     j["wakeSpacing"] = wakeSpacing;
+    j["foamEnabled"] = foamEnabled;
+    j["foamStern"] = foamStern;
+    j["foamSternRadius"] = foamSternRadius;
+    j["foamBow"] = foamBow;
+    j["foamBowRadius"] = foamBowRadius;
+    j["foamArm"] = foamArm;
+    j["foamArmLength"] = foamArmLength;
+    j["foamArmRadius"] = foamArmRadius;
+    j["foamArmStep"] = foamArmStep;
+    j["foamDecay"] = foamDecay;
+    j["foamSpread"] = foamSpread;
+    j["crestDecay"] = crestDecay;
 
     nlohmann::json js = WriteKind(shark);
     js["modelPath"] = sharkModelPath;
@@ -208,6 +249,7 @@ public:
     js["wagFrequency"] = sharkWagFrequency;
     js["wake"] = sharkWake;
     js["wakeLength"] = sharkWakeLength;
+    js["foam"] = sharkFoam;
     j["shark"] = js;
 
     nlohmann::json jd = WriteKind(drift);
@@ -231,6 +273,7 @@ public:
     jp["tiltScale"] = shipTiltScale;
     jp["wake"] = shipWake;
     jp["wakeLength"] = shipWakeLength;
+    jp["foam"] = shipFoam;
     jp["hullColor"] = {shipHullColor.x, shipHullColor.y, shipHullColor.z, shipHullColor.w};
     jp["sailColor"] = {shipSailColor.x, shipSailColor.y, shipSailColor.z, shipSailColor.w};
     j["ship"] = jp;
@@ -251,6 +294,18 @@ public:
     ReadF(j, "wakeArmMin", wakeArmMin);
     ReadF(j, "wakeArmRadius", wakeArmRadius);
     ReadF(j, "wakeSpacing", wakeSpacing);
+    ReadB(j, "foamEnabled", foamEnabled);
+    ReadF(j, "foamStern", foamStern);
+    ReadF(j, "foamSternRadius", foamSternRadius);
+    ReadF(j, "foamBow", foamBow);
+    ReadF(j, "foamBowRadius", foamBowRadius);
+    ReadF(j, "foamArm", foamArm);
+    ReadF(j, "foamArmLength", foamArmLength);
+    ReadF(j, "foamArmRadius", foamArmRadius);
+    ReadF(j, "foamArmStep", foamArmStep);
+    ReadF(j, "foamDecay", foamDecay);
+    ReadF(j, "foamSpread", foamSpread);
+    ReadF(j, "crestDecay", crestDecay);
 
     if (j.contains("shark") && j["shark"].is_object()) {
       const auto &js = j["shark"];
@@ -265,6 +320,7 @@ public:
       ReadF(js, "wagFrequency", sharkWagFrequency);
       ReadB(js, "wake", sharkWake);
       ReadF(js, "wakeLength", sharkWakeLength);
+      ReadF(js, "foam", sharkFoam);
     }
     if (j.contains("drift") && j["drift"].is_object()) {
       const auto &jd = j["drift"];
@@ -291,6 +347,7 @@ public:
       ReadF(jp, "tiltScale", shipTiltScale);
       ReadB(jp, "wake", shipWake);
       ReadF(jp, "wakeLength", shipWakeLength);
+      ReadF(jp, "foam", shipFoam);
       ReadVec4(jp, "hullColor", shipHullColor);
       ReadVec4(jp, "sailColor", shipSailColor);
     }
@@ -315,6 +372,23 @@ public:
     ImGui::DragFloat("Arm Min##Wake", &wakeArmMin, 0.0005f, 0.0f, 0.05f, "%.4f");
     ImGui::DragFloat("Arm Radius (UV)##Wake", &wakeArmRadius, 0.001f, 0.002f, 0.05f, "%.3f");
     ImGui::DragFloat("Trail Spacing (m)##Wake", &wakeSpacing, 0.05f, 0.2f, 5.0f);
+    ImGui::SeparatorText("Wake Foam (white water)");
+    ImGui::Checkbox("Enabled##Foam", &foamEnabled);
+    ImGui::SameLine();
+    ImGui::Text("trail %d / 64, crest %d / 128", foamSourcesThisFrame_, crestSourcesThisFrame_);
+    ImGui::TextDisabled("Trail (stays, milky band)");
+    ImGui::DragFloat("Stern /s##Foam", &foamStern, 0.05f, 0.0f, 20.0f);
+    ImGui::DragFloat("Stern Radius (UV)##Foam", &foamSternRadius, 0.0005f, 0.002f, 0.05f, "%.4f");
+    ImGui::DragFloat("Trail Decay / frame##Foam", &foamDecay, 0.0005f, 0.9f, 1.0f, "%.4f");
+    ImGui::DragFloat("Trail Spread / frame##Foam", &foamSpread, 0.005f, 0.0f, 0.25f, "%.3f");
+    ImGui::TextDisabled("Crest (bow + V arms, redrawn every frame)");
+    ImGui::DragFloat("Bow / frame##Foam", &foamBow, 0.005f, 0.0f, 2.0f, "%.3f");
+    ImGui::DragFloat("Bow Radius (UV)##Foam", &foamBowRadius, 0.0005f, 0.002f, 0.05f, "%.4f");
+    ImGui::DragFloat("Arm / frame##Foam", &foamArm, 0.005f, 0.0f, 2.0f, "%.3f");
+    ImGui::DragFloat("Arm Length (ratio)##Foam", &foamArmLength, 0.01f, 0.0f, 1.0f);
+    ImGui::DragFloat("Arm Radius (UV)##Foam", &foamArmRadius, 0.0005f, 0.002f, 0.05f, "%.4f");
+    ImGui::DragFloat("Arm Step (m)##Foam", &foamArmStep, 0.05f, 0.2f, 2.0f);
+    ImGui::DragFloat("Crest Decay / frame##Foam", &crestDecay, 0.01f, 0.0f, 0.98f, "%.2f");
 
     auto kindUi = [&](const char *label, Kind k, KindParams &p) {
       ImGui::PushID(label);
@@ -349,6 +423,7 @@ public:
     ImGui::Checkbox("Wake##Shark", &sharkWake);
     ImGui::SameLine();
     ImGui::DragFloat("Len (m)##SharkWake", &sharkWakeLength, 0.1f, 0.5f, 30.0f);
+    ImGui::DragFloat("Foam x##Shark", &sharkFoam, 0.01f, 0.0f, 5.0f);
     kindUi("Drift", Kind::Drift, drift);
     ImGui::DragFloat("Tilt##Drift", &driftTiltScale, 0.05f, 0.0f, 2.0f);
     ImGui::DragFloat("Float Bias##Drift", &driftFloatBias, 0.01f, -1.0f, 1.0f);
@@ -363,6 +438,7 @@ public:
     ImGui::Checkbox("Wake##Ship", &shipWake);
     ImGui::SameLine();
     ImGui::DragFloat("Len (m)##ShipWake", &shipWakeLength, 0.1f, 0.5f, 30.0f);
+    ImGui::DragFloat("Foam x##Ship", &shipFoam, 0.01f, 0.0f, 5.0f);
     ImGui::TextDisabled("poolSize / modelPath / lanes are applied on scene reload");
   }
 #endif
@@ -390,6 +466,14 @@ protected:
     hasWater_ = BuildWaterParams(scene, water_);
     waterTime_ = RC::GetWaterTime();
     wakeSourcesThisFrame_ = 0;
+    foamSourcesThisFrame_ = 0;
+    crestSourcesThisFrame_ = 0;
+    // 泡の残り方（全シーン共通の設定なので、このシーンにいる間だけ上書きし OnDestroy で戻す）
+    if (!foamParamsSaved_) {
+      RC::GetInteractiveFoamParams(savedFoamDecay_, savedFoamSpread_, savedCrestDecay_);
+      foamParamsSaved_ = true;
+    }
+    RC::SetInteractiveFoamParams(foamDecay, foamSpread, crestDecay);
 
     for (auto &a : actors_) {
       if (!a.active) continue;
@@ -418,6 +502,10 @@ protected:
     poolBuilt_ = false;
     buildQueue_.clear();
     buildIndex_ = 0;
+    if (foamParamsSaved_) {
+      RC::SetInteractiveFoamParams(savedFoamDecay_, savedFoamSpread_, savedCrestDecay_);
+      foamParamsSaved_ = false;
+    }
   }
 
 private:
@@ -1194,7 +1282,18 @@ private:
   ///          先端側ほど強く・末端へ向けて弱めることで、後ろへ流れて消えていくように見せる。
   ///          1 フレームに入れられる波源は全体で 64 個（マウス波紋と共用）。
   ///          1 体 = 1 + 2 × (length / wakeSpacing) 個。既定（船 10m・サメ 8m、0.8m 間隔）で 27 + 21 = 48 個。
-  void Wake(Actor &a, const RC::Vector3 &bow, const RC::Vector3 &fwd, float length) {
+  ///
+  ///          波紋の高さだけでは真上から見てほとんど分からないので、泡（白波）も置く：
+  ///            船首 … 砕け波 / 舷側 … 船腹に沿って押しのけられた水 / 船尾 … スクリューや尾が立てる白い引き波
+  ///            V の腕の根元 … 船の近くだけ白く砕けて、先では普通の波に戻る
+  ///          泡は伝播せずその場に残り、滲んで広がりながら消えるので、後ろへ白い帯が尾を引く。
+  ///          泡の波源は高さとは別枠で 1 フレーム 64 個（1 体あたり 10〜20 個程度）。
+  /// @param stern 船尾（サメは尾）のワールド位置
+  /// @param halfWidth 船体の半幅（m）。舷側と船尾の泡の広がりに使う
+  /// @param foamScale 泡の量の倍率（種類ごと）
+  /// @param dt 経過秒（泡の量は 1 秒あたりで指定しているため）
+  void Wake(Actor &a, const RC::Vector3 &bow, const RC::Vector3 &fwd, float length, const RC::Vector3 &stern,
+            float halfWidth, float foamScale, float dt) {
     // 強さは 1.5 m/s を基準に速さへ比例させる（速いほどはっきり）
     const float speedScale = std::clamp(a.speed / 1.5f, 0.75f, 2.0f);
     const float L = (std::max)(length, 0.1f);
@@ -1223,7 +1322,7 @@ private:
       }
     }
 
-    // V の腕：各道筋点から、通過後の道のり d に応じて左右へ d·tan(角度) だけ開いた位置を押し上げる
+    // V の腕（高さ）：各道筋点から、通過後の道のり d に応じて左右へ d·tan(角度) だけ開いた位置を押し上げる
     const float tanA = std::tan(std::clamp(wakeAngleDeg, 1.0f, 80.0f) * TitleAmbientDetail::kDeg);
     for (const WakeSample &w : a.wake) {
       const float d = a.wakePath - w.dist;
@@ -1235,6 +1334,78 @@ private:
         const float px = w.pos.x + w.right.x * sgn * side;
         const float pz = w.pos.z + w.right.z * sgn * side;
         if (TitleAmbientDetail::PushWaveSource(px, pz, wakeArmRadius, amp)) ++wakeSourcesThisFrame_;
+      }
+    }
+
+    // ---- 白波 ----
+    if (!foamEnabled || foamScale <= 0.0f || dt <= 0.0f) return;
+    const RC::Vector3 right = {fwd.z, 0.0f, -fwd.x};
+    const float hw = (std::max)(halfWidth, 0.05f);
+
+    // 波頭（船首・V の腕）：すぐ消えるので「毎フレーム今の形を描く」。量は 1 フレームあたり（60fps 基準で補正）
+    const float frameScale = std::clamp(dt * 60.0f, 0.0f, 3.0f);
+    const float crestScale = foamScale * frameScale * std::clamp(a.speed / 1.5f, 0.75f, 1.5f);
+    auto pushCrest = [&](float x, float z, float radius, float amount) {
+      if (amount <= 0.0f) return;
+      if (RC::AddCrestFoamSourceAtWorld(x, z, radius, amount)) ++crestSourcesThisFrame_;
+    };
+
+    // V の腕の白線。道筋の記録点（wakeSpacing 間隔）のままだと点線になるので、foamArmStep 間隔で補間する。
+    // 腕の上の点は「道筋上の位置 ＋ そこでの右方向 × d·tan(角度)」なので、隣り合う記録点の間を線形補間すればよい。
+    // いちばん新しい区間は「最新の記録点 → 今の船首（d = 0）」。船体の横は船体に隠れるが、そのまま船首から生やす。
+    const float armLen = L * std::clamp(foamArmLength, 0.0f, 1.0f);
+    if (armLen > 0.0f && foamArm > 0.0f) {
+      const float step = (std::max)(foamArmStep, 0.1f);
+      auto armPoint = [&](const RC::Vector3 &p0, const RC::Vector3 &r0, float d0, const RC::Vector3 &p1,
+                          const RC::Vector3 &r1, float d1) {
+        // d0（古い側）→ d1（新しい側）。armLen より古い部分は描かない
+        if (d1 >= armLen) return;
+        const float segLen = std::sqrt((p1.x - p0.x) * (p1.x - p0.x) + (p1.z - p0.z) * (p1.z - p0.z));
+        const int n = (std::max)(1, static_cast<int>(std::ceil(segLen / step)));
+        for (int i = 0; i < n; ++i) { // 終点（新しい側）は次の区間の始点なので含めない
+          const float s = static_cast<float>(i) / static_cast<float>(n);
+          const float d = d0 + (d1 - d0) * s;
+          if (d >= armLen || d < 0.0f) continue;
+          const float t = d / armLen;
+          const float amount = foamArm * crestScale * (1.0f - t * t); // 根元は濃く、先で消える
+          const float bx = p0.x + (p1.x - p0.x) * s;
+          const float bz = p0.z + (p1.z - p0.z) * s;
+          const float rx = r0.x + (r1.x - r0.x) * s;
+          const float rz = r0.z + (r1.z - r0.z) * s;
+          const float side = d * tanA;
+          for (float sgn : {1.0f, -1.0f}) pushCrest(bx + rx * sgn * side, bz + rz * sgn * side, foamArmRadius, amount);
+        }
+      };
+      for (size_t i = 0; i < a.wake.size(); ++i) {
+        const WakeSample &w0 = a.wake[i];
+        const float d0 = a.wakePath - w0.dist;
+        if (i + 1 < a.wake.size()) {
+          const WakeSample &w1 = a.wake[i + 1];
+          armPoint(w0.pos, w0.right, d0, w1.pos, w1.right, a.wakePath - w1.dist);
+        } else {
+          armPoint(w0.pos, w0.right, d0, bow, right, 0.0f);
+        }
+      }
+    }
+
+    // 船首の砕け波：舳先のすぐ前と、左右に割れる肩
+    if (foamBow > 0.0f) {
+      pushCrest(bow.x + fwd.x * 0.1f, bow.z + fwd.z * 0.1f, foamBowRadius, foamBow * crestScale);
+      for (float sgn : {1.0f, -1.0f}) {
+        pushCrest(bow.x + right.x * sgn * hw * 0.5f - fwd.x * 0.3f, bow.z + right.z * sgn * hw * 0.5f - fwd.z * 0.3f,
+                  foamBowRadius, foamBow * 0.7f * crestScale);
+      }
+    }
+
+    // 船尾の引き波（長く残る）：中心に 1 つだけ。幅は船体の幅程度に抑え、後ろで滲んで広がるに任せる。
+    // 量は 1 秒あたり × 速さ比例（速いほど 1 フレームに多く置くが、そのぶん 1 テクセルの上を早く通り過ぎるので
+    // 帯の濃さは速さによらずほぼ揃う）。
+    if (foamStern > 0.0f) {
+      const float sternR = (std::max)(foamSternRadius, hw * 0.009f);
+      const float amount = foamStern * foamScale * (a.speed / 1.5f) * dt;
+      if (amount > 0.0f &&
+          RC::AddFoamSourceAtWorld(stern.x - fwd.x * 0.2f, stern.z - fwd.z * 0.2f, sternR, amount)) {
+        ++foamSourcesThisFrame_;
       }
     }
   }
@@ -1277,7 +1448,10 @@ private:
 
     if (sharkWake && dt > 0.0f) {
       const float nose = 0.45f * a.scale;
-      Wake(a, {center.x + fv.x * nose, 0.0f, center.z + fv.z * nose}, fv, sharkWakeLength);
+      // 尾は頭と反対側へ同じくらい。水面に出ているのは背中と背ビレだけなので幅は細め
+      const RC::Vector3 tail = {center.x - fv.x * nose, 0.0f, center.z - fv.z * nose};
+      Wake(a, {center.x + fv.x * nose, 0.0f, center.z + fv.z * nose}, fv, sharkWakeLength, tail, 0.1f * a.scale,
+           sharkFoam, dt);
     }
   }
 
@@ -1377,7 +1551,11 @@ private:
 
     if (shipWake && dt > 0.0f) {
       const float bow = 2.6f * a.scale;
-      Wake(a, {a.pos.x + f.x * bow, 0.0f, a.pos.z + f.z * bow}, f, shipWakeLength);
+      // 船体は WaterPose と同じく 前後 ±2.0・左右 ±0.8（scale 1）。船尾は少し後ろ
+      const float sternOff = 2.1f * a.scale;
+      const RC::Vector3 stern = {a.pos.x - f.x * sternOff, 0.0f, a.pos.z - f.z * sternOff};
+      Wake(a, {a.pos.x + f.x * bow, 0.0f, a.pos.z + f.z * bow}, f, shipWakeLength, stern, 0.8f * a.scale, shipFoam,
+           dt);
     }
   }
 
@@ -1406,6 +1584,12 @@ private:
   bool hasWater_ = false;
   float waterTime_ = 0.0f;
   int wakeSourcesThisFrame_ = 0; ///< このフレームに入れた航跡の波源数（ImGui 表示用）
+  int foamSourcesThisFrame_ = 0;  ///< このフレームに入れた引き波の泡の波源数（ImGui 表示用）
+  int crestSourcesThisFrame_ = 0; ///< このフレームに入れた波頭の白波の波源数（ImGui 表示用）
+  bool foamParamsSaved_ = false;  ///< 泡の残り方を上書きする前の値を控えたか
+  float savedFoamDecay_ = 0.992f;
+  float savedFoamSpread_ = 0.10f;
+  float savedCrestDecay_ = 0.80f;
   std::string spawnFail_;        ///< 直近の TrySpawn が失敗した理由（ImGui 表示用）
   std::string spawnNote_;        ///< ImGui の Spawn Now の結果表示
 };

@@ -72,8 +72,8 @@ Texture2D<float4> gTexture : register(t0);
 // t1: 環境キューブマップ (反射用)
 TextureCube<float4> gEnvironmentTexture : register(t1);
 
-// t4: インタラクティブ波紋ハイトマップ
-Texture2D<float> gInteractiveWave : register(t4);
+// t4: インタラクティブ波紋ハイトマップ（r: 高さ, g: 引き波の泡, b: 波頭の白波）
+Texture2D<float4> gInteractiveWave : register(t4);
 
 // t5: Foam用の深度テクスチャ
 Texture2D<float> gDepthTexture : register(t5);
@@ -185,10 +185,15 @@ PixelShaderOutput main(VertexShaderOutput input)
     // 波紋ハイトマップの法線計算
     float2 waveUV = (input.worldPosition.xz / 100.0f) + 0.5f;
     float texelSize = 1.0f / 256.0f;
-    float hL = gInteractiveWave.Sample(gSamplerClamp, waveUV + float2(-texelSize, 0));
-    float hR = gInteractiveWave.Sample(gSamplerClamp, waveUV + float2(texelSize, 0));
-    float hD = gInteractiveWave.Sample(gSamplerClamp, waveUV + float2(0, -texelSize));
-    float hU = gInteractiveWave.Sample(gSamplerClamp, waveUV + float2(0, texelSize));
+    float hL = gInteractiveWave.Sample(gSamplerClamp, waveUV + float2(-texelSize, 0)).r;
+    float hR = gInteractiveWave.Sample(gSamplerClamp, waveUV + float2(texelSize, 0)).r;
+    float hD = gInteractiveWave.Sample(gSamplerClamp, waveUV + float2(0, -texelSize)).r;
+    float hU = gInteractiveWave.Sample(gSamplerClamp, waveUV + float2(0, texelSize)).r;
+    // 泡の量（g: 引き波 / b: 波頭）。範囲外（UV が 0..1 の外）はクランプで端の値になるので 0 に落とす
+    float2 foamSample = gInteractiveWave.Sample(gSamplerClamp, waveUV).gb;
+    foamSample *= (all(waveUV > 0.0) && all(waveUV < 1.0)) ? 1.0 : 0.0;
+    float wakeFoam  = foamSample.x;
+    float crestFoam = foamSample.y;
     float3 interactiveNormal = normalize(float3(hL - hR, 2.0f * (100.0f * texelSize), hD - hU));
 
     // ジオメトリ法線 + 波紋法線 + 跳ね返り法線
@@ -295,6 +300,43 @@ PixelShaderOutput main(VertexShaderOutput input)
     }
 
     // =========================
+    // 引き波の泡（波紋テクスチャの G チャンネル）
+    // =========================
+    // スクリプトが置いた 2 種類の泡を描く。
+    //   引き波（g）… 船尾がかき回した帯。主役は「白く濁った明るい水色」で、白い筋はまばらに乗せるだけ。
+    //                ベタ塗りの白にすると帯が白飛びして見えるので、白の不透明度に上限を設ける
+    //   波頭（b）  … 船首の砕け波と V の腕。細い白い線。スクリプトが毎フレーム置き直し、すぐ消える
+    // 白はライトの強さで白飛び（＋ブルーム）しないよう明るさに上限を設ける。
+    // 0.39m/テクセルのボケを隠すためにノイズで崩すが、細かすぎるとザラついた砂嵐に見えるので低周波だけ使う。
+    float foamMask = 0.0;
+    float milkyT = 0.0;
+    if (wakeFoam > 0.001 || crestFoam > 0.001)
+    {
+        float2 fp = input.worldPosition.xz;
+        // 法線マップの成分をノイズとして借用（周期 8m / 3m 程度、ゆっくり流す）
+        float n1 = gTexture.Sample(gSampler, fp * 0.12 + float2(gTime * 0.010, gTime * 0.007)).r;
+        float n2 = gTexture.Sample(gSampler, fp * 0.33 + float2(-gTime * 0.016, gTime * 0.011)).g;
+        float lace = saturate(((n1 * 0.6 + n2 * 0.4) - 0.5) * 2.0 + 0.5);
+
+        // 泡の白（日向で少し明るく。白飛びしないよう上限 0.9）
+        float3 foamLit = gFoamColor.rgb * min(lightColor * lerp(0.75, 0.92, NdotL), 0.9);
+
+        // ---- 引き波：白濁 ＋ まばらな白い筋 ----
+        milkyT = smoothstep(0.03, 1.2, wakeFoam);
+        finalColor = lerp(finalColor, lerp(finalColor, foamLit, 0.35), milkyT);
+
+        float thr = 1.0 - saturate(wakeFoam * 0.8);
+        float streak = smoothstep(thr - 0.12, thr + 0.12, lace) * smoothstep(0.08, 0.35, wakeFoam);
+        float trailMask = streak * 0.55;
+
+        // ---- 波頭：細い白線（ノイズで少しだけ途切れさせる）----
+        float crestMask = smoothstep(0.25, 0.8, crestFoam * lerp(0.7, 1.3, lace)) * 0.9;
+
+        foamMask = max(trailMask, crestMask);
+        finalColor = lerp(finalColor, foamLit, foamMask);
+    }
+
+    // =========================
     // 波打ち際（フォーム）の計算
     // =========================
 
@@ -322,7 +364,8 @@ PixelShaderOutput main(VertexShaderOutput input)
     float3 foamColor = gFoamColor.rgb * gFoamParams.y; // スケール適用
     finalColor = lerp(finalColor, foamColor, foamIntensity * gFoamColor.a);
 
-    output.color = float4(finalColor, waterColor.a);
+    // 泡は不透明（浅瀬で透けている所でも白く乗る）
+    output.color = float4(finalColor, lerp(waterColor.a, 1.0, max(foamMask, milkyT * 0.4)));
 
     return output;
 }
