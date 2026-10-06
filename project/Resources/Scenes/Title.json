@@ -484,6 +484,237 @@
           }
         }
       ]
+    },
+    {
+      "id": "37435527-906e-4639-97a2-48a4db9c3197",
+      "name": "TitleWeather",
+      "tag": "",
+      "active": true,
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": {
+            "position": [0.0, 0.0, 0.0],
+            "rotation": [0.0, 0.0, 0.0],
+            "scale": [1.0, 1.0, 1.0]
+          }
+        },
+        {
+          "type": "NativeScriptComponent",
+          "data": {
+            "scriptTypeNames": ["TitleWeatherScript"],
+            "scriptDataList": [
+              {
+                "enabled": true,
+                "timeEnabled": true,
+                "cycleSeconds": 180.0,
+                "startPhase": 0.0,
+                "schedule": [
+                  [0.0, "day"],
+                  [0.3, "day"],
+                  [0.42, "evening"],
+                  [0.5, "evening"],
+                  [0.6, "night"],
+                  [0.8, "night"],
+                  [0.88, "dawn"],
+                  [0.93, "dawn"]
+                ],
+                "looks": {
+                  "day": {
+                    "lightColor": [1.0, 0.95, 0.86, 1.0],
+                    "lightDirection": [0.12, -1.0, 0.10],
+                    "lightIntensity": 1.1,
+                    "ambientColor": [1.0, 1.0, 1.0],
+                    "ambientIntensity": 0.0,
+                    "waterShallow": [0.1, 0.66, 0.56, 0.9],
+                    "waterDeep": [0.02, 0.26, 0.36, 0.96],
+                    "waterSss": [0.1, 0.62, 0.52, 0.9],
+                    "waterEnvironment": 0.35,
+                    "waterCrestTint": 0.55,
+                    "skyColor": [1.0, 1.0, 1.0, 1.0],
+                    "gradeExposure": 0.1,
+                    "gradeContrast": 1.05,
+                    "gradeSaturation": 1.12,
+                    "gradeTemperature": 0.0,
+                    "gradeTint": 0.0
+                  },
+                  "evening": {
+                    "lightColor": [1.0, 0.68, 0.46, 1.0],
+                    "lightDirection": [0.75, -0.55, 0.30],
+                    "lightIntensity": 1.0,
+                    "ambientColor": [1.0, 0.66, 0.55],
+                    "ambientIntensity": 0.12,
+                    "waterShallow": [0.08, 0.18, 0.6, 0.9],
+                    "waterDeep": [0.03, 0.06, 0.28, 0.96],
+                    "waterSss": [1.0, 0.55, 0.3, 0.55],
+                    "waterEnvironment": 0.45,
+                    "waterCrestTint": 0.45,
+                    "skyColor": [1.0, 0.7, 0.55, 1.0],
+                    "gradeExposure": 0.0,
+                    "gradeContrast": 1.06,
+                    "gradeSaturation": 1.05,
+                    "gradeTemperature": 0.12,
+                    "gradeTint": 0.1
+                  },
+                  "night": {
+                    "lightColor": [0.55, 0.66, 1.0, 1.0],
+                    "lightDirection": [-0.25, -1.0, -0.35],
+                    "lightIntensity": 0.55,
+                    "ambientColor": [0.45, 0.55, 0.85],
+                    "ambientIntensity": 0.4,
+                    "waterShallow": [0.05, 0.3, 0.42, 0.92],
+                    "waterDeep": [0.01, 0.06, 0.16, 0.97],
+                    "waterSss": [0.2, 0.35, 0.6, 0.25],
+                    "waterEnvironment": 0.2,
+                    "waterCrestTint": 0.18,
+                    "skyColor": [0.25, 0.3, 0.5, 1.0],
+                    "gradeExposure": -0.15,
+                    "gradeContrast": 1.06,
+                    "gradeSaturation": 0.85,
+                    "gradeTemperature": -0.3,
+                    "gradeTint": 0.02
+                  },
+                  "dawn": {
+                    "lightColor": [1.0, 0.74, 0.78, 1.0],
+                    "lightDirection": [-0.70, -0.60, 0.20],
+                    "lightIntensity": 0.8,
+                    "ambientColor": [0.75, 0.6, 0.85],
+                    "ambientIntensity": 0.2,
+                    "waterShallow": [0.12, 0.5, 0.56, 0.9],
+                    "waterDeep": [0.04, 0.16, 0.32, 0.96],
+                    "waterSss": [0.6, 0.4, 0.6, 0.5],
+                    "waterEnvironment": 0.35,
+                    "waterCrestTint": 0.35,
+                    "skyColor": [0.9, 0.75, 0.85, 1.0],
+                    "gradeExposure": 0.0,
+                    "gradeContrast": 1.04,
+                    "gradeSaturation": 1.05,
+                    "gradeTemperature": 0.08,
+                    "gradeTint": 0.15
+                  }
+                },
+                "weather": {
+                  "enabled": true,
+                  "firstDelayMin": 25.0,
+                  "firstDelayMax": 45.0,
+                  "clearMin": 30.0,
+                  "clearMax": 60.0,
+                  "holdMin": 25.0,
+                  "holdMax": 45.0,
+                  "fadeIn": 7.0,
+                  "fadeOut": 9.0,
+                  "weights": {
+                    "rain": 1.0,
+                    "snow": 0.7,
+                    "storm": 0.5
+                  }
+                },
+                "rainLook": {
+                  "ambientAdd": 0.1,
+                  "contrastAdd": -0.04,
+                  "exposureAdd": -0.12,
+                  "haze": [0.8, 0.85, 0.9, 0.04],
+                  "lightDesaturate": 0.6,
+                  "lightScale": 0.65,
+                  "saturationScale": 0.7,
+                  "skyScale": 0.6,
+                  "temperatureAdd": -0.08,
+                  "waterScale": 0.85,
+                  "waveScale": 1.15,
+                  "whitecapAdd": 0.05
+                },
+                "snowLook": {
+                  "ambientAdd": 0.18,
+                  "contrastAdd": -0.04,
+                  "exposureAdd": 0.05,
+                  "haze": [0.86, 0.9, 0.97, 0.12],
+                  "lightDesaturate": 0.85,
+                  "lightScale": 0.75,
+                  "saturationScale": 0.45,
+                  "skyScale": 0.85,
+                  "temperatureAdd": -0.22,
+                  "waterScale": 0.7,
+                  "waveScale": 0.7,
+                  "whitecapAdd": -0.2
+                },
+                "stormLook": {
+                  "ambientAdd": 0.16,
+                  "contrastAdd": 0.0,
+                  "exposureAdd": -0.18,
+                  "haze": [0.55, 0.6, 0.68, 0.05],
+                  "lightDesaturate": 0.7,
+                  "lightScale": 0.5,
+                  "saturationScale": 0.6,
+                  "skyScale": 0.45,
+                  "temperatureAdd": -0.1,
+                  "waterScale": 0.75,
+                  "waveScale": 1.35,
+                  "whitecapAdd": 0.2
+                },
+                "rain": {
+                  "amount": 0.6,
+                  "color": [0.78, 0.86, 0.95, 0.38],
+                  "maxDrops": 300,
+                  "nearDepth": 3.0,
+                  "ringColor": [0.85, 0.92, 1.0, 0.45],
+                  "ringLife": 0.35,
+                  "ringMax": 48,
+                  "ringSize": 0.35,
+                  "rings": false,
+                  "rippleChance": 0.6,
+                  "rippleMaxPerFrame": 16,
+                  "rippleRadius": 0.01,
+                  "rippleStrength": 0.05,
+                  "ripples": true,
+                  "speed": 16.0,
+                  "stormWindScale": 1.35,
+                  "streakTime": 0.035,
+                  "thickness": 1.3,
+                  "wind": [-2.0, 0.0, -9.0]
+                },
+                "snow": {
+                  "bokehAlpha": 0.18,
+                  "bokehMaxPixel": 8.0,
+                  "color": [1.0, 1.0, 1.0, 0.9],
+                  "fallSpeedMax": 1.6,
+                  "fallSpeedMin": 0.9,
+                  "farFade": 0.6,
+                  "flutter": 0.35,
+                  "haloAlpha": 0.0,
+                  "maxFlakes": 200,
+                  "maxPixelRadius": 4.0,
+                  "meltTime": 0.3,
+                  "nearDepth": 2.0,
+                  "sizeMax": 0.06,
+                  "sizeMin": 0.02,
+                  "swayAmplitude": 0.5,
+                  "swayPeriodMax": 4.0,
+                  "swayPeriodMin": 2.0,
+                  "wind": [-0.15, 0.0, -0.55]
+                },
+                "lightning": {
+                  "ambientBoost": 0.7,
+                  "enabled": true,
+                  "flashColor": [0.86, 0.9, 1.0, 1.0],
+                  "intervalMax": 11.0,
+                  "intervalMin": 4.0,
+                  "lightBoost": 2.2,
+                  "minLevel": 0.6,
+                  "screenAlpha": 0.55,
+                  "thunderDelayMax": 1.8,
+                  "thunderDelayMin": 0.5
+                },
+                "rainSoundPath": "",
+                "rainVolume": 0.5,
+                "thunderSoundPath": "",
+                "thunderVolume": 0.8
+              }
+            ],
+            "scriptTypeName": "TitleWeatherScript"
+          }
+        }
+      ]
     }
   ]
 }

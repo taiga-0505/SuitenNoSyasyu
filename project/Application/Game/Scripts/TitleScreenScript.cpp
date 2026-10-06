@@ -202,6 +202,14 @@ public:
   float menuTiltScale = 0.5f;
   bool quitEnabled = true;
 
+  // ---- マウス操作 ----
+  // マウスを動かすとカーソル下のメニューが選択され、mouseConfirmButton（既定：右クリック）で決定する。
+  // 左クリックは TitleMouseRippleScript の波紋に使っているので決定には使わない。
+  bool mouseEnabled = true;
+  int mouseConfirmButton = 1;     ///< 0 = 左 / 1 = 右 / 2 = 中
+  float mouseHitPadding = 0.35f;  ///< 当たり判定を文字の外側へ広げる量（m）
+  float mouseMoveThreshold = 2.0f; ///< これ以上（px）動いたら「マウスを動かした」とみなす
+
   // ---- 選択中メニューの目印（左右で回る金のリング ＋ 波紋）----
   struct RingParams {
     bool enabled = true;
@@ -312,6 +320,10 @@ public:
         {"menuBobAmplitude", menuBobAmplitude},
         {"menuTiltScale", menuTiltScale},
         {"quitEnabled", quitEnabled},
+        {"mouseEnabled", mouseEnabled},
+        {"mouseConfirmButton", mouseConfirmButton},
+        {"mouseHitPadding", mouseHitPadding},
+        {"mouseMoveThreshold", mouseMoveThreshold},
         {"menuRing",
          {{"enabled", ring.enabled},
           {"color", v4(ring.color)},
@@ -440,6 +452,12 @@ public:
     readF("menuShininess", menuShininess);
     readF("menuUnselectedScale", menuUnselectedScale);
     readF("menuPulseWhite", menuPulseWhite);
+    readB("mouseEnabled", mouseEnabled);
+    if (j.contains("mouseConfirmButton") && j["mouseConfirmButton"].is_number()) {
+      mouseConfirmButton = std::clamp(j["mouseConfirmButton"].get<int>(), 0, 2);
+    }
+    readF("mouseHitPadding", mouseHitPadding);
+    readF("mouseMoveThreshold", mouseMoveThreshold);
 
     // 入れ子のオブジェクト用（"menuRing" / "intro"）
     auto sub = [&](const char *name) -> const nlohmann::json * {
@@ -553,6 +571,13 @@ public:
     ImGui::DragFloat("Unselected Scale", &menuUnselectedScale, 0.01f, 0.3f, 1.5f);
     ImGui::DragFloat("Pulse White", &menuPulseWhite, 0.01f, 0.0f, 1.0f);
     ImGui::Checkbox("Quit Enabled", &quitEnabled);
+
+    ImGui::SeparatorText("Mouse");
+    ImGui::Checkbox("Mouse Enabled", &mouseEnabled);
+    ImGui::SliderInt("Confirm Button (0=L 1=R 2=M)", &mouseConfirmButton, 0, 2);
+    ImGui::DragFloat("Hit Padding (m)", &mouseHitPadding, 0.01f, 0.0f, 3.0f);
+    ImGui::DragFloat("Move Threshold (px)", &mouseMoveThreshold, 0.1f, 0.0f, 20.0f);
+    ImGui::Text("Mouse mode: %s  hover: %d", mouseMode_ ? "on" : "off", hovered_);
 
     ImGui::SeparatorText("Menu Ring");
     ImGui::Checkbox("Ring Enabled", &ring.enabled);
@@ -1264,6 +1289,7 @@ private:
         in->IsKeyTrigger(DIK_DOWN) || in->IsKeyTrigger(DIK_W) || in->IsKeyTrigger(DIK_S)) {
       return true;
     }
+    if (mouseEnabled && in->IsMouseTrigger(mouseConfirmButton)) return true;
     if (in->IsXInputConnected()) {
       if (in->IsXInputButtonTrigger(XINPUT_GAMEPAD_A) || in->IsXInputButtonTrigger(XINPUT_GAMEPAD_START) ||
           in->IsXInputButtonTrigger(XINPUT_GAMEPAD_DPAD_UP) || in->IsXInputButtonTrigger(XINPUT_GAMEPAD_DPAD_DOWN)) {
@@ -1566,6 +1592,53 @@ private:
   // 入力
   // ------------------------------------------------------------------
 
+  /// @brief 選択を切り替える（跳ねる演出・リング・波紋込み）
+  void SetSelected(int index) {
+    if (index < 0 || index >= kMenuCount || index == selected_) return;
+    selected_ = index;
+    pulseTimer_ = 0.0f;
+    // 切り替えた瞬間だけ少し大きくして「跳ねる」感じを出す
+    if (selected_ < static_cast<int>(menu_.size())) {
+      menu_[selected_].scale = menuSelectedScale * 1.12f;
+      OnSelectionChanged();
+    }
+  }
+
+  /// @brief 画面座標の下にあるメニュー項目を返す（無ければ -1）
+  /// @details カメラのレイを各項目の高さの水平面と交差させ、真上から見た文字の矩形
+  ///          （幅 = halfW、上下 = zMin〜zMax、どちらも現在の拡大率込み）＋ mouseHitPadding で判定する。
+  ///          メニューは yaw = 0・漂いなしなので、軸平行の矩形で足りる。
+  int PickMenuItem(float mx, float my) const {
+    float screenW = 1280.0f, screenH = 720.0f;
+    auto &rc = RC::GetRenderContext();
+    if (rc.Ctx() && rc.Ctx()->app && rc.Ctx()->app->width > 0 && rc.Ctx()->app->height > 0) {
+      screenW = static_cast<float>(rc.Ctx()->app->width);
+      screenH = static_cast<float>(rc.Ctx()->app->height);
+    }
+    if (mx < 0.0f || my < 0.0f || mx > screenW || my > screenH) return -1;
+
+    const RC::Ray ray = RC::ScreenPointToRay({mx, my}, screenW, screenH, rc.View(), rc.Proj());
+    if (std::fabs(ray.direction.y) < 1e-5f) return -1;
+
+    for (int i = 0; i < static_cast<int>(menu_.size()); ++i) {
+      const Floater &f = menu_[i];
+      auto e = f.entity.lock();
+      if (!e || !e->IsActive()) continue;
+      const auto *tr = e->GetComponent<TransformComponent>();
+      if (!tr) continue;
+      const float t = (tr->position.y - ray.origin.y) / ray.direction.y;
+      if (t <= 0.0f || !std::isfinite(t)) continue;
+      const float hx = ray.origin.x + ray.direction.x * t;
+      const float hz = ray.origin.z + ray.direction.z * t;
+      const float s = f.scale * f.introScale;
+      const float pad = mouseHitPadding;
+      if (std::fabs(hx - tr->position.x) > f.halfW * s + pad) continue;
+      if (hz < tr->position.z + f.zMin * s - pad || hz > tr->position.z + f.zMax * s + pad) continue;
+      return i;
+    }
+    return -1;
+  }
+
   void HandleInput() {
     SceneContext *ctx = GetSceneContext();
     if (!ctx || !ctx->input) return;
@@ -1586,17 +1659,39 @@ private:
       prevStickDir_ = stickDir;
     }
     if (move != 0) {
-      selected_ = (selected_ + move + kMenuCount) % kMenuCount;
-      pulseTimer_ = 0.0f;
-      // 切り替えた瞬間だけ少し大きくして「跳ねる」感じを出す
-      if (selected_ >= 0 && selected_ < static_cast<int>(menu_.size())) {
-        menu_[selected_].scale = menuSelectedScale * 1.12f;
-        OnSelectionChanged();
+      mouseMode_ = false; // キー／パッドで動かしたら、マウスを再び動かすまでホバーで上書きしない
+      SetSelected((selected_ + move + kMenuCount) % kMenuCount);
+    }
+
+    // マウス：動かしたときだけカーソル下の項目を選ぶ（止まっているあいだはキー操作を邪魔しない）
+    hovered_ = -1;
+    bool mouseConfirm = false;
+    if (mouseEnabled) {
+      float mx = 0.0f, my = 0.0f;
+      in->GetGameMousePosition(mx, my);
+      bool moved = false;
+      if (mousePrevValid_) {
+        const float dx = mx - prevMouseX_, dy = my - prevMouseY_;
+        moved = (dx * dx + dy * dy) >= mouseMoveThreshold * mouseMoveThreshold;
+      }
+      prevMouseX_ = mx;
+      prevMouseY_ = my;
+      mousePrevValid_ = true;
+
+      hovered_ = PickMenuItem(mx, my);
+      if (moved) mouseMode_ = true;
+      if (moved && hovered_ >= 0 && hovered_ != selected_) SetSelected(hovered_);
+
+      // 決定ボタン（既定：右クリック）はカーソルが項目の上にあるときだけ。その項目を選んでから決定する
+      if (in->IsMouseTrigger(mouseConfirmButton) && hovered_ >= 0) {
+        mouseMode_ = true;
+        if (hovered_ != selected_) SetSelected(hovered_);
+        mouseConfirm = true;
       }
     }
 
     // 決定
-    bool confirm = in->IsKeyTrigger(DIK_SPACE) || in->IsKeyTrigger(DIK_RETURN);
+    bool confirm = mouseConfirm || in->IsKeyTrigger(DIK_SPACE) || in->IsKeyTrigger(DIK_RETURN);
     if (in->IsXInputConnected() && in->IsXInputButtonTrigger(XINPUT_GAMEPAD_A)) confirm = true;
     if (!confirm) return;
 
@@ -1698,7 +1793,12 @@ private:
   // ------------------------------------------------------------------
 
   void DrawHint(float screenW, float screenH) {
-    const char *text = "↑↓ 選択　　SPACE 決定";
+    // マウスで操作しているときはマウス用の案内に切り替える
+    const char *text = (mouseEnabled && mouseMode_)
+                           ? (mouseConfirmButton == 1   ? "マウスで選択　　右クリック 決定"
+                              : mouseConfirmButton == 0 ? "マウスで選択　　クリック 決定"
+                                                        : "マウスで選択　　ホイールクリック 決定")
+                           : "↑↓ 選択　　SPACE 決定";
     const float lineH = RC::GetFontLineHeight(hintFont_);
     const RC::Vector2 pos{screenW * 0.5f, screenH - lineH - 28.0f};
     // 水面の模様の上でも読めるよう、横いっぱいの半透明の帯を先に敷く
@@ -1738,6 +1838,11 @@ private:
   int hintFont_ = -1;
   int selected_ = kMenuStart;
   int prevStickDir_ = 0;
+  // マウス操作
+  bool mouseMode_ = false;       ///< 最後に操作したのがマウスか（ヒントの切り替え・ホバー選択の有効化）
+  bool mousePrevValid_ = false;  ///< prevMouse が有効か（初回フレームを「動いた」と誤判定しない）
+  float prevMouseX_ = 0.0f, prevMouseY_ = 0.0f;
+  int hovered_ = -1;             ///< カーソル下のメニュー項目（無ければ -1）
   bool decided_ = false;
   bool readbackOwned_ = false; ///< 波紋の読み戻しを自分が有効にしたか（OnDestroy で戻す）
   std::string startTarget_; ///< 「スタート」の行き先（決定時に遷移表から引く）
