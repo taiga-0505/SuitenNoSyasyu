@@ -6,6 +6,7 @@
 #include "RenderInteractiveWater.h"
 #include "Common/SceneContext.h"
 #include "../Dx12/Dx12Core.h"
+#include <utility>
 
 namespace RC {
 
@@ -49,12 +50,103 @@ struct WaterParamsCB {
   //       フォールバックするため既定値へ化ける（技術的負債 D-14）
   // z: 反射波の到達範囲（障害物半径に対する倍率）
   Vector4 obstacleCount = {0.0f, 1.0f, 3.0f, 0.0f};
+
+  // 海面のリアル化（OceanWaves.hlsli / Water.PS.hlsl）。WaterComponent の既定値と揃える
+  // x: 詳細波の強さ, y: 尖り, z: 白波の強さ, w: 頂点で変位させる最短波長(m)
+  Vector4 oceanParams  = {1.0f, 0.6f, 0.8f, 3.0f};
+  // x: 透明度(m), y: 遠景フェード距離(m), z: 法線マップのタイルサイズ(m, 0=従来UV), w: 白波の量
+  Vector4 oceanParams2 = {3.0f, 150.0f, 0.0f, 0.5f};
+  // rgb: 波頭を透ける光の色, a: 強さ
+  Vector4 sssColor     = {0.10f, 0.62f, 0.52f, 0.9f};
+  // 屈折（スクリーンテクスチャ）
+  // x: 有効 (1/0。シーン色のコピーが取れたフレームだけ 1 になる), y: 歪みの強さ(画面UV), z: 交差部のフェード幅(m)
+  Vector4 refractParams = {0.0f, 0.04f, 0.5f, 0.0f};
 };
+static_assert(sizeof(WaterParamsCB) % 16 == 0, "WaterParamsCB は 16 バイト境界に揃えること（HLSL cbuffer と一致させる）");
 
 // シングルトン的に定数バッファリソースを管理
 static Microsoft::WRL::ComPtr<ID3D12Resource> s_waterCB;
 static WaterParamsCB* s_waterCBMapped = nullptr;
 static bool s_waterCBInitialized = false;
+
+// ============================================================================
+// 屈折用：水を描く直前の画面のコピー
+// ============================================================================
+// 描画中のレンダーターゲットはそのまま SRV として読めない（書き込み中のため）ので、
+// 水を描く直前に同じ形式のテクスチャへ CopyResource して、それを t6 として読む。
+// PS はこのコピーを法線で歪めて引くことで、水中の物体がゆらいで見える「屈折」を作る。
+static Microsoft::WRL::ComPtr<ID3D12Resource> s_sceneCopy;
+static SRVManager::Handle s_sceneCopySrv;
+static bool s_refractionEnabled = true;
+
+/// @brief 現在の描画先をシーン色コピーへ写す。成功したら t6 に載せる SRV を返す（失敗時は ptr=0）
+static D3D12_GPU_DESCRIPTOR_HANDLE CaptureSceneColor(ID3D12GraphicsCommandList *cl) {
+  auto &ctx = GetRenderContext();
+  if (!ctx.Ctx() || !ctx.Ctx()->core) return {};
+  auto *core = ctx.Ctx()->core;
+  ID3D12Resource *src = ctx.Ctx()->currentColorResource;
+  if (!src) return {};
+
+  const D3D12_RESOURCE_DESC srcDesc = src->GetDesc();
+  if (srcDesc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || srcDesc.SampleDesc.Count != 1) {
+    return {}; // MSAA などは CopyResource できないので屈折なし
+  }
+
+  // サイズ・形式が変わったら作り直す（ウィンドウのリサイズ）
+  bool needCreate = !s_sceneCopy;
+  if (s_sceneCopy) {
+    const D3D12_RESOURCE_DESC d = s_sceneCopy->GetDesc();
+    needCreate = (d.Width != srcDesc.Width || d.Height != srcDesc.Height || d.Format != srcDesc.Format);
+  }
+  if (needCreate) {
+    if (s_sceneCopy) {
+      core->DeferredRelease().Enqueue(std::move(s_sceneCopy), core->GetNextFenceValue());
+    }
+    if (s_sceneCopySrv.IsValid()) {
+      core->SRVMan().Free(s_sceneCopySrv);
+      s_sceneCopySrv = SRVManager::Handle{};
+    }
+
+    D3D12_RESOURCE_DESC desc = srcDesc;
+    desc.MipLevels = 1;
+    desc.Flags = D3D12_RESOURCE_FLAG_NONE;
+    D3D12_HEAP_PROPERTIES heap{};
+    heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+    HRESULT hr = ctx.Device()->CreateCommittedResource(
+        &heap, D3D12_HEAP_FLAG_NONE, &desc,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&s_sceneCopy));
+    if (FAILED(hr) || !s_sceneCopy) {
+      s_sceneCopy.Reset();
+      return {};
+    }
+    s_sceneCopy->SetName(L"RC::WaterSceneColorCopy");
+    s_sceneCopySrv = core->SRVMan().CreateTexture2D(s_sceneCopy.Get(), desc.Format, 1);
+  }
+  if (!s_sceneCopySrv.IsValid()) return {};
+
+  // RT → COPY_SOURCE / コピー先 SRV → COPY_DEST
+  D3D12_RESOURCE_BARRIER b[2] = {};
+  b[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+  b[0].Transition.pResource = src;
+  b[0].Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+  b[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+  b[0].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+  b[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+  b[1].Transition.pResource = s_sceneCopy.Get();
+  b[1].Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+  b[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+  b[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+  cl->ResourceBarrier(2, b);
+
+  cl->CopyResource(s_sceneCopy.Get(), src);
+
+  // 元に戻す（RT は描画を続けるので RENDER_TARGET、コピーは PS で読む）
+  std::swap(b[0].Transition.StateBefore, b[0].Transition.StateAfter);
+  std::swap(b[1].Transition.StateBefore, b[1].Transition.StateAfter);
+  cl->ResourceBarrier(2, b);
+
+  return s_sceneCopySrv.gpu;
+}
 
 // ============================================================================
 // D-01: 障害物リストの控え
@@ -203,6 +295,18 @@ void DrawWater(int meshHandle, int normalMapHandle) {
 
           cl->SetGraphicsRootDescriptorTable(13, s_depthSrv.gpu);
         }
+
+        // t6: Scene Color（屈折用。RootParameter 14）
+        // コピーが取れなかったフレームは屈折を切り、ルートパラメータが空にならないよう深度 SRV を仮に載せておく
+        D3D12_GPU_DESCRIPTOR_HANDLE sceneSrv = s_refractionEnabled ? CaptureSceneColor(cl) : D3D12_GPU_DESCRIPTOR_HANDLE{};
+        if (s_waterCBMapped) {
+          s_waterCBMapped->refractParams.x = (sceneSrv.ptr != 0) ? 1.0f : 0.0f;
+        }
+        if (sceneSrv.ptr != 0) {
+          cl->SetGraphicsRootDescriptorTable(14, sceneSrv);
+        } else if (s_depthSrv.IsValid()) {
+          cl->SetGraphicsRootDescriptorTable(14, s_depthSrv.gpu);
+        }
       }
 
       ctx.PrimitiveMeshes().ApplyTexture(meshHandle, normalMapHandle);
@@ -275,6 +379,29 @@ void SetWaterCrestTint(float crestTint) {
   // gFoamParams.z（未使用だった枠）を波の高さによる色付けの強さに使う。
   // x: FoamDepth / y: FoamScale は触らない。
   s_waterCBMapped->foamParams.z = (crestTint > 0.0f) ? crestTint : 0.0f;
+}
+
+void SetWaterOceanParams(float detailStrength, float choppiness, float minWavelength,
+                         float whitecapStrength, float whitecapCoverage,
+                         const Vector4 &sssColor, float clarity,
+                         float detailFadeDistance, float normalTileSize) {
+  EnsureWaterCB();
+  if (!s_waterCBMapped) return;
+  auto clamp0 = [](float v) { return (v > 0.0f) ? v : 0.0f; };
+  s_waterCBMapped->oceanParams = {clamp0(detailStrength), clamp0(choppiness),
+                                  clamp0(whitecapStrength), clamp0(minWavelength)};
+  s_waterCBMapped->oceanParams2 = {clamp0(clarity), clamp0(detailFadeDistance),
+                                   clamp0(normalTileSize), clamp0(whitecapCoverage)};
+  s_waterCBMapped->sssColor = sssColor;
+}
+
+void SetWaterRefraction(bool enable, float strength, float edgeFade) {
+  EnsureWaterCB();
+  s_refractionEnabled = enable;
+  if (!s_waterCBMapped) return;
+  // x（実際に有効か）は描画時にコピーが取れたかで決めるのでここでは触らない
+  s_waterCBMapped->refractParams.y = (strength > 0.0f) ? strength : 0.0f;
+  s_waterCBMapped->refractParams.z = (edgeFade > 0.001f) ? edgeFade : 0.001f;
 }
 
 void SetWaterTime(float timeSec) {
@@ -357,6 +484,9 @@ void TermWaterResources() {
     s_waterCB.Reset();
   }
   s_waterCBInitialized = false;
+  // 屈折用のシーン色コピー（終了時にだけ呼ばれるので即解放でよい）
+  s_sceneCopy.Reset();
+  s_sceneCopySrv = SRVManager::Handle{};
   // 障害物の控えも空にする。残したままだと、次に読み込んだシーンで
   // 前のシーンの岩の位置に波の平らな穴が空く。
   SetWaterObstacles(nullptr, 0);

@@ -958,14 +958,8 @@ private:
       if (!e) continue;
       auto *w = e->GetComponent<WaterComponent>();
       if (!w) continue;
-      out.waveHeight = w->waveHeight;
-      out.waveSpeed = w->waveSpeed;
-      out.waveFreq = w->waveFreq;
-      out.waveHeight2 = w->waveHeight2;
-      out.waveSpeed2 = w->waveSpeed2;
-      out.waveFreq2 = w->waveFreq2;
-      out.waveSteepness = w->waveSteepness;
-      if (auto *tr = e->GetComponent<TransformComponent>()) out.baseHeight = tr->position.y;
+      auto *tr = e->GetComponent<TransformComponent>();
+      out = w->ToWaveParams(tr ? tr->position.y : 0.0f);
       return true;
     }
     return false;

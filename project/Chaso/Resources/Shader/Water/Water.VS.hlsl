@@ -41,7 +41,14 @@ cbuffer WaterParams : register(b6)
 
     float4 gObstacles[4];  // xyz: pos, w: radius
     float4 gObstacleCount; // x: count, y: 反射の強さ, z: 反射の到達範囲(半径倍率)
+
+    float4 gOceanParams;   // x: 詳細波の強さ, y: 尖り(choppy), z: 白波の強さ, w: 頂点で変位させる最短波長(m)
+    float4 gOceanParams2;  // x: 透明度(m), y: 遠景フェード距離(m), z: 法線マップのタイルサイズ(m, 0=従来UV), w: 白波の量
+    float4 gSssColor;      // rgb: 波頭を透ける光の色, a: 強さ
+    float4 gRefractParams; // x: 屈折が有効(1/0), y: 歪みの強さ(画面UV), z: 交差部のフェード幅(m)
 };
+
+#include "OceanWaves.hlsli"
 
 Texture2D<float4> gInteractiveWave : register(t4); // r: 高さ, g: 引き波の泡, b: 波頭の白波（VS では高さだけ使う）
 SamplerState gSamplerClamp : register(s2);
@@ -124,11 +131,43 @@ void AccumulateGerstner(inout GerstnerResult result, float2 dir, float freq,
     result.offset.z += steepness * amp * dir.y * c;
     result.offset.y += amp * s;
 
-    // 接線/従法線への影響
-    result.tangent.x  -= steepness * dir.x * dir.x * freq * amp * s;
+    // 接線/従法線への影響（交差項 dx*dz も入れる。斜めの波で法線が正しく傾くように）
+    float wa = steepness * freq * amp * s;
+    result.tangent.x  -= wa * dir.x * dir.x;
     result.tangent.y  += dir.x * freq * amp * c;
-    result.binormal.z -= steepness * dir.y * dir.y * freq * amp * s;
+    result.tangent.z  -= wa * dir.x * dir.y;
+    result.binormal.x -= wa * dir.x * dir.y;
+    result.binormal.z -= wa * dir.y * dir.y;
     result.binormal.y += dir.y * freq * amp * c;
+}
+
+// 詳細波（OceanWaves.hlsli）の変位だけを足す。
+// 法線は PS でピクセルごとに求めるので、ここでは接線に入れない。
+// 頂点間隔より短い波は表現できず折り返しノイズになるため、minWavelength 未満はフェードアウトさせる。
+// ※ CPU 側 WaterSurface::Evaluate() と同じ式
+float3 ComputeDetailOffset(float2 xz, float time)
+{
+    float3 offset = float3(0, 0, 0);
+    float detail = gOceanParams.x;
+    if (detail <= 0.0) {
+        return offset;
+    }
+    float minLambda = max(gOceanParams.w, 1e-3);
+
+    [unroll]
+    for (int i = 0; i < kDetailWaveCount; ++i)
+    {
+        DetailWave w = GetDetailWave(i, gWaveFreq, gWaveSpeed, gWaveHeight, detail, gOceanParams.y);
+        float lambda = kTwoPi / w.k;
+        float fade = smoothstep(minLambda, minLambda * 1.5, lambda);
+        float ph = DetailPhase(w, xz, time);
+        float s = sin(ph);
+        float c = cos(ph);
+        offset.x += w.qa * w.dir.x * c * fade;
+        offset.z += w.qa * w.dir.y * c * fade;
+        offset.y += w.amp * s * fade;
+    }
+    return offset;
 }
 
 // =====================================================
@@ -213,6 +252,9 @@ GerstnerResult ComputeGerstnerWave(float3 pos, float time)
         AccumulateReflection(result, w, pos.xz, obstacleCount, reflectStrength, reflectRange);
     }
 
+    // 詳細波（変位のみ。法線は PS）
+    result.offset += ComputeDetailOffset(pos.xz, time);
+
     // 障害物の内側では水面を平らに寄せ、メッシュが岩を突き抜けないようにする
     float insideMask = 1.0f;
     [loop]
@@ -295,6 +337,10 @@ VertexShaderOutput main(VertexShaderInput input)
     output.worldPosition = worldPos.xyz;
     output.instColor = float4(1, 1, 1, 1);
     output.waveHeight = wave.offset.y + interactiveHeight;
+
+    // 変位前の XZ（グリッドは平面なので線形補間しても正確）と、主波の水平変位の偏微分
+    output.restXZ = worldPos.xz - wave.offset.xz;
+    output.mainJacobian = float3(wave.tangent.x - 1.0, wave.binormal.z - 1.0, wave.tangent.z);
 
     return output;
 }

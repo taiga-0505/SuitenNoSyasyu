@@ -355,6 +355,13 @@ public:
                     }
                     RC::SetWaterEnvironmentCoefficient(water->meshHandle, water->environmentCoeff);
                     RC::SetWaterCrestTint(water->crestTint);
+                    RC::SetWaterOceanParams(
+                        water->detailStrength, water->choppiness, water->MinDisplacedWavelength(),
+                        water->whitecapStrength, water->whitecapCoverage,
+                        water->sssColor, water->clarity,
+                        water->detailFadeDistance, water->normalTileSize);
+                    RC::SetWaterRefraction(water->refraction, water->refractionStrength,
+                                           water->edgeFade);
                     RC::SetWaterParams(
                         water->waveHeight, water->waveSpeed, water->waveFreq,
                         water->waveHeight2, water->waveSpeed2, water->waveFreq2,

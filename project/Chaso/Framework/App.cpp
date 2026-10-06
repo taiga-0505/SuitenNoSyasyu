@@ -226,6 +226,7 @@ int App::Run() {
 
       sceneCtx_.currentRTV = rtv;
       sceneCtx_.currentDSV = dsv;
+      sceneCtx_.currentColorResource = renderTexture_.GetResource().Get();
 
       Render();
 

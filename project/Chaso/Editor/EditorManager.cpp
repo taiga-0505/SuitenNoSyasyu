@@ -3320,6 +3320,21 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                ImGui::DragFloat("Env Reflection (環境反射)##Water", &water->environmentCoeff, 0.01f, 0.0f, 1.0f);
                ImGui::DragFloat("Crest Tint (高さで色付け)##Water", &water->crestTint, 0.01f, 0.0f, 1.0f);
                ImGui::Separator();
+               ImGui::Text("Ocean Realism (海面のリアル化)");
+               ImGui::DragFloat("Detail Waves (詳細波)##Water", &water->detailStrength, 0.01f, 0.0f, 3.0f);
+               ImGui::DragFloat("Choppiness (尖り)##Water", &water->choppiness, 0.01f, 0.0f, 1.0f);
+               ImGui::DragFloat("Whitecap (白波の濃さ)##Water", &water->whitecapStrength, 0.01f, 0.0f, 2.0f);
+               ImGui::DragFloat("Whitecap Coverage (白波の量)##Water", &water->whitecapCoverage, 0.01f, 0.0f, 1.0f);
+               ImGui::ColorEdit3("SSS Color (透過光の色)##Water", &water->sssColor.x);
+               ImGui::DragFloat("SSS Strength (透過光の強さ)##Water", &water->sssColor.w, 0.01f, 0.0f, 3.0f);
+               ImGui::DragFloat("Clarity m (透明度)##Water", &water->clarity, 0.1f, 0.0f, 50.0f);
+               ImGui::DragFloat("Detail Fade m (遠景フェード)##Water", &water->detailFadeDistance, 1.0f, 0.0f, 2000.0f);
+               ImGui::DragFloat("Normal Tile m (法線タイル, 0=UV)##Water", &water->normalTileSize, 0.1f, 0.0f, 200.0f);
+               ImGui::Text("Min Displaced Wavelength: %.2f m", water->MinDisplacedWavelength());
+               ImGui::Checkbox("Refraction (屈折)##Water", &water->refraction);
+               ImGui::DragFloat("Refraction Strength (歪み)##Water", &water->refractionStrength, 0.001f, 0.0f, 0.2f);
+               ImGui::DragFloat("Edge Fade m (交差部のぼかし)##Water", &water->edgeFade, 0.01f, 0.0f, 5.0f);
+               ImGui::Separator();
                ImGui::Text("Mesh Handle: %d", water->meshHandle);
                ImGui::Unindent(8.0f);
             }

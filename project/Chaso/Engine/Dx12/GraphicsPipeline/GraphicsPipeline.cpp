@@ -802,7 +802,18 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[13].DescriptorTable.NumDescriptorRanges = 1;
     params[13].DescriptorTable.pDescriptorRanges = &ranges[5];
 
-    paramCount = 14;
+    // 14: SRV table t6 (PS) Scene Color（水を描く前の画面のコピー。屈折用）
+    ranges[6].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    ranges[6].BaseShaderRegister = 6; // t6
+    ranges[6].NumDescriptors = 1;
+    ranges[6].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+    params[14].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    params[14].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    params[14].DescriptorTable.NumDescriptorRanges = 1;
+    params[14].DescriptorTable.pDescriptorRanges = &ranges[6];
+
+    paramCount = 15;
     break;
 
   default:

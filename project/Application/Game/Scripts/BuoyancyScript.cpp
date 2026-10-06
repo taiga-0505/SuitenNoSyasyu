@@ -117,16 +117,10 @@ private:
             if (!water) continue;
             auto* tr = e->GetComponent<TransformComponent>();
 
-            waveParams_.waveHeight    = water->waveHeight;
-            waveParams_.waveSpeed     = water->waveSpeed;
-            waveParams_.waveFreq      = water->waveFreq;
-            waveParams_.waveHeight2   = water->waveHeight2;
-            waveParams_.waveSpeed2    = water->waveSpeed2;
-            waveParams_.waveFreq2     = water->waveFreq2;
-            waveParams_.waveSteepness = water->waveSteepness;
             // 水面メッシュのワールド Y が静水面。シェーダも World を通した
             // 座標で波を計算しているので、ここも Transform の Y を基準にする。
-            waveParams_.baseHeight    = tr ? tr->position.y : 0.0f;
+            // 詳細波のパラメータも含めて WaterComponent から一括で取り込む（シェーダと同じ波形にするため）
+            waveParams_ = water->ToWaveParams(tr ? tr->position.y : 0.0f);
             hasWater_ = true;
             break;
         }

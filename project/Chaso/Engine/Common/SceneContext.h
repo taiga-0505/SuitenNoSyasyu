@@ -95,6 +95,9 @@ struct SceneContext {
 
   D3D12_CPU_DESCRIPTOR_HANDLE currentRTV{}; ///< 現在の描画先RTV
   D3D12_CPU_DESCRIPTOR_HANDLE currentDSV{}; ///< 現在の描画先DSV
+  /// @brief currentRTV の実体（RENDER_TARGET 状態）。水面の屈折で「水を描く前の画面」をコピーする元にする。
+  ///        nullptr なら屈折は無効（従来の αブレンドで描く）
+  ID3D12Resource *currentColorResource = nullptr;
 
   /// @brief 再生中かどうか判定する（エディタの再生状態。ゲーム内ポーズは見ない）
   bool isPlaying() const {

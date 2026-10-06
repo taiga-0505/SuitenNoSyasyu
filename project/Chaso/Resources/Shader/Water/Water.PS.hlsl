@@ -64,7 +64,14 @@ cbuffer WaterParams : register(b6)
 
     float4 gObstacles[4];  // xyz: pos, w: radius
     float4 gObstacleCount; // x: count
+
+    float4 gOceanParams;   // x: 詳細波の強さ, y: 尖り(choppy), z: 白波の強さ, w: 頂点で変位させる最短波長(m)
+    float4 gOceanParams2;  // x: 透明度(m), y: 遠景フェード距離(m), z: 法線マップのタイルサイズ(m, 0=従来UV), w: 白波の量
+    float4 gSssColor;      // rgb: 波頭を透ける光の色, a: 強さ
+    float4 gRefractParams; // x: 屈折が有効(1/0), y: 歪みの強さ(画面UV), z: 交差部のフェード幅(m)
 };
+
+#include "OceanWaves.hlsli"
 
 // t0: テクスチャ（法線マップとしても使用可能）
 Texture2D<float4> gTexture : register(t0);
@@ -78,6 +85,9 @@ Texture2D<float4> gInteractiveWave : register(t4);
 // t5: Foam用の深度テクスチャ
 Texture2D<float> gDepthTexture : register(t5);
 
+// t6: 水を描く直前の画面のコピー（屈折用。gRefractParams.x が 1 のときだけ有効）
+Texture2D<float4> gSceneColor : register(t6);
+
 SamplerState gSampler : register(s0);
 SamplerState gSamplerClamp : register(s2);
 
@@ -89,7 +99,7 @@ struct PixelShaderOutput
 // =====================================================
 // ノーマルマップから法線を取得（スクロール合成）
 // =====================================================
-float3 GetScrolledNormal(float2 uv, float time, float3 geometryNormal)
+float3 GetScrolledNormal(float2 uv, float time, float3 geometryNormal, float strength)
 {
     float scrollSpeed = gNormalScrollSpeed;
 
@@ -105,7 +115,7 @@ float3 GetScrolledNormal(float2 uv, float time, float3 geometryNormal)
     float3 blended = normalize(n1 + n2);
 
     // 強度を調整
-    blended.xy *= gNormalStrength;
+    blended.xy *= strength;
     blended = normalize(blended);
 
     // 法線空間 → ワールド空間のマッピング（簡易版）
@@ -117,6 +127,72 @@ float3 GetScrolledNormal(float2 uv, float time, float3 geometryNormal)
     float3 B = cross(N, T);
 
     return normalize(T * blended.x + B * blended.y + N * blended.z);
+}
+
+// =====================================================
+// 詳細波の傾きと水平変位の偏微分（ピクセルごとに解析的に計算）
+// =====================================================
+// 頂点では表せない短い波も、ここでは傾き（法線）として描ける。
+// footprint は 1 ピクセルが覆うワールド幅。波長がそれに近い波は
+// チラつき（エイリアス）の元なので弱める。
+struct DetailSurface
+{
+    float2 slope;    // (dH/dx, dH/dz)
+    float3 jacobian; // (dDx/dx, dDz/dz, dDx/dz)
+};
+
+DetailSurface EvaluateDetailSurface(float2 xz, float time, float footprint)
+{
+    DetailSurface o;
+    o.slope = float2(0, 0);
+    o.jacobian = float3(0, 0, 0);
+
+    float detail = gOceanParams.x;
+    if (detail <= 0.0) {
+        return o;
+    }
+
+    [unroll]
+    for (int i = 0; i < kDetailWaveCount; ++i)
+    {
+        DetailWave w = GetDetailWave(i, gWaveFreq, gWaveSpeed, gWaveHeight, detail, gOceanParams.y);
+        float lambda = kTwoPi / w.k;
+        float aa = smoothstep(footprint * 2.0, footprint * 6.0, lambda);
+        float ph = DetailPhase(w, xz, time);
+        float s = sin(ph);
+        float c = cos(ph);
+
+        o.slope += w.dir * (w.amp * w.k * c * aa);
+
+        float wa = w.qa * w.k * s * aa;
+        o.jacobian.x -= wa * w.dir.x * w.dir.x;
+        o.jacobian.y -= wa * w.dir.y * w.dir.y;
+        o.jacobian.z -= wa * w.dir.x * w.dir.y;
+    }
+    return o;
+}
+
+// =====================================================
+// GGX スペキュラ（太陽のギラつき）
+// =====================================================
+float SpecularGGX(float3 N, float3 V, float3 L, float alpha, float F0)
+{
+    float3 H = normalize(L + V);
+    float NdotL = saturate(dot(N, L));
+    float NdotV = max(dot(N, V), 1e-3);
+    float NdotH = saturate(dot(N, H));
+    float VdotH = saturate(dot(V, H));
+
+    float a2 = alpha * alpha;
+    float d  = NdotH * NdotH * (a2 - 1.0) + 1.0;
+    float D  = a2 / (3.14159265 * d * d);
+
+    float k   = alpha * 0.5;
+    float vis = 0.25 / ((NdotL * (1.0 - k) + k) * (NdotV * (1.0 - k) + k));
+
+    float F = F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
+
+    return D * vis * F * NdotL;
 }
 
 // =====================================================
@@ -199,8 +275,29 @@ PixelShaderOutput main(VertexShaderOutput input)
     // ジオメトリ法線 + 波紋法線 + 跳ね返り法線
     geoNormal = normalize(geoNormal + (interactiveNormal - float3(0, 1, 0)) + bounceNormal);
 
+    // =========================
+    // 詳細波（ピクセルごとの解析法線）
+    // =========================
+    // 高さ場 y = h(x,z) の法線は (-hx, 1, -hz)。主波の法線を傾きに戻し、詳細波の傾きを足す。
+    float camDist = distance(gCamera.worldPosition, input.worldPosition);
+    float distT = (gOceanParams2.y > 0.0) ? saturate(camDist / gOceanParams2.y) : 0.0; // 0: 近景, 1: 遠景
+    float2 fw = fwidth(input.restXZ);
+    float footprint = max(max(fw.x, fw.y), 1e-4);
+    DetailSurface detailSurf = EvaluateDetailSurface(input.restXZ, gTime, footprint);
+    {
+        float ny = max(geoNormal.y, 0.2);
+        float2 slope = geoNormal.xz / -ny + detailSurf.slope;
+        geoNormal = normalize(float3(-slope.x, 1.0, -slope.y));
+    }
+
     // ノイズテクスチャのスクロール法線と合成
-    float3 N = GetScrolledNormal(input.texcoord, gTime, geoNormal);
+    // gOceanParams2.z > 0 ならワールド座標で敷き詰める（平面の大きさに関係なく同じ細かさになる）
+    float2 normalUV = (gOceanParams2.z > 0.0)
+        ? input.worldPosition.xz / (gOceanParams2.z * 4.0)
+        : input.texcoord;
+    // 遠景では細かい法線を弱める（タイルの繰り返しとギラギラしたチラつきを抑える）
+    float normalStrength = gNormalStrength * lerp(1.0, 0.35, distT);
+    float3 N = GetScrolledNormal(normalUV, gTime, geoNormal, normalStrength);
 
     // =========================
     // さざ波のムラ（真上視点のシーンだけ。crestTint > 0 のとき）
@@ -235,6 +332,17 @@ PixelShaderOutput main(VertexShaderOutput input)
     float4 waterColor = lerp(gWaterShallowColor, gWaterDeepColor, 1.0 - NdotV);
     waterColor *= gMaterial.color; // マテリアル色を乗算
 
+    // 透明度（gOceanParams2.x, m）：水面の奥にある物体が近いほど浅瀬色に寄せ、透かす。
+    // 光は水中で exp(-距離/透明度) で減衰する（Beer-Lambert）。奥に何も無い外洋では depthDiff が
+    // 遠クリップ近くまで伸びるので効果は 0 になり、従来どおりの色になる。
+    const bool refractionOn = (gRefractParams.x > 0.5);
+    if (gOceanParams2.x > 0.0 && !refractionOn) // 屈折ありのときは下の屈折の合成で同じことをする
+    {
+        float shallowness = exp(-max(depthDiff, 0.0) / gOceanParams2.x);
+        waterColor.rgb = lerp(waterColor.rgb, gWaterShallowColor.rgb * gMaterial.color.rgb, shallowness * 0.6);
+        waterColor.a   = lerp(waterColor.a, waterColor.a * 0.4, shallowness);
+    }
+
     // =========================
     // 波の高さによる色付け（gFoamParams.z = crestTint、0 で無効）
     // =========================
@@ -245,7 +353,8 @@ PixelShaderOutput main(VertexShaderOutput input)
     float crestT = 0.0;
     if (crestTint > 0.0)
     {
-        float amplitude = max(gWaveHeight + gWaveHeight2 + gWaveHeight * 0.25, 0.001);
+        float amplitude = max(gWaveHeight + gWaveHeight2 + gWaveHeight * 0.25
+                              + DetailAmplitudeSum(gWaveFreq, gWaveHeight, gOceanParams.x), 0.001);
         crestT = smoothstep(0.0, 1.0, saturate(input.waveHeight / amplitude * 0.5 + 0.5)); // 0: 谷, 1: 山
         float3 troughColor = lerp(waterColor.rgb, gWaterDeepColor.rgb, crestTint * 0.85);
         float3 crestColor  = waterColor.rgb * (1.0 + crestTint * 0.35);
@@ -265,6 +374,10 @@ PixelShaderOutput main(VertexShaderOutput input)
     // 環境マップ反射
     // =========================
     float3 reflectedDir = reflect(-V, N);
+    // 波の裏側で反射ベクトルが下を向くと、スカイボックスの地面側（暗い色）を拾って黒い斑点になる。
+    // 実際には別の波面に当たって空を映すので、水平より上に折り返しておく。
+    reflectedDir.y = max(reflectedDir.y, 0.02);
+    reflectedDir = normalize(reflectedDir);
     float4 envColor = gEnvironmentTexture.Sample(gSampler, reflectedDir);
 
     // =========================
@@ -279,17 +392,104 @@ PixelShaderOutput main(VertexShaderOutput input)
 
     float3 lightColor = gDirectionalLight.color.rgb * gDirectionalLight.intensity;
 
-    // スペキュラ (Blinn-Phong)
-    float3 H = normalize(L + V);
-    float specular = pow(saturate(dot(N, H)), gSpecularPower) * gDirectionalLight.intensity;
+    // スペキュラ (GGX)
+    // Specular Power（Blinn-Phong の指数）を GGX の粗さへ換算して互換を保つ: alpha = √(2/(n+2))
+    // 遠景では 1 ピクセルに多数の波面が入るので粗さを上げる → 水平線に向かって太陽の光の道が伸びる
+    float alpha = sqrt(2.0 / (max(gSpecularPower, 1.0) + 2.0));
+    alpha = lerp(alpha, max(alpha, 0.22), distT);
+    alpha = clamp(alpha, 0.02, 1.0);
+    float specular = min(SpecularGGX(N, V, L, alpha, F0), 16.0);
+
+    // =========================
+    // サブサーフェススキャタリング（波頭を透ける光）
+    // =========================
+    // 太陽の方を向いて波を見ると、薄くなった波頭を光が通り抜けて明るい青緑に光る。
+    //   crest   : 波の高い所ほど薄く透けやすい
+    //   facing  : 視線が太陽の方向（水平成分）を向いているほど強い
+    //   grazing : 波面を斜めから見ているほど強い（真上視点でもわずかに残す）
+    float sss = 0.0;
+    if (gSssColor.a > 0.0)
+    {
+        float ampAll = max(gWaveHeight * 1.25 + gWaveHeight2
+                           + DetailAmplitudeSum(gWaveFreq, gWaveHeight, gOceanParams.x), 0.001);
+        float crest = saturate(input.waveHeight / ampAll * 0.5 + 0.5);
+        float2 vh = -V.xz;
+        float2 lh = L.xz;
+        float facing = (dot(vh, vh) > 1e-6 && dot(lh, lh) > 1e-6)
+            ? saturate(dot(normalize(vh), normalize(lh))) : 0.0;
+        float sunLow = saturate(1.0 - L.y * 0.7); // 太陽が低いほど横から抜ける
+        float grazing = lerp(0.3, 1.0, 1.0 - NdotV);
+        sss = gSssColor.a * crest * crest * (0.2 + 1.6 * pow(facing, 4.0) * sunLow) * grazing;
+    }
 
     // =========================
     // 最終合成
     // =========================
-    // 水面色（ディフューズ）+ 環境マップ反射 + スペキュラ
+    // 水面色（ディフューズ）+ 環境マップ反射 + SSS + スペキュラ
     float3 finalColor = waterColor.rgb * lightColor * diffuse;
+
+    // =========================
+    // 屈折（スクリーンテクスチャ方式）
+    // =========================
+    // 水を描く直前の画面を、水面の法線（さざ波・うねり）でずらして引き、水中の物体をゆらがせる。
+    // 光は水中を進むほど吸収・散乱されるので、
+    //   透過光 = 画面の色 × 浅瀬色の色味^(厚み/透明度) × exp(-厚み/透明度)
+    //   散乱光 = 水の色（深海色寄り） × (1 - exp(-厚み/透明度))
+    // を足す。浅い所は水底が透け、深い所は水の色になる。
+    if (refractionOn)
+    {
+        float2 refrOffset = N.xz * gRefractParams.y;
+        refrOffset *= saturate(depthDiff);                    // 交差部はずらさない（物体の縁がちぎれないように）
+        refrOffset /= max(1.0, pixelDepth * 0.05);            // 遠くほど画面上のずれを小さく
+        float2 refrUV = saturate(screenUV + refrOffset);
+
+        // ずらした先が水面より手前の物体なら、それを水中に映り込ませないよう元の位置へ戻す
+        float refrDepth = LinearizeDepth(gDepthTexture.SampleLevel(gSamplerClamp, refrUV, 0).r,
+                                         gCameraNearFar.x, gCameraNearFar.y);
+        if (refrDepth < pixelDepth) {
+            refrUV = screenUV;
+            refrDepth = sceneDepth;
+        }
+        float thickness = max(refrDepth - pixelDepth, 0.0);
+        float3 sceneCol = gSceneColor.SampleLevel(gSamplerClamp, refrUV, 0).rgb;
+
+        float clarity = (gOceanParams2.x > 0.0) ? gOceanParams2.x : 3.0;
+        float d = thickness / clarity;
+        float T = exp(-d);
+        float3 tint = gWaterShallowColor.rgb
+                    / max(max(gWaterShallowColor.r, gWaterShallowColor.g), max(gWaterShallowColor.b, 1e-3));
+        float3 transmit = pow(max(tint, 1e-3), min(d, 16.0));
+
+        finalColor = sceneCol * transmit * T + finalColor * (1.0 - T);
+    }
+
     finalColor = lerp(finalColor, envColor.rgb, fresnel * gMaterial.environmentCoefficient);
-    finalColor += lightColor * specular * 0.5;
+    finalColor += gSssColor.rgb * lightColor * sss * (1.0 - fresnel);
+    finalColor += lightColor * specular;
+
+    // =========================
+    // 白波（波の山が押しつぶされて砕ける所）
+    // =========================
+    // Gerstner 波は山で頂点が寄り集まる。水平変位のヤコビアン J が 1 より小さい所ほど
+    // 水面が圧縮されている（0 で折り返す＝砕ける）ので、そこに泡を乗せる。
+    float whitecap = 0.0;
+    if (gOceanParams.z > 0.0)
+    {
+        float3 jm = input.mainJacobian + detailSurf.jacobian;
+        float J = (1.0 + jm.x) * (1.0 + jm.y) - jm.z * jm.z;
+        float threshold = lerp(0.55, 0.95, saturate(gOceanParams2.w)); // 白波の量
+        float foldFoam = saturate((threshold - J) / 0.25);
+
+        // 泡の形を崩すノイズ（法線マップのチャンネルを借用、ゆっくり流す）
+        float2 wp = input.worldPosition.xz;
+        float lace = gTexture.Sample(gSampler, wp * 0.21 + float2(gTime * 0.02, -gTime * 0.013)).r * 0.6
+                   + gTexture.Sample(gSampler, wp * 0.53 + float2(-gTime * 0.03, gTime * 0.021)).g * 0.4;
+        foldFoam *= smoothstep(0.35, 0.65, lace + foldFoam * 0.3);
+
+        whitecap = saturate(foldFoam * gOceanParams.z) * lerp(1.0, 0.6, distT);
+        float3 capLit = gFoamColor.rgb * min(lightColor * lerp(0.7, 0.95, NdotL), 0.95);
+        finalColor = lerp(finalColor, capLit, whitecap);
+    }
 
     // 山のいちばん高いところだけ薄く白を乗せる（白波）。crestTint が 0 なら何もしない
     if (crestTint > 0.0)
@@ -365,7 +565,9 @@ PixelShaderOutput main(VertexShaderOutput input)
     finalColor = lerp(finalColor, foamColor, foamIntensity * gFoamColor.a);
 
     // 泡は不透明（浅瀬で透けている所でも白く乗る）
-    output.color = float4(finalColor, lerp(waterColor.a, 1.0, max(foamMask, milkyT * 0.4)));
+    // 屈折ありのときは自前で水中を合成済みなので不透明。物体との交差部だけ αでぼかしてクリッピングの線を消す
+    float baseAlpha = refractionOn ? saturate(depthDiff / max(gRefractParams.z, 0.001)) : waterColor.a;
+    output.color = float4(finalColor, lerp(baseAlpha, 1.0, max(max(foamMask, milkyT * 0.4), whitecap)));
 
     return output;
 }

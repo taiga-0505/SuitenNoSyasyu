@@ -2,6 +2,7 @@
 
 #include "IComponent.h"
 #include "Math/MathTypes.h"
+#include "Common/Water/WaterSurface.h"
 #include <string>
 #include <nlohmann/json.hpp>
 
@@ -36,6 +37,46 @@ public:
   float environmentCoeff = 0.5f;  ///< Environment map reflection coefficient
   float crestTint = 0.0f;         ///< 波の高さによる色付けの強さ（0 で無効。真上視点で山と谷を色で見せる）
 
+  // --- Ocean Realism（OceanWaves.hlsli / Water.PS.hlsl）---
+  float detailStrength   = 1.0f;   ///< 詳細波（風向きのまわりの短い波 8 本）の強さ。0 で従来の 3 波だけ
+  float choppiness       = 0.6f;   ///< 詳細波の尖り 0..1（山が鋭く、谷が平らになる）
+  float whitecapStrength = 0.8f;   ///< 波頭の白波の濃さ（0 で無効）
+  float whitecapCoverage = 0.5f;   ///< 白波の量 0..1（大きいほど広く出る）
+  RC::Vector4 sssColor   = {0.10f, 0.62f, 0.52f, 0.9f}; ///< 波頭を透ける光の色 (rgb) と強さ (a)。a=0 で無効
+  float clarity          = 3.0f;   ///< 透明度 m。奥の物体がこの距離より近いと浅瀬色に寄せて透かす（0 で無効）
+  float detailFadeDistance = 150.0f; ///< この距離に向けて細かい法線を弱め、太陽の照り返しを広げる（0 で無効）
+  float normalTileSize   = 0.0f;   ///< 法線マップ 1 枚のワールドサイズ m（0 で従来どおり平面の UV に貼る）
+
+  // --- 屈折（スクリーンテクスチャ）---
+  bool  refraction         = true;  ///< 水を描く前の画面を法線で歪めて透かす（false で従来の αブレンド）
+  float refractionStrength = 0.04f; ///< 歪みの強さ（画面 UV）
+  float edgeFade           = 0.5f;  ///< 物体との交差部をぼかす幅 m
+
+  /// @brief 頂点で表現できる最短波長（頂点 4 つぶん）。これより短い詳細波は変位させず、法線だけで描く
+  float MinDisplacedWavelength() const {
+    const float size = (planeWidth > planeHeight) ? planeWidth : planeHeight;
+    const float segs = (segments > 0) ? static_cast<float>(segments) : 1.0f;
+    return 4.0f * size / segs;
+  }
+
+  /// @brief CPU 側の水面計算（RC::WaterSurface）用のパラメータを組み立てる
+  /// @param baseHeight 水面エンティティのワールド Y（静水面）
+  RC::WaterWaveParams ToWaveParams(float baseHeight) const {
+    RC::WaterWaveParams p;
+    p.waveHeight    = waveHeight;
+    p.waveSpeed     = waveSpeed;
+    p.waveFreq      = waveFreq;
+    p.waveHeight2   = waveHeight2;
+    p.waveSpeed2    = waveSpeed2;
+    p.waveFreq2     = waveFreq2;
+    p.waveSteepness = waveSteepness;
+    p.baseHeight    = baseHeight;
+    p.detail        = detailStrength;
+    p.choppiness    = choppiness;
+    p.minWavelength = MinDisplacedWavelength();
+    return p;
+  }
+
   // --- Mesh Generation ---
   float planeWidth  = 100.0f;  ///< Water plane width
   float planeHeight = 100.0f;  ///< Water plane depth
@@ -66,6 +107,17 @@ public:
       {"normalStrength", normalStrength},
       {"environmentCoeff", environmentCoeff},
       {"crestTint", crestTint},
+      {"detailStrength", detailStrength},
+      {"choppiness", choppiness},
+      {"whitecapStrength", whitecapStrength},
+      {"whitecapCoverage", whitecapCoverage},
+      {"sssColor", {sssColor.x, sssColor.y, sssColor.z, sssColor.w}},
+      {"clarity", clarity},
+      {"detailFadeDistance", detailFadeDistance},
+      {"normalTileSize", normalTileSize},
+      {"refraction", refraction},
+      {"refractionStrength", refractionStrength},
+      {"edgeFade", edgeFade},
       {"planeWidth", planeWidth},
       {"planeHeight", planeHeight},
       {"segments", segments},
@@ -96,6 +148,20 @@ public:
     if (j.contains("normalStrength")) normalStrength = j["normalStrength"].get<float>();
     if (j.contains("environmentCoeff")) environmentCoeff = j["environmentCoeff"].get<float>();
     if (j.contains("crestTint")) crestTint = j["crestTint"].get<float>();
+    if (j.contains("detailStrength")) detailStrength = j["detailStrength"].get<float>();
+    if (j.contains("choppiness")) choppiness = j["choppiness"].get<float>();
+    if (j.contains("whitecapStrength")) whitecapStrength = j["whitecapStrength"].get<float>();
+    if (j.contains("whitecapCoverage")) whitecapCoverage = j["whitecapCoverage"].get<float>();
+    if (j.contains("sssColor")) {
+      auto& c = j["sssColor"];
+      sssColor = {c[0].get<float>(), c[1].get<float>(), c[2].get<float>(), c[3].get<float>()};
+    }
+    if (j.contains("clarity")) clarity = j["clarity"].get<float>();
+    if (j.contains("detailFadeDistance")) detailFadeDistance = j["detailFadeDistance"].get<float>();
+    if (j.contains("normalTileSize")) normalTileSize = j["normalTileSize"].get<float>();
+    if (j.contains("refraction")) refraction = j["refraction"].get<bool>();
+    if (j.contains("refractionStrength")) refractionStrength = j["refractionStrength"].get<float>();
+    if (j.contains("edgeFade")) edgeFade = j["edgeFade"].get<float>();
     if (j.contains("planeWidth")) planeWidth = j["planeWidth"].get<float>();
     if (j.contains("planeHeight")) planeHeight = j["planeHeight"].get<float>();
     if (j.contains("segments")) segments = j["segments"].get<uint32_t>();

@@ -1045,6 +1045,31 @@ void SetWaterEnvironmentCoefficient(int meshHandle, float coeff);
 ///          値は WaterParamsCB の未使用フィールド gFoamParams.z へ載せるため CB レイアウトは不変。
 void SetWaterCrestTint(float crestTint);
 
+/// @brief 海面のリアル化パラメータを設定する（詳細波・白波・SSS・透明度など）
+/// @param detailStrength 詳細波の強さ（0 で従来の 3 波だけ）
+/// @param choppiness 詳細波の尖り 0..1
+/// @param minWavelength 頂点で変位させる最短波長 m（WaterComponent::MinDisplacedWavelength()）
+/// @param whitecapStrength 白波の濃さ（0 で無効）
+/// @param whitecapCoverage 白波の量 0..1
+/// @param sssColor 波頭を透ける光の色 (rgb) と強さ (a)
+/// @param clarity 透明度 m（0 で無効）
+/// @param detailFadeDistance 遠景で細かい法線を弱める距離 m（0 で無効）
+/// @param normalTileSize 法線マップ 1 枚のワールドサイズ m（0 で平面の UV に貼る従来方式）
+/// @details CPU 側の水面（RC::WaterSurface）と波形を一致させるため、detailStrength / choppiness /
+///          minWavelength は WaterComponent::ToWaveParams() と同じ値を渡すこと。
+void SetWaterOceanParams(float detailStrength, float choppiness, float minWavelength,
+                         float whitecapStrength, float whitecapCoverage,
+                         const Vector4 &sssColor, float clarity,
+                         float detailFadeDistance, float normalTileSize);
+
+/// @brief 水面の屈折（スクリーンテクスチャ方式）を設定する
+/// @param enable true で、水を描く直前の画面をコピーし、法線で歪めて水中を透かす
+/// @param strength 歪みの強さ（画面 UV 単位。0.02〜0.06 くらい）
+/// @param edgeFade 物体との交差部をぼかす幅 m（ここだけ αで透ける）
+/// @details 有効時は浅瀬色を掛けた歪んだ画面と深海色を水深（透明度）で混ぜて不透明に描く。
+///          コピーが取れない描画先（MSAA など）では自動で従来の αブレンドに戻る。
+void SetWaterRefraction(bool enable, float strength, float edgeFade);
+
 /// @brief 水面用のフレーム時間を設定する
 /// @param timeSec 累積時間（秒）
 void SetWaterTime(float timeSec);
