@@ -97,6 +97,37 @@ struct PixelShaderOutput
 };
 
 // =====================================================
+// マウス波紋（インタラクティブ波）のライティング
+// =====================================================
+// 波紋の高さは数 cm、傾きは多くの所で 2〜3°しかない。真上視点・ほぼ真上の太陽だと
+// N・L も フレネル もほとんど変わらず、形は動くのに光り方が変わらない。
+// そこで「光の計算に使う傾き」だけを強め、次の 2 つで光の変化として見せる。
+//   ・太陽側の斜面を明るく、反対側を暗く（ライトの水平方向で決まるので、ライトを回せば陰影も回る）
+//   ・水底のコースティクス（波紋の山がレンズになって光を集め、谷で散らす）
+static const float kRippleNormalGain = 4.0;  // 小さな波紋の傾きを法線へ反映する倍率（頂点の変位は変えない）
+static const float kRippleMaxSlope   = 0.35; // 倍率をかけた傾きの頭打ち（tan ≈ 19°）。急な斜面は本来の傾きのまま
+static const float kRippleSunShade   = 0.9;  // 太陽側/反対側の斜面の明暗の強さ（0 で無効）
+static const float kRippleShadeMin   = 0.7;  // 斜面の陰影で暗くなる下限（真上の太陽では実際 2 割程度しか暗くならない）
+static const float kRippleShadeMax   = 1.3;  // 斜面の陰影で明るくなる上限
+static const float kCausticFocus     = 0.75; // 集光の強さ。物理値は 1-1/1.33 ≈ 0.25（波紋が低いので誇張）
+static const float kCausticMax       = 2.5;  // 集光で明るくなる上限
+static const float kCausticMin       = 0.6;  // 光が散って暗くなる下限（溝の真下が黒く抜けないように）
+
+// 波紋の傾き s（= -∇h）に倍率をかけ、大きくなるほど頭打ちにする。
+//   小さな傾き : ほぼ s * kRippleNormalGain（細かい波紋でも光が動いて見える）
+//   大きな傾き : kRippleMaxSlope に近づく。ただし本来の傾きより小さくはしない
+float2 ShapeRippleSlope(float2 s)
+{
+    float m = length(s);
+    if (m < 1e-6) {
+        return s;
+    }
+    float g = m * kRippleNormalGain;
+    float limited = g / sqrt(1.0 + (g / kRippleMaxSlope) * (g / kRippleMaxSlope));
+    return s * (max(limited, m) / m);
+}
+
+// =====================================================
 // ノーマルマップから法線を取得（スクロール合成）
 // =====================================================
 float3 GetScrolledNormal(float2 uv, float time, float3 geometryNormal, float strength)
@@ -265,12 +296,19 @@ PixelShaderOutput main(VertexShaderOutput input)
     float hR = gInteractiveWave.Sample(gSamplerClamp, waveUV + float2(texelSize, 0)).r;
     float hD = gInteractiveWave.Sample(gSamplerClamp, waveUV + float2(0, -texelSize)).r;
     float hU = gInteractiveWave.Sample(gSamplerClamp, waveUV + float2(0, texelSize)).r;
-    // 泡の量（g: 引き波 / b: 波頭）。範囲外（UV が 0..1 の外）はクランプで端の値になるので 0 に落とす
-    float2 foamSample = gInteractiveWave.Sample(gSamplerClamp, waveUV).gb;
-    foamSample *= (all(waveUV > 0.0) && all(waveUV < 1.0)) ? 1.0 : 0.0;
+    // r: 中心の高さ / g: 引き波 / b: 波頭。範囲外（UV が 0..1 の外）はクランプで端の値になるので 0 に落とす
+    float4 waveCenter = gInteractiveWave.Sample(gSamplerClamp, waveUV);
+    float inWaveArea = (all(waveUV > 0.0) && all(waveUV < 1.0)) ? 1.0 : 0.0;
+    float2 foamSample = waveCenter.gb * inWaveArea;
     float wakeFoam  = foamSample.x;
     float crestFoam = foamSample.y;
-    float3 interactiveNormal = normalize(float3(hL - hR, 2.0f * (100.0f * texelSize), hD - hU));
+
+    // 波紋の法線（光の計算用に傾きを強める。ShapeRippleSlope 参照）と、集光に使う曲率（ラプラシアン）
+    float texelWorld = 100.0f * texelSize;
+    float2 rippleSlope = float2(hL - hR, hD - hU) / (2.0f * texelWorld) * inWaveArea;
+    rippleSlope = ShapeRippleSlope(rippleSlope);
+    float3 interactiveNormal = normalize(float3(rippleSlope.x, 1.0f, rippleSlope.y));
+    float rippleLaplacian = (hL + hR + hU + hD - 4.0f * waveCenter.r) / (texelWorld * texelWorld) * inWaveArea;
 
     // ジオメトリ法線 + 波紋法線 + 跳ね返り法線
     geoNormal = normalize(geoNormal + (interactiveNormal - float3(0, 1, 0)) + bounceNormal);
@@ -425,8 +463,16 @@ PixelShaderOutput main(VertexShaderOutput input)
     // =========================
     // 最終合成
     // =========================
+    // 波紋の陰影：法線の水平成分がライトの水平方向を向いている斜面ほど明るい。
+    // 真上からの光では N・L の変化は傾きの 2 乗でしか効かないため、1 次の項として別に足す。
+    float2 sunHorizontal = L.xz;
+    float  sunHorizontalLen = length(sunHorizontal);
+    float2 sunDirXZ = (sunHorizontalLen > 1e-4) ? sunHorizontal / sunHorizontalLen : float2(0, 0);
+    float  rippleShade = clamp(1.0 + dot(interactiveNormal.xz, sunDirXZ) * kRippleSunShade,
+                               kRippleShadeMin, kRippleShadeMax);
+
     // 水面色（ディフューズ）+ 環境マップ反射 + SSS + スペキュラ
-    float3 finalColor = waterColor.rgb * lightColor * diffuse;
+    float3 finalColor = waterColor.rgb * lightColor * diffuse * rippleShade;
 
     // =========================
     // 屈折（スクリーンテクスチャ方式）
@@ -452,6 +498,13 @@ PixelShaderOutput main(VertexShaderOutput input)
         }
         float thickness = max(refrDepth - pixelDepth, 0.0);
         float3 sceneCol = gSceneColor.SampleLevel(gSamplerClamp, refrUV, 0).rgb;
+
+        // 水底のコースティクス：水面を高さ場 h とみると、深さ d の水底に届く光の密度は
+        //   1 / (1 + (1 - 1/η) * d * ∇²h)
+        // 山（∇²h < 0）の下で集まって明るく、谷（∇²h > 0）の下で散って暗くなる。
+        float causticJ = 1.0 + kCausticFocus * thickness * rippleLaplacian;
+        float caustic  = clamp(1.0 / max(causticJ, 1e-3), kCausticMin, kCausticMax);
+        sceneCol *= caustic;
 
         float clarity = (gOceanParams2.x > 0.0) ? gOceanParams2.x : 3.0;
         float d = thickness / clarity;

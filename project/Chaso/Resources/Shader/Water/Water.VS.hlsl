@@ -290,33 +290,14 @@ VertexShaderOutput main(VertexShaderInput input)
     float2 waveUV = (worldPos.xz / 100.0f) + 0.5f;
     float interactiveHeight = gInteractiveWave.SampleLevel(gSamplerClamp, waveUV, 0).r;
 
-    // 波紋の法線計算のための有限差分
-    float texel = 1.0f / 256.0f;
-    float hL = gInteractiveWave.SampleLevel(gSamplerClamp, waveUV + float2(-texel, 0), 0).r;
-    float hR = gInteractiveWave.SampleLevel(gSamplerClamp, waveUV + float2(texel, 0), 0).r;
-    float hU = gInteractiveWave.SampleLevel(gSamplerClamp, waveUV + float2(0, -texel), 0).r;
-    float hD = gInteractiveWave.SampleLevel(gSamplerClamp, waveUV + float2(0, texel), 0).r;
-    
-    // Y変位に対するX/Z方向の傾き
-    // WorldPos = (x, y, z), scale is 100m, uv range 0~1.
-    // dx = 100.0f * 2.0f * texel, dy = hR - hL
-    float3 dX = float3(200.0f * texel, hR - hL, 0);
-    float3 dZ = float3(0, hD - hU, 200.0f * texel);
-    float3 interactiveNormal = normalize(cross(dZ, dX));
-
     // 変位適用
     worldPos.xyz += wave.offset;
     worldPos.y += interactiveHeight;
 
     // 法線を接線・従法線から計算（cross product）
-    float3 gerstnerN = normalize(cross(wave.binormal, wave.tangent));
-    
-    // 法線の合成（簡易ブレンド：Y上向きを基準に足し合わせ）
-    float3 N = normalize(float3(
-        gerstnerN.x + interactiveNormal.x,
-        gerstnerN.y * interactiveNormal.y,
-        gerstnerN.z + interactiveNormal.z
-    ));
+    // ※ 波紋の法線はここでは足さない。PS がピクセルごとに求めて合成する
+    //   （以前は VS と PS の両方で足していて、波紋の傾きが二重に入っていた）
+    float3 N = normalize(cross(wave.binormal, wave.tangent));
 
     // 変位後のワールド位置を WVP で投影
     // World逆行列を使って元のローカルに戻してから WVP する代わりに、
