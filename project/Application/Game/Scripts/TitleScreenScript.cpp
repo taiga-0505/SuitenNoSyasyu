@@ -203,10 +203,10 @@ public:
   bool quitEnabled = true;
 
   // ---- マウス操作 ----
-  // マウスを動かすとカーソル下のメニューが選択され、mouseConfirmButton（既定：右クリック）で決定する。
-  // 左クリックは TitleMouseRippleScript の波紋に使っているので決定には使わない。
+  // マウスを動かすとカーソル下のメニューが選択され、mouseConfirmButton（既定：左クリック）で決定する。
+  // 左クリックは TitleMouseRippleScript の波紋も同時に出る（決定の手応えとしてそのまま使う）。
   bool mouseEnabled = true;
-  int mouseConfirmButton = 1;     ///< 0 = 左 / 1 = 右 / 2 = 中
+  int mouseConfirmButton = 0;     ///< 0 = 左 / 1 = 右 / 2 = 中
   float mouseHitPadding = 0.35f;  ///< 当たり判定を文字の外側へ広げる量（m）
   float mouseMoveThreshold = 2.0f; ///< これ以上（px）動いたら「マウスを動かした」とみなす
 

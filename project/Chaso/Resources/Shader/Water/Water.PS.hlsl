@@ -91,6 +91,70 @@ Texture2D<float4> gSceneColor : register(t6);
 SamplerState gSampler : register(s0);
 SamplerState gSamplerClamp : register(s2);
 
+// =====================================================
+// 平行光源の影（Object3d.hlsli の ShadowData と同じレイアウト・同じバッファ）
+// =====================================================
+// Water は b6 / t4 を WaterParams / 波紋に使っているので、影は b7 / t7 で受け取る。
+struct ShadowData
+{
+    float4x4 lightViewProjection;
+    float3   lightDirection;
+    float    bias;
+    float4   color;              // rgb: 影の色, a: 濃さ
+    int      shadowMapEnabled;
+    float2   shadowMapTexelSize; // 1テクセルのUVサイズ
+    float    pcfRadius;          // PCFのタップ間隔（テクセル単位。0以下で1タップ）
+};
+ConstantBuffer<ShadowData> gShadowParams : register(b7);
+Texture2D<float> gShadowMap : register(t7);
+SamplerComparisonState gShadowCmpSampler : register(s3);
+
+// 水面の影の効き方
+static const float kWaterShadowPcfScale = 1.5; // 水面は波で縁が揺れるので、物体より少し柔らかくする
+static const float kWaterSunBlock       = 2.0; // 影の濃さ(a)に対する直射光（ギラつき・SSS）の遮り方。a=0.5 で完全に消える
+
+// 水面上の点が太陽から見えている率（1: 日向, 0: 完全に影）を返す。
+// 影が無効・シャドウマップの範囲外では 1。
+float SampleWaterShadow(float3 worldPos, float3 N)
+{
+    if (gShadowParams.shadowMapEnabled == 0) {
+        return 1.0;
+    }
+
+    float4 lp = mul(float4(worldPos, 1.0), gShadowParams.lightViewProjection);
+    float3 proj = lp.xyz / lp.w;
+    float2 uv = float2(proj.x * 0.5 + 0.5, -proj.y * 0.5 + 0.5);
+    if (any(uv < 0.0) || any(uv > 1.0) || proj.z < 0.0 || proj.z > 1.0) {
+        return 1.0;
+    }
+
+    // 水面自体はシャドウマップに描かれない（自己影が起きない）ので、バイアスは
+    // 喫水線で船体と水面が接する所の取りこぼし対策ぶんだけでよい
+    float NdotL = saturate(dot(N, -gShadowParams.lightDirection));
+    float compareDepth = proj.z - max(0.001, gShadowParams.bias * (1.0 - NdotL));
+
+    float lit;
+    if (gShadowParams.pcfRadius <= 0.0) {
+        lit = gShadowMap.SampleCmpLevelZero(gShadowCmpSampler, uv, compareDepth);
+    } else {
+        float2 stepUV = gShadowParams.shadowMapTexelSize * gShadowParams.pcfRadius * kWaterShadowPcfScale;
+        float sum = 0.0;
+        [unroll]
+        for (int y = -1; y <= 1; ++y) {
+            [unroll]
+            for (int x = -1; x <= 1; ++x) {
+                sum += gShadowMap.SampleCmpLevelZero(gShadowCmpSampler, uv + float2(x, y) * stepUV, compareDepth);
+            }
+        }
+        lit = sum / 9.0;
+    }
+
+    // シャドウマップの外周で影が唐突に切れないようにフェード（Object3d と同じ）
+    float2 fadeUV = abs(uv * 2.0 - 1.0);
+    float edgeFade = saturate((1.0 - max(fadeUV.x, fadeUV.y)) / 0.05);
+    return lerp(1.0, lit, edgeFade);
+}
+
 struct PixelShaderOutput
 {
     float4 color : SV_TARGET0;
@@ -430,13 +494,24 @@ PixelShaderOutput main(VertexShaderOutput input)
 
     float3 lightColor = gDirectionalLight.color.rgb * gDirectionalLight.intensity;
 
+    // =========================
+    // 平行光源の影
+    // =========================
+    // 影の中の水面は「直射日光が届かない」だけで、空の映り込み（環境マップ）はそのまま残る。
+    //   shadowTint : 日光で照らされる成分（水の色・泡）を Object3d と同じ色・濃さで暗くする
+    //   sunVisible : 太陽のギラつきと波頭を透ける光（SSS）。影の中ではほぼ消える
+    float shadowLit  = SampleWaterShadow(input.worldPosition, N);
+    float shadowAmt  = 1.0 - shadowLit;
+    float3 shadowTint = lerp(float3(1.0, 1.0, 1.0), gShadowParams.color.rgb, shadowAmt * gShadowParams.color.a);
+    float sunVisible = 1.0 - shadowAmt * saturate(gShadowParams.color.a * kWaterSunBlock);
+
     // スペキュラ (GGX)
     // Specular Power（Blinn-Phong の指数）を GGX の粗さへ換算して互換を保つ: alpha = √(2/(n+2))
     // 遠景では 1 ピクセルに多数の波面が入るので粗さを上げる → 水平線に向かって太陽の光の道が伸びる
     float alpha = sqrt(2.0 / (max(gSpecularPower, 1.0) + 2.0));
     alpha = lerp(alpha, max(alpha, 0.22), distT);
     alpha = clamp(alpha, 0.02, 1.0);
-    float specular = min(SpecularGGX(N, V, L, alpha, F0), 16.0);
+    float specular = min(SpecularGGX(N, V, L, alpha, F0), 16.0) * sunVisible;
 
     // =========================
     // サブサーフェススキャタリング（波頭を透ける光）
@@ -458,6 +533,7 @@ PixelShaderOutput main(VertexShaderOutput input)
         float sunLow = saturate(1.0 - L.y * 0.7); // 太陽が低いほど横から抜ける
         float grazing = lerp(0.3, 1.0, 1.0 - NdotV);
         sss = gSssColor.a * crest * crest * (0.2 + 1.6 * pow(facing, 4.0) * sunLow) * grazing;
+        sss *= sunVisible; // 影の中では波頭を抜けてくる日光が無い
     }
 
     // =========================
@@ -472,7 +548,7 @@ PixelShaderOutput main(VertexShaderOutput input)
                                kRippleShadeMin, kRippleShadeMax);
 
     // 水面色（ディフューズ）+ 環境マップ反射 + SSS + スペキュラ
-    float3 finalColor = waterColor.rgb * lightColor * diffuse * rippleShade;
+    float3 finalColor = waterColor.rgb * lightColor * diffuse * rippleShade * shadowTint;
 
     // =========================
     // 屈折（スクリーンテクスチャ方式）
@@ -540,7 +616,7 @@ PixelShaderOutput main(VertexShaderOutput input)
         foldFoam *= smoothstep(0.35, 0.65, lace + foldFoam * 0.3);
 
         whitecap = saturate(foldFoam * gOceanParams.z) * lerp(1.0, 0.6, distT);
-        float3 capLit = gFoamColor.rgb * min(lightColor * lerp(0.7, 0.95, NdotL), 0.95);
+        float3 capLit = gFoamColor.rgb * min(lightColor * lerp(0.7, 0.95, NdotL), 0.95) * shadowTint;
         finalColor = lerp(finalColor, capLit, whitecap);
     }
 
@@ -549,7 +625,7 @@ PixelShaderOutput main(VertexShaderOutput input)
     {
         // 白波も凪の所では立てない（ムラのマスクで疎密を付ける）
         float whitecap = pow(crestT, 8.0) * crestTint * 0.35 * roughMask;
-        finalColor = lerp(finalColor, gFoamColor.rgb, whitecap);
+        finalColor = lerp(finalColor, gFoamColor.rgb * shadowTint, whitecap);
     }
 
     // =========================
@@ -572,7 +648,7 @@ PixelShaderOutput main(VertexShaderOutput input)
         float lace = saturate(((n1 * 0.6 + n2 * 0.4) - 0.5) * 2.0 + 0.5);
 
         // 泡の白（日向で少し明るく。白飛びしないよう上限 0.9）
-        float3 foamLit = gFoamColor.rgb * min(lightColor * lerp(0.75, 0.92, NdotL), 0.9);
+        float3 foamLit = gFoamColor.rgb * min(lightColor * lerp(0.75, 0.92, NdotL), 0.9) * shadowTint;
 
         // ---- 引き波：白濁 ＋ まばらな白い筋 ----
         milkyT = smoothstep(0.03, 1.2, wakeFoam);
@@ -614,7 +690,7 @@ PixelShaderOutput main(VertexShaderOutput input)
     float foamIntensity = saturate(dynamicFoam + staticFoam);
 
     // フォームの色を最終カラーに加算ブレンド
-    float3 foamColor = gFoamColor.rgb * gFoamParams.y; // スケール適用
+    float3 foamColor = gFoamColor.rgb * gFoamParams.y * shadowTint; // スケール適用（影の中は暗く）
     finalColor = lerp(finalColor, foamColor, foamIntensity * gFoamColor.a);
 
     // 泡は不透明（浅瀬で透けている所でも白く乗る）

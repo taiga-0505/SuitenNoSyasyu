@@ -211,7 +211,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
   // 既存ルートシグネチャ解放
   root_.Reset();
 
-  D3D12_ROOT_PARAMETER params[16] = {};
+  D3D12_ROOT_PARAMETER params[18] = {}; // 最大は Water の 17 個
   D3D12_DESCRIPTOR_RANGE ranges[8] = {}; // t0(Tex), t1(EnvMap), t1(Depth), t1(SkinMat)等
   UINT paramCount = 0;
 
@@ -813,7 +813,24 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[14].DescriptorTable.NumDescriptorRanges = 1;
     params[14].DescriptorTable.pDescriptorRanges = &ranges[6];
 
-    paramCount = 15;
+    // 15: CBV b7 (PS) ShadowParams（平行光源の影。Object3D の b6 と同じバッファを載せる）
+    //     Water は b6 を WaterParams に使っているため、レジスタだけずらして受け取る
+    params[15].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    params[15].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    params[15].Descriptor.ShaderRegister = 7; // b7
+
+    // 16: SRV table t7 (PS) ShadowMap（平行光源のシャドウマップ。海面に影を落とす）
+    ranges[7].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    ranges[7].BaseShaderRegister = 7; // t7
+    ranges[7].NumDescriptors = 1;
+    ranges[7].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+    params[16].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    params[16].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    params[16].DescriptorTable.NumDescriptorRanges = 1;
+    params[16].DescriptorTable.pDescriptorRanges = &ranges[7];
+
+    paramCount = 17;
     break;
 
   default:

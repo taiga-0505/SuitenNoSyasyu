@@ -617,6 +617,25 @@ GraphicsPipeline *RenderContext::BindPipeline(std::string_view prefix) {
       UINT spotCbvSlot = isSkinRoot ? 15 : 14;
       cl_->SetGraphicsRootConstantBufferView(spotCbvSlot, spotShadowCBAddr_);
     }
+  } else if (actualPrefix == "water") {
+    // 水面にも平行光源の影を落とす。
+    // Water ルートシグネチャは b6 / t4 を WaterParams / 波紋ハイトマップに使っているので、
+    // 影は 15: b7 (ShadowParams) / 16: t7 (ShadowMap) に載せる（GraphicsPipeline 参照）。
+    // 水面はシャドウパス・スポット影アトラスの最中には描かれない（その間 "water" は
+    // "shadow" へ振り替わる）ので、ここでのシャドウマップは常に SRV 状態。
+    if (shadowCB_) {
+      cl_->SetGraphicsRootConstantBufferView(15, shadowCB_->GetGPUVirtualAddress());
+    }
+    D3D12_GPU_DESCRIPTOR_HANDLE shadowSrv = {};
+    if (shadowMap_.GetResource() != nullptr && ctxRef_ && ctxRef_->core) {
+      shadowSrv = ctxRef_->core->SRV().GPUAt(shadowMap_.GetSrvIndex());
+    } else {
+      // シャドウマップが無い場合もテーブルを空にしない（shadowMapEnabled = 0 なので読まれない）
+      shadowSrv = dummyWhiteSrv_;
+    }
+    if (shadowSrv.ptr != 0) {
+      cl_->SetGraphicsRootDescriptorTable(16, shadowSrv);
+    }
   }
 
   return pso;
