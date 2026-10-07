@@ -65,8 +65,10 @@ struct WaterParamsCB {
 static_assert(sizeof(WaterParamsCB) % 16 == 0, "WaterParamsCB は 16 バイト境界に揃えること（HLSL cbuffer と一致させる）");
 
 // シングルトン的に定数バッファリソースを管理
-static Microsoft::WRL::ComPtr<ID3D12Resource> s_waterCB;
-static WaterParamsCB* s_waterCBMapped = nullptr;
+/// @brief 水面パラメータの CB。値は CPU 側に持ち、バインド時に今フレームの領域へ送る
+/// @details 以前は Map しっぱなしの固定 CB だった（CPU と GPU を並行させると上書き競合が起きる）
+static RC::DynamicCB<WaterParamsCB> s_waterCB;
+static WaterParamsCB* s_waterCBMapped = nullptr; ///< 書き込み先（= s_waterCB.Ptr()）
 static bool s_waterCBInitialized = false;
 
 // ============================================================================
@@ -179,9 +181,7 @@ static void EnsureWaterCB() {
   auto &ctx = GetRenderContext();
   if (!ctx.IsInitialized()) return;
 
-  s_waterCB = CreateBufferResource(ctx.Device(), sizeof(WaterParamsCB),
-                                   L"RC::WaterParamsCB");
-  s_waterCB->Map(0, nullptr, reinterpret_cast<void**>(&s_waterCBMapped));
+  s_waterCBMapped = s_waterCB.Ptr();
   if (s_waterCBMapped) {
     *s_waterCBMapped = WaterParamsCB{};
   }
@@ -209,7 +209,6 @@ void DrawWater(int meshHandle, int normalMapHandle) {
 
   Matrix4x4 world = MakeAffineMatrix(m->T().scale, m->T().rotation, m->T().translation);
   D3D12_GPU_VIRTUAL_ADDRESS lightAddr = ctx.DirLights().GetActiveCBAddress();
-  D3D12_GPU_VIRTUAL_ADDRESS waterCBAddr = s_waterCB ? s_waterCB->GetGPUVirtualAddress() : 0;
   BlendMode blend = ctx.CurrentBlendMode();
 
   // 更新: スクリーンサイズとカメラパラメータを設定
@@ -240,7 +239,7 @@ void DrawWater(int meshHandle, int normalMapHandle) {
   }
 
   const uint64_t key = SortKey::Make(SortKey::kLayerTranslucent, SortKey::HashPSO("water"), 0);
-  ctx.PushCommand3D(key, [m, meshHandle, world, normalMapHandle, lightAddr, waterCBAddr, blend](ID3D12GraphicsCommandList *cl) {
+  ctx.PushCommand3D(key, [m, meshHandle, world, normalMapHandle, lightAddr, blend](ID3D12GraphicsCommandList *cl) {
     auto &ctx = GetRenderContext();
     auto prevBlend = ctx.CurrentBlendMode();
     ctx.SetBlendMode(blend);
@@ -248,14 +247,15 @@ void DrawWater(int meshHandle, int normalMapHandle) {
     // 水面用パイプラインをバインド
     if (ctx.BindPipeline("water")) {
       ctx.BindCameraCB();
-      cl->SetGraphicsRootConstantBufferView(3, lightAddr);
+      // 平行光源は描く直前のものを使う（積んだ時点のアドレスを持ち回さない）
+      if (const D3D12_GPU_VIRTUAL_ADDRESS curLight = ctx.DirLights().GetActiveCBAddress()) {
+        cl->SetGraphicsRootConstantBufferView(3, curLight);
+      } else if (lightAddr) {
+        cl->SetGraphicsRootConstantBufferView(3, lightAddr);
+      }
       ctx.BindAllLightCBs();
 
-      // b6: WaterParams をバインド
-      // Object3D と同じパラメータ (0〜10) を使用し、11番目に WaterParams を配置する
-      if (waterCBAddr) {
-        cl->SetGraphicsRootConstantBufferView(11, waterCBAddr);
-      }
+      // b6: WaterParams は、下で屈折の有無（refractParams.x）を書いてからバインドする
 
       // t4: InteractiveWave HeightMap をバインド (RootParameter 12)
       D3D12_GPU_DESCRIPTOR_HANDLE interactiveSrv = GetInteractiveWaterHeightMap();
@@ -307,6 +307,12 @@ void DrawWater(int meshHandle, int normalMapHandle) {
         } else if (s_depthSrv.IsValid()) {
           cl->SetGraphicsRootDescriptorTable(14, s_depthSrv.gpu);
         }
+      }
+
+      // b6: WaterParams（Object3D と同じパラメータ 0〜10 の次、11 番）。
+      // 値は CPU 側にあり、ここで今フレームの領域へ送る（屈折の有無を書いた後なので最新の値になる）
+      if (s_waterCBMapped) {
+        cl->SetGraphicsRootConstantBufferView(11, s_waterCB.Address());
       }
 
       ctx.PrimitiveMeshes().ApplyTexture(meshHandle, normalMapHandle);
@@ -476,13 +482,7 @@ bool GetWaterReflectOverride(float* outStrength, float* outRange) {
 }
 
 void TermWaterResources() {
-  if (s_waterCB) {
-    if (s_waterCBMapped) {
-      s_waterCB->Unmap(0, nullptr);
-      s_waterCBMapped = nullptr;
-    }
-    s_waterCB.Reset();
-  }
+  s_waterCBMapped = nullptr;
   s_waterCBInitialized = false;
   // 屈折用のシーン色コピー（終了時にだけ呼ばれるので即解放でよい）
   s_sceneCopy.Reset();

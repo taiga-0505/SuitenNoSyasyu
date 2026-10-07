@@ -467,9 +467,8 @@ void DrawFogOverlay(float timeSec, float intensity, float scale, float speed,
   ctx.CL()->SetPipelineState(pso->PSO());
   ctx.CL()->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-  if (auto *fogRes = ctx.FogCBResource()) {
-    ctx.CL()->SetGraphicsRootConstantBufferView(
-        0, fogRes->GetGPUVirtualAddress());
+  if (const D3D12_GPU_VIRTUAL_ADDRESS fogAddr = ctx.FogCBAddress()) {
+    ctx.CL()->SetGraphicsRootConstantBufferView(0, fogAddr);
   }
 
   ctx.CL()->DrawInstanced(3, 1, 0, 0);

@@ -17,17 +17,13 @@ using namespace RC;
 Skydome::~Skydome() {
   if (auto ctx = GetRenderContext().Ctx()) {
     auto& dq = ctx->core->DeferredRelease();
-    if (vb_.resource) dq.Enqueue(std::move(vb_.resource), UINT64_MAX);
-    if (ib_.resource) dq.Enqueue(std::move(ib_.resource), UINT64_MAX);
-    if (cbWvp_.resource) dq.Enqueue(std::move(cbWvp_.resource), UINT64_MAX);
-    if (cbMat_.resource) dq.Enqueue(std::move(cbMat_.resource), UINT64_MAX);
-    if (cbLight_.resource) dq.Enqueue(std::move(cbLight_.resource), UINT64_MAX);
+    (void)dq;
+    // 今記録中のフレームを GPU が終えたら解放する（以前は UINT64_MAX で終了時まで保持していた）
+    DeferredReleaseQueue::DeferRelease(std::move(vb_.resource));
+    DeferredReleaseQueue::DeferRelease(std::move(ib_.resource));
   } else {
     vb_.resource.Reset();
     ib_.resource.Reset();
-    cbWvp_.resource.Reset();
-    cbMat_.resource.Reset();
-    cbLight_.resource.Reset();
   }
 }
 
@@ -41,35 +37,28 @@ void Skydome::Initialize(ID3D12Device *device, float radius, UINT sliceCount,
   UploadIB_();
 
   // CB: WVP
-  cbWvp_.resource = CreateBufferResource(device_.Get(), sizeof(TransformationMatrix), L"Skydome::cbWvp_");
-  cbWvp_.resource->Map(0, nullptr, reinterpret_cast<void **>(&cbWvp_.mapped));
-  cbWvp_.mapped->WVP = MakeIdentity4x4();
-  cbWvp_.mapped->World = MakeIdentity4x4();
-  cbWvp_.mapped->worldInverseTranspose = MakeIdentity4x4();
+  cbWvp_.dyn.Ptr()->WVP = MakeIdentity4x4();
+  cbWvp_.dyn.Ptr()->World = MakeIdentity4x4();
+  cbWvp_.dyn.Ptr()->worldInverseTranspose = MakeIdentity4x4();
 
   // CB: Material
-  cbMat_.resource = CreateBufferResource(device_.Get(), sizeof(Material), L"Skydome::cbMat_");
-  cbMat_.resource->Map(0, nullptr, reinterpret_cast<void **>(&cbMat_.mapped));
-  cbMat_.mapped->color = {1, 1, 1, 1};
-  cbMat_.mapped->uvTransform = MakeIdentity4x4();
-  cbMat_.mapped->lightingMode = 0; // 天球なので初期はライティング無効
+  cbMat_.dyn.Ptr()->color = {1, 1, 1, 1};
+  cbMat_.dyn.Ptr()->uvTransform = MakeIdentity4x4();
+  cbMat_.dyn.Ptr()->lightingMode = 0; // 天球なので初期はライティング無効
 
   // CB: Light（天球ごとに持つが一応残す）
-  cbLight_.resource = CreateBufferResource(device_.Get(), sizeof(DirectionalLight), L"Skydome::cbLight_");
-  cbLight_.resource->Map(0, nullptr,
-                         reinterpret_cast<void **>(&cbLight_.mapped));
-  cbLight_.mapped->color = {1, 1, 1, 1};
-  cbLight_.mapped->direction = {0.0f, -1.0f, 0.0f};
-  cbLight_.mapped->intensity = 1.0f;
-  cbMat_.mapped->shininess = 32.0f;
+  cbLight_.dyn.Ptr()->color = {1, 1, 1, 1};
+  cbLight_.dyn.Ptr()->direction = {0.0f, -1.0f, 0.0f};
+  cbLight_.dyn.Ptr()->intensity = 1.0f;
+  cbMat_.dyn.Ptr()->shininess = 32.0f;
 }
 
 void Skydome::Update(const Matrix4x4 &view, const Matrix4x4 &proj) {
   Matrix4x4 world = MakeAffineMatrix(transform_.scale, transform_.rotation,
                                      transform_.translation);
-  cbWvp_.mapped->World = world;
-  cbWvp_.mapped->WVP = Multiply(world, Multiply(view, proj));
-  cbWvp_.mapped->worldInverseTranspose = Transpose(Inverse(world));
+  cbWvp_.dyn.Ptr()->World = world;
+  cbWvp_.dyn.Ptr()->WVP = Multiply(world, Multiply(view, proj));
+  cbWvp_.dyn.Ptr()->worldInverseTranspose = Transpose(Inverse(world));
 }
 
 void Skydome::Draw(ID3D12GraphicsCommandList *cmdList) {
@@ -88,16 +77,16 @@ void Skydome::Draw(ID3D12GraphicsCommandList *cmdList) {
 
   // RootParam: 0:Material, 1:WVP, 2:SRV, 3:Light
   cmdList->SetGraphicsRootConstantBufferView(
-      0, cbMat_.resource->GetGPUVirtualAddress());
+      0, cbMat_.dyn.Address());
   cmdList->SetGraphicsRootConstantBufferView(
-      1, cbWvp_.resource->GetGPUVirtualAddress());
+      1, cbWvp_.dyn.Address());
   cmdList->SetGraphicsRootDescriptorTable(2, textureSrv_);
 
   // Light CB（b1）: 外部ライトが指定されていればそちらを使う
   const D3D12_GPU_VIRTUAL_ADDRESS lightAddr =
       (externalLightCBAddress_ != 0)
           ? externalLightCBAddress_
-          : cbLight_.resource->GetGPUVirtualAddress();
+          : cbLight_.dyn.Address();
   cmdList->SetGraphicsRootConstantBufferView(3, lightAddr);
 
   cmdList->DrawIndexedInstanced(ib_.indexCount, 1, 0, 0, 0);
@@ -110,12 +99,12 @@ void Skydome::Draw(ID3D12GraphicsCommandList *cmdList, const Matrix4x4 &world) {
 
 void Skydome::Draw(ID3D12GraphicsCommandList *cmdList, const Matrix4x4 &world,
                    const Matrix4x4 &viewProj) {
-  if (!vb_.resource || !ib_.resource || !visible_ || !cbWvp_.mapped)
+  if (!vb_.resource || !ib_.resource || !visible_ || !cbWvp_.dyn.Ptr())
     return;
 
-  cbWvp_.mapped->World = world;
-  cbWvp_.mapped->WVP = Multiply(world, viewProj);
-  cbWvp_.mapped->worldInverseTranspose = Transpose(Inverse(world));
+  cbWvp_.dyn.Ptr()->World = world;
+  cbWvp_.dyn.Ptr()->WVP = Multiply(world, viewProj);
+  cbWvp_.dyn.Ptr()->worldInverseTranspose = Transpose(Inverse(world));
 
   Draw(cmdList);
 }

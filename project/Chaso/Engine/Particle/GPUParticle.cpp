@@ -34,10 +34,7 @@ void GPUParticle::Initialize(SceneContext &ctx) {
   // ==================
   // 4. PerView 定数バッファ作成（UPLOAD ヒープ）
   // ==================
-  perViewCB_ = CreateBufferResource(device_.Get(),
-                                    Align256(sizeof(GPUParticlePerView)),
-                                    L"GPUParticle::perViewCB");
-  perViewCB_->Map(0, nullptr, reinterpret_cast<void **>(&perViewMapped_));
+  perViewMapped_ = perViewCB_.Ptr(); // DynamicCB（バインド時に今フレームの領域へ送る）
   *perViewMapped_ = GPUParticlePerView{};
 
   // ==================
@@ -149,10 +146,7 @@ void GPUParticle::Initialize(SceneContext &ctx) {
   // ==================
   // 8. PerFrame 定数バッファ作成（deltaTime 用）
   // ==================
-  perFrameCB_ = CreateBufferResource(device_.Get(),
-                                     Align256(sizeof(GPUParticlePerFrame)),
-                                     L"GPUParticle::perFrameCB");
-  perFrameCB_->Map(0, nullptr, reinterpret_cast<void **>(&perFrameMapped_));
+  perFrameMapped_ = perFrameCB_.Ptr(); // DynamicCB（バインド時に今フレームの領域へ送る）
   *perFrameMapped_ = GPUParticlePerFrame{};
   perFrameMapped_->maxParticles = maxParticles_;
   perFrameMapped_->minLifeTime = minLifeTime_;
@@ -186,69 +180,32 @@ void GPUParticle::Finalize() {
   if (!initialized_)
     return;
 
-  // 遅延解放キューが利用可能なら、GPU リソースをキューに委ねる
-  // （GPU が参照中でも安全に解放される）
-  const uint64_t currentFence = deferredRelease_ ? UINT64_MAX : 0;
-
+  // CPU と GPU を並行させているので、直前のフレームの GPU がまだこのパーティクルを
+  // 更新・描画しているかもしれない。ディスクリプタの返却とバッファの解放は、
+  // 今記録中のフレームを GPU が終えてから行う（以前は UINT64_MAX で終了時まで保持していた）。
   if (srvMgr_) {
-    if (uavHandle_.IsValid()) {
-      srvMgr_->Free(uavHandle_);
-      uavHandle_ = {};
+    SRVManager *srv = srvMgr_;
+    const SRVManager::Handle handles[] = {uavHandle_, srvHandle_, freeListUavHandle_,
+                                          freeListIndexUavHandle_};
+    for (const auto &h : handles) {
+      if (h.IsValid()) {
+        DeferredReleaseQueue::DeferCall([srv, h]() { srv->Free(h); });
+      }
     }
-    if (srvHandle_.IsValid()) {
-      srvMgr_->Free(srvHandle_);
-      srvHandle_ = {};
-    }
-    if (freeListUavHandle_.IsValid()) {
-      srvMgr_->Free(freeListUavHandle_);
-      freeListUavHandle_ = {};
-    }
-    if (freeListIndexUavHandle_.IsValid()) {
-      srvMgr_->Free(freeListIndexUavHandle_);
-      freeListIndexUavHandle_ = {};
-    }
+    uavHandle_ = {};
+    srvHandle_ = {};
+    freeListUavHandle_ = {};
+    freeListIndexUavHandle_ = {};
   }
 
-  if (perViewCB_) {
-    perViewCB_->Unmap(0, nullptr);
-    perViewMapped_ = nullptr;
-    if (deferredRelease_) {
-      deferredRelease_->Enqueue(std::move(perViewCB_), currentFence);
-    } else {
-      perViewCB_.Reset();
-    }
-  }
+  // 定数バッファは DynamicCB（毎フレームの一時領域）なので解放するものは無い
+  perViewMapped_ = nullptr;
+  perFrameMapped_ = nullptr;
 
-  if (perFrameCB_) {
-    perFrameCB_->Unmap(0, nullptr);
-    perFrameMapped_ = nullptr;
-    if (deferredRelease_) {
-      deferredRelease_->Enqueue(std::move(perFrameCB_), currentFence);
-    } else {
-      perFrameCB_.Reset();
-    }
-  }
-
-  // DEFAULT ヒープのバッファを遅延解放キューに移す
-  if (deferredRelease_) {
-    if (particleBuffer_) {
-      deferredRelease_->Enqueue(std::move(particleBuffer_), currentFence);
-    }
-    if (freeListBuffer_) {
-      deferredRelease_->Enqueue(std::move(freeListBuffer_), currentFence);
-    }
-    if (freeListIndexBuffer_) {
-      deferredRelease_->Enqueue(std::move(freeListIndexBuffer_), currentFence);
-    }
-    if (vbResource_) {
-      deferredRelease_->Enqueue(std::move(vbResource_), currentFence);
-    }
-  } else {
-    particleBuffer_.Reset();
-    freeListBuffer_.Reset();
-    freeListIndexBuffer_.Reset();
-    vbResource_.Reset();
-  }
+  DeferredReleaseQueue::DeferRelease(std::move(particleBuffer_));
+  DeferredReleaseQueue::DeferRelease(std::move(freeListBuffer_));
+  DeferredReleaseQueue::DeferRelease(std::move(freeListIndexBuffer_));
+  DeferredReleaseQueue::DeferRelease(std::move(vbResource_));
 
   device_.Reset();
   srvMgr_ = nullptr;
@@ -341,8 +298,8 @@ void GPUParticle::Render(SceneContext &ctx, ID3D12GraphicsCommandList *cl) {
     initCS_.SetUAV(cl, 0, uavHandle_.gpu);
     initCS_.SetUAV(cl, 1, freeListIndexUavHandle_.gpu);
     initCS_.SetUAV(cl, 2, freeListUavHandle_.gpu);
-    if (perFrameCB_) {
-      initCS_.SetCBV(cl, 3, perFrameCB_->GetGPUVirtualAddress());
+    if (perFrameMapped_) {
+      initCS_.SetCBV(cl, 3, perFrameCB_.Address());
     }
     initCS_.Dispatch(cl, maxParticles_);
     ComputeShader::UAVBarrier(cl, particleBuffer_.Get());
@@ -358,24 +315,24 @@ void GPUParticle::Render(SceneContext &ctx, ID3D12GraphicsCommandList *cl) {
 
   if (ctx.isPlaying() && csSet.ready) {
     // 毎フレーム EmitParticle CS を Dispatch（emitCount_ 個射出）
-    if (perFrameCB_ && emitCount_ > 0) {
+    if (perFrameMapped_ && emitCount_ > 0) {
       csSet.emit.Bind(cl);
       csSet.emit.SetUAV(cl, 0, uavHandle_.gpu);
       csSet.emit.SetUAV(cl, 1, freeListIndexUavHandle_.gpu);
       csSet.emit.SetUAV(cl, 2, freeListUavHandle_.gpu);
-      csSet.emit.SetCBV(cl, 3, perFrameCB_->GetGPUVirtualAddress());
+      csSet.emit.SetCBV(cl, 3, perFrameCB_.Address());
       csSet.emit.Dispatch(cl, emitCount_, 1024);
       ComputeShader::UAVBarrier(cl, particleBuffer_.Get());
       ComputeShader::UAVBarrier(cl, freeListIndexBuffer_.Get());
     }
 
     // 毎フレーム UpdateParticle CS を Dispatch
-    if (perFrameCB_) {
+    if (perFrameMapped_) {
       csSet.update.Bind(cl);
       csSet.update.SetUAV(cl, 0, uavHandle_.gpu);
       csSet.update.SetUAV(cl, 1, freeListIndexUavHandle_.gpu);
       csSet.update.SetUAV(cl, 2, freeListUavHandle_.gpu);
-      csSet.update.SetCBV(cl, 3, perFrameCB_->GetGPUVirtualAddress());
+      csSet.update.SetCBV(cl, 3, perFrameCB_.Address());
       csSet.update.Dispatch(cl, maxParticles_);
       ComputeShader::UAVBarrier(cl, particleBuffer_.Get());
       ComputeShader::UAVBarrier(cl, freeListBuffer_.Get());
@@ -388,7 +345,7 @@ void GPUParticle::Render(SceneContext &ctx, ID3D12GraphicsCommandList *cl) {
   if (textureSrv.ptr == 0)
     return;
 
-  if (!vbResource_ || !srvHandle_.IsValid() || !perViewCB_)
+  if (!vbResource_ || !srvHandle_.IsValid() || !perViewMapped_)
     return;
 
   // パイプライン取得
@@ -411,7 +368,7 @@ void GPUParticle::Render(SceneContext &ctx, ID3D12GraphicsCommandList *cl) {
   auto *capturedPso = pso;
   auto vbView = vbView_;
   auto vertexCount = vertexCount_;
-  auto perViewAddr = perViewCB_->GetGPUVirtualAddress();
+  auto perViewAddr = perViewCB_.Address();
   auto srvGpu = srvHandle_.gpu;
   auto blend = blendMode_;
   auto maxParticles = maxParticles_;
@@ -718,25 +675,30 @@ void GPUParticle::SetMaxParticles(uint32_t maxCount) {
 void GPUParticle::rebuildBuffers_() {
   if (!device_ || !srvMgr_ || !deferredRelease_) return;
 
-  // 1. 既存リソースの遅延解放
-  if (particleBuffer_) {
-    deferredRelease_->Enqueue(particleBuffer_, UINT64_MAX);
-    particleBuffer_ = nullptr;
-  }
-  if (freeListBuffer_) {
-    deferredRelease_->Enqueue(freeListBuffer_, UINT64_MAX);
-    freeListBuffer_ = nullptr;
-  }
-  if (freeListIndexBuffer_) {
-    deferredRelease_->Enqueue(freeListIndexBuffer_, UINT64_MAX);
-    freeListIndexBuffer_ = nullptr;
-  }
+  // 1. 既存リソースの遅延解放（今記録中のフレームを GPU が終えてから）
+  DeferredReleaseQueue::DeferRelease(std::move(particleBuffer_));
+  DeferredReleaseQueue::DeferRelease(std::move(freeListBuffer_));
+  DeferredReleaseQueue::DeferRelease(std::move(freeListIndexBuffer_));
+  particleBuffer_ = nullptr;
+  freeListBuffer_ = nullptr;
+  freeListIndexBuffer_ = nullptr;
 
-  // 既存ハンドルの即時解放 (GPU側はバッファ自体がFence待ちになるため安全)
-  if (uavHandle_.IsValid()) { srvMgr_->Free(uavHandle_); uavHandle_ = {}; }
-  if (srvHandle_.IsValid()) { srvMgr_->Free(srvHandle_); srvHandle_ = {}; }
-  if (freeListUavHandle_.IsValid()) { srvMgr_->Free(freeListUavHandle_); freeListUavHandle_ = {}; }
-  if (freeListIndexUavHandle_.IsValid()) { srvMgr_->Free(freeListIndexUavHandle_); freeListIndexUavHandle_ = {}; }
+  // 既存ハンドルの返却も GPU が使い終わってから。
+  // （すぐ返すと同じスロットが別のバッファに再利用され、描画中のフレームが別物を読む）
+  {
+    SRVManager *srv = srvMgr_;
+    const SRVManager::Handle handles[] = {uavHandle_, srvHandle_, freeListUavHandle_,
+                                          freeListIndexUavHandle_};
+    for (const auto &h : handles) {
+      if (h.IsValid()) {
+        DeferredReleaseQueue::DeferCall([srv, h]() { srv->Free(h); });
+      }
+    }
+    uavHandle_ = {};
+    srvHandle_ = {};
+    freeListUavHandle_ = {};
+    freeListIndexUavHandle_ = {};
+  }
 
   // 2. バッファ再作成
   D3D12_HEAP_PROPERTIES heapProp{};

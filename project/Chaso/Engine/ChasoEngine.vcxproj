@@ -186,6 +186,8 @@
     <ClCompile Include="..\Engine\Render\Model\ModelManager.cpp" />
     <ClCompile Include="..\Engine\Render\Model\ModelProxyPool.cpp" />
     <ClCompile Include="..\Engine\Render\Model\ModelInstanceBatcher.cpp" />
+    <ClCompile Include="..\Engine\Render\Effect\EffectParticleSystem.cpp" />
+    <ClCompile Include="..\Engine\Render\Systems\RenderEffectParticle.cpp" />
     <ClCompile Include="..\Engine\Render\Systems\RenderCommon.cpp" />
     <ClCompile Include="..\Engine\Render\Systems\RenderContext.cpp" />
     <ClCompile Include="..\Engine\Render\Systems\RenderLight.cpp" />
@@ -229,6 +231,7 @@
     <ClInclude Include="..\Engine\Common\Math\MathTypes.h" />
     <ClInclude Include="..\Engine\Common\Math\MathUtils.h" />
     <ClInclude Include="..\Engine\Common\Math\BoundingBox.h" />
+    <ClInclude Include="..\Engine\Common\FrameProfiler.h" />
     <ClInclude Include="..\Engine\Common\Math\DynamicBVH.h" />
     <ClInclude Include="..\Engine\Common\RC.h" />
     <ClInclude Include="..\Engine\Common\struct.h" />
@@ -286,6 +289,7 @@
     <ClInclude Include="..\Engine\Render\Model\ModelManager.h" />
     <ClInclude Include="..\Engine\Render\Model\ModelProxyPool.h" />
     <ClInclude Include="..\Engine\Render\Model\ModelInstanceBatcher.h" />
+    <ClInclude Include="..\Engine\Render\Effect\EffectParticleSystem.h" />
     <ClInclude Include="..\Engine\Render\RenderCommon.h" />
     <ClInclude Include="..\Engine\Render\Systems\RenderInteractiveWater.h" />
     <ClInclude Include="..\Engine\Render\RenderContext.h" />

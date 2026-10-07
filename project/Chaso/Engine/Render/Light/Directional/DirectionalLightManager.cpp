@@ -160,7 +160,7 @@ D3D12_GPU_VIRTUAL_ADDRESS DirectionalLightManager::GetCBAddress(int handle) {
   EnsureCB_(slot);
   SyncCB_(slot);
 
-  return slot.cb ? slot.cb->GetGPUVirtualAddress() : 0;
+  return slot.hasCB ? slot.dyn.Address() : 0;
 }
 
 D3D12_GPU_VIRTUAL_ADDRESS DirectionalLightManager::GetActiveCBAddress() {
@@ -169,30 +169,21 @@ D3D12_GPU_VIRTUAL_ADDRESS DirectionalLightManager::GetActiveCBAddress() {
 }
 
 void DirectionalLightManager::ReleaseSlot_(Slot &s) {
-  if (s.cb) {
-    if (s.mapped) {
-      s.cb->Unmap(0, nullptr);
-      s.mapped = nullptr;
-    }
-    s.cb.Reset();
-  }
+  // DynamicCB は毎フレームの一時領域を使うので、解放する GPU リソースは無い
+  s.hasCB = false;
 }
 
 void DirectionalLightManager::EnsureCB_(Slot &s) {
-  if (s.cb || !device_) {
+  if (s.hasCB || !device_) {
     return;
   }
-
-  s.cb = CreateBufferResource(device_.Get(), sizeof(DirectionalLight), L"DirectionalLight::cb");
-  s.cb->Map(0, nullptr, reinterpret_cast<void **>(&s.mapped));
-  if (s.mapped) {
-    *s.mapped = s.light.DataForGPU();
-  }
+  s.hasCB = true;
+  *s.dyn.Ptr() = s.light.DataForGPU();
 }
 
 void DirectionalLightManager::SyncCB_(Slot &s) {
-  if (s.mapped) {
-    *s.mapped = s.light.DataForGPU();
+  if (s.hasCB) {
+    *s.dyn.Ptr() = s.light.DataForGPU();
   }
 }
 

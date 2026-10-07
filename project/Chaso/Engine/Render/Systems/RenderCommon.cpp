@@ -128,6 +128,13 @@ void Execute3DCommands() {
   RenderContext::GetInstance().Execute3DCommands();
 }
 
+void BeginFrame() {
+  auto &ctx = RenderContext::GetInstance();
+  if (ctx.IsInitialized()) {
+    ctx.BeginFrame();
+  }
+}
+
 // ============================================================================
 // 3D Pass
 // ============================================================================

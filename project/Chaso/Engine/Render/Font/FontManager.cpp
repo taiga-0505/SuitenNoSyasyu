@@ -1,4 +1,6 @@
 #include "FontManager.h"
+#include "DeferredReleaseQueue/DeferredReleaseQueue.h"
+#include <memory>
 
 #include <algorithm>
 #include <cmath>
@@ -231,8 +233,10 @@ void FontManager::DestroySlot_(Slot &s) {
   if (s.atlas) {
     Log::Print(std::format("[Font] 破棄完了: {} ({}px)",
                            Log::NormalizePath(s.path), s.sizePx));
-    s.atlas->Term(srv_);
-    s.atlas.reset();
+    // アトラスのテクスチャと SRV は、直前のフレームの GPU が使い終わってから解放する
+    std::shared_ptr<FontAtlas> atlas(std::move(s.atlas));
+    SRVManager *srv = srv_;
+    DeferredReleaseQueue::DeferCall([atlas, srv]() { atlas->Term(srv); });
   }
   s.path.clear();
   s.sizePx = 0.0f;

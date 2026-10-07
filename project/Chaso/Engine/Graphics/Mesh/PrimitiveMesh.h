@@ -2,6 +2,7 @@
 #include "struct.h"
 #include "Math/MathTypes.h"
 #include "function/function.h"
+#include "Render/FrameResource.h" // RC::DynamicCB
 #include <d3d12.h>
 #include <vector>
 #include <wrl/client.h>
@@ -31,6 +32,18 @@ public:
   /// @param world 適用するワールド行列
   void Draw(ID3D12GraphicsCommandList *cmdList, const RC::Matrix4x4 &world);
 
+  /// @brief 用意済みのマテリアル CB・インスタンス配列でインスタンス描画する
+  /// @details Object3DInstancing ルートシグネチャ（object3d_inst 系 PSO）用。
+  ///          パイプライン・カメラ・点光源などのバインドは呼び出し側で済ませておくこと。
+  /// @param materialCB マテリアル CB（b0 / PS）
+  /// @param lightCB 平行光源 CB（b1 / PS）。0 なら設定しない
+  /// @param instanceAddr インスタンスデータ（ModelResource::InstanceGPU と同じ並び）の先頭（t1 / VS）
+  /// @param count インスタンス数
+  void DrawInstancedPrepared(ID3D12GraphicsCommandList *cmdList,
+                             D3D12_GPU_VIRTUAL_ADDRESS materialCB,
+                             D3D12_GPU_VIRTUAL_ADDRESS lightCB,
+                             D3D12_GPU_VIRTUAL_ADDRESS instanceAddr, uint32_t count);
+
   /// @brief 使用するテクスチャのSRVを設定
   /// @param srvGPUHandle テクスチャのGPUディスクリプタハンドル
   void SetTexture(D3D12_GPU_DESCRIPTOR_HANDLE srvGPUHandle) {
@@ -55,7 +68,7 @@ public:
 
   /// @brief マテリアルデータへのポインタを取得（直接編集可能）
   /// @return マテリアル構造体へのポインタ
-  Material *Mat() { return cbMat_.mapped; }
+  Material *Mat() { return cbMat_.dyn.Ptr(); }
 
   /// @brief ライティングモードを個別に固定する
   /// @param m 設定する LightingMode
@@ -64,8 +77,8 @@ public:
   ///       ClearLightingModeOverride() を呼ぶ。
   void SetLightingMode(LightingMode m) {
     lightingModeOverride_ = static_cast<int>(m);
-    if (cbMat_.mapped) {
-      cbMat_.mapped->lightingMode = lightingModeOverride_;
+    if (cbMat_.dyn.Ptr()) {
+      cbMat_.dyn.Ptr()->lightingMode = lightingModeOverride_;
     }
   }
 
@@ -106,16 +119,16 @@ private:
     uint32_t indexCount = 0;
   };
 
-  /// @brief WVP用定数バッファ保持用構造体
+  /// @brief WVP 用定数バッファ（値は CPU 側。バインド時に今フレームの領域へ送る）
   struct CB_WVP {
-    Microsoft::WRL::ComPtr<ID3D12Resource> resource;
-    TransformationMatrix *mapped = nullptr;
+    RC::DynamicCB<TransformationMatrix> dyn;
   };
 
-  /// @brief マテリアル用定数バッファ保持用構造体
+  /// @brief マテリアル用定数バッファ（値は CPU 側。バインド時に今フレームの領域へ送る）
+  /// @details 以前は Map しっぱなしの固定 CB だった。CPU と GPU を並行させると、
+  ///          GPU が前フレームを描いている最中に上書きしてしまうため変更した。
   struct CB_Material {
-    Microsoft::WRL::ComPtr<ID3D12Resource> resource;
-    Material *mapped = nullptr;
+    RC::DynamicCB<Material> dyn;
   };
 
 private:

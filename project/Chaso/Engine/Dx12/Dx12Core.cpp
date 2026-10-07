@@ -45,6 +45,11 @@ void Dx12Core::Init(HWND hwnd, const Desc &d) {
   // コマンド初期化
   cmd_.Init(dev, D3D12_COMMAND_LIST_TYPE_DIRECT, d.frameCount);
 
+  // 「GPU が使い終わってから解放する」入口を全体に公開する（モデル・テクスチャ等の破棄で使う）。
+  // CPU と GPU を並行させているので、Update 中に破棄したリソースを直前のフレームの GPU が
+  // まだ読んでいることがある。今記録中のフレームの完了を待ってから解放する。
+  DeferredReleaseQueue::SetGlobal(&deferredRelease_, [this]() { return cmd_.GetNextFenceValue(); });
+
   // ====================
   // Heaps
   // ====================
@@ -138,7 +143,7 @@ void Dx12Core::InitFrameTimer_() {
 
   D3D12_QUERY_HEAP_DESC qd{};
   qd.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
-  qd.Count = 2;
+  qd.Count = 2 * kTimestampSlots; // スロットごとに [先頭, 末尾]
   if (FAILED(dev->CreateQueryHeap(&qd, IID_PPV_ARGS(&timestampHeap_)))) {
     timestampHeap_.Reset();
     return;
@@ -148,7 +153,7 @@ void Dx12Core::InitFrameTimer_() {
   hp.Type = D3D12_HEAP_TYPE_READBACK;
   D3D12_RESOURCE_DESC rd{};
   rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-  rd.Width = sizeof(uint64_t) * 2;
+  rd.Width = sizeof(uint64_t) * 2 * kTimestampSlots;
   rd.Height = 1;
   rd.DepthOrArraySize = 1;
   rd.MipLevels = 1;
@@ -179,11 +184,36 @@ void Dx12Core::BeginFrame() {
   // ====================
   // フレーム開始とバックバッファ取得
   backIndex_ = swap_.CurrentBackBufferIndex();
-  cmd_.BeginFrame(backIndex_);
+  {
+    // ここで「このバックバッファを前回使ったフレーム（2 フレーム前）」の GPU 完了を待つ。
+    // CPU と GPU を並行させるため、EndFrame では待たない。待った時間は CPU 時間から除く
+    const auto waitStart = std::chrono::steady_clock::now();
+    cmd_.BeginFrame(backIndex_);
+    gpuWaitMs_ = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() -
+                                                         waitStart).count();
+  }
+
+  // 前回このスロットで測ったフレームは上の待ちで完了しているので、GPU 時間を読める
+  const uint32_t tsSlot = backIndex_;
+  if (timestampPending_[tsSlot] && timestampReadback_) {
+    const SIZE_T begin = sizeof(uint64_t) * 2 * tsSlot;
+    D3D12_RANGE readRange{begin, begin + sizeof(uint64_t) * 2};
+    void *mapped = nullptr;
+    if (SUCCEEDED(timestampReadback_->Map(0, &readRange, &mapped)) && mapped) {
+      const uint64_t *ts = reinterpret_cast<const uint64_t *>(static_cast<const uint8_t *>(mapped) + begin);
+      if (ts[1] > ts[0]) {
+        gpuFrameMs_ = static_cast<float>(static_cast<double>(ts[1] - ts[0]) * 1000.0 /
+                                         static_cast<double>(timestampFrequency_));
+      }
+      D3D12_RANGE writeRange{0, 0};
+      timestampReadback_->Unmap(0, &writeRange);
+    }
+    timestampPending_[tsSlot] = false;
+  }
 
   // GPU 時間の計測開始（フレームの最初のコマンド）
   if (timestampHeap_) {
-    cmd_.List()->EndQuery(timestampHeap_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0);
+    cmd_.List()->EndQuery(timestampHeap_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 2 * tsSlot);
   }
 
   // ====================
@@ -246,15 +276,17 @@ void Dx12Core::EndFrame() {
 
   // GPU 時間の計測終了（フレームの最後のコマンド）→ 読み出し用バッファへ解決
   if (timestampHeap_) {
-    cmd_.List()->EndQuery(timestampHeap_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 1);
-    cmd_.List()->ResolveQueryData(timestampHeap_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, 2,
-                                  timestampReadback_.Get(), 0);
-    timestampPending_ = true;
+    const uint32_t tsSlot = backIndex_;
+    cmd_.List()->EndQuery(timestampHeap_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 2 * tsSlot + 1);
+    cmd_.List()->ResolveQueryData(timestampHeap_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 2 * tsSlot, 2,
+                                  timestampReadback_.Get(), sizeof(uint64_t) * 2 * tsSlot);
+    timestampPending_[tsSlot] = true;
   }
 
-  // CPU 時間（前フレームの EndFrame 終了〜ここ。GPU 待ち・VSync 待ちを含まない）
+  // CPU 時間（前フレームの EndFrame 終了〜ここ。BeginFrame での GPU 待ち・VSync 待ちを含まない）
   const auto cpuEnd = std::chrono::steady_clock::now();
-  cpuFrameMs_ = std::chrono::duration<float, std::milli>(cpuEnd - cpuFrameStart_).count();
+  cpuFrameMs_ = std::chrono::duration<float, std::milli>(cpuEnd - cpuFrameStart_).count() - gpuWaitMs_;
+  if (cpuFrameMs_ < 0.0f) cpuFrameMs_ = 0.0f;
 
   // ====================
   // Present
@@ -279,23 +311,9 @@ void Dx12Core::EndFrame() {
 
   // vsync=1, tearingなら 0 でもOK（好みで）
   swap_.Present(1, 0);
-  cmd_.WaitForFrame(backIndex_);
-
-  // このフレームの GPU 処理は WaitForFrame で完了しているので、タイムスタンプを読める
-  if (timestampPending_ && timestampReadback_) {
-    D3D12_RANGE readRange{0, sizeof(uint64_t) * 2};
-    void *mapped = nullptr;
-    if (SUCCEEDED(timestampReadback_->Map(0, &readRange, &mapped)) && mapped) {
-      const uint64_t *ts = static_cast<const uint64_t *>(mapped);
-      if (ts[1] > ts[0]) {
-        gpuFrameMs_ = static_cast<float>(static_cast<double>(ts[1] - ts[0]) * 1000.0 /
-                                         static_cast<double>(timestampFrequency_));
-      }
-      D3D12_RANGE writeRange{0, 0};
-      timestampReadback_->Unmap(0, &writeRange);
-    }
-    timestampPending_ = false;
-  }
+  // ※ 以前はここで「今送ったフレーム」の GPU 完了を待っていた（CPU と GPU が交互にしか動かない）。
+  //    今は待たずに次のフレームの更新へ進み、GPU 完了の待ちは次の BeginFrame
+  //    （同じバックバッファを使う 2 フレーム前の完了）に任せる。
 
   // ====================
   // FixFps
@@ -329,6 +347,7 @@ void Dx12Core::Term() {
   // ====================
   // 遅延解放キューの全リソースを解放
   deferredRelease_.FlushAll();
+  DeferredReleaseQueue::SetGlobal(nullptr, {});
 
   // ====================
   // Resource Release
@@ -336,6 +355,10 @@ void Dx12Core::Term() {
   // フレーム依存リソースから順に解放
   depth_.Term(); // DSV リソース
   swap_.Term();  // BackBuffer リソース + SwapChain
+  // フレーム時間計測用（デバイスより先に解放しないと終了時に Live Object 警告が出る）
+  timestampHeap_.Reset();
+  timestampReadback_.Reset();
+  for (auto &p : timestampPending_) p = false;
   sbMgr_.Term();
   srvMgr_.Term();
   rtv_.Term();

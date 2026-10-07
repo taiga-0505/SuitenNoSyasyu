@@ -1,4 +1,5 @@
 #pragma once
+#include "Render/FrameResource.h" // RC::DynamicCB
 #include "Light/Spot/SpotLightSource.h"
 #include "struct.h"
 #include <array>
@@ -119,8 +120,11 @@ private:
   std::array<int, kMaxActive> active_{};        ///< アクティブハンドル配列
   int activeCount_ = 0;                         ///< 現在のアクティブ数
 
-  Microsoft::WRL::ComPtr<ID3D12Resource> cb_;   ///< GPU定数バッファ
-  ::SpotLightsCB *mapped_ = nullptr;            ///< マップ済みポインタ
+  /// @brief 定数バッファ。値は CPU 側（mapped_ が指す）に持ち、アドレスを求められたときに今フレームの領域へ送る
+  /// @details 以前は Map しっぱなしの固定 CB だった（CPU と GPU を並行させると上書き競合が起きる）
+  DynamicCB<::SpotLightsCB> dyn_;
+  bool hasCB_ = false;                          ///< CB を使える状態か（デバイス初期化後）
+  ::SpotLightsCB *mapped_ = nullptr;                       ///< 書き込み先（= dyn_.Ptr()）
 };
 
 } // namespace RC

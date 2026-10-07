@@ -38,13 +38,8 @@ void PointLightManager::Term() {
   activeCount_ = 0;
   active_.fill(-1);
 
-  if (cb_) {
-    if (mapped_) {
-      cb_->Unmap(0, nullptr);
-      mapped_ = nullptr;
-    }
-    cb_.Reset();
-  }
+  hasCB_ = false;
+  mapped_ = nullptr;
 
   device_.Reset();
   initialized_ = false;
@@ -173,12 +168,12 @@ const PointLightSource *PointLightManager::GetActive() const {
 }
 
 void PointLightManager::EnsureCB_() {
-  if (cb_ || !device_)
+  if (hasCB_ || !device_)
     return;
 
-  const UINT size = Align256_((UINT)sizeof(::PointLightsCB));
-  cb_ = CreateBufferResource(device_.Get(), size, L"PointLightManager::cb_");
-  cb_->Map(0, nullptr, reinterpret_cast<void **>(&mapped_));
+  // DynamicCB: CPU 側の値に書き、バインド時に今フレームの領域へ送る
+  hasCB_ = true;
+  mapped_ = dyn_.Ptr();
   if (mapped_) {
     // アップロードヒープは 0 初期化されないので、一度だけ全体をクリアしておく。
     // 以降の SyncCB_ は count と使用中エントリだけを書く（シェーダは count で break する）
@@ -214,13 +209,16 @@ void PointLightManager::SyncCB() {
     return;
   EnsureCB_();
   SyncCB_();
+  // 前回 GPU へ送った値と比べ、変わっていれば次の GetCBAddress で送り直す
+  dyn_.Refresh();
 }
 
 D3D12_GPU_VIRTUAL_ADDRESS PointLightManager::GetCBAddress() {
   if (!initialized_)
     return 0;
   EnsureCB_();
-  return cb_ ? cb_->GetGPUVirtualAddress() : 0;
+  // ドローごとに呼ばれるので比較はしない（SyncCB で変更を検出済み）
+  return hasCB_ ? dyn_.AddressCached() : 0;
 }
 
 } // namespace RC

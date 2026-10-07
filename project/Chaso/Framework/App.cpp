@@ -4,6 +4,7 @@
 #include "Audio/AudioEngine.h"
 #include "../Editor/DebugBridge.h"
 #include "Common/ResourcePath.h"
+#include "Common/FrameProfiler.h"
 #include <cassert>
 #include <chrono>
 #include <format>
@@ -165,10 +166,13 @@ int App::Run() {
       imgui_.NewFrame();
 
       // エディタのUI構築（DockSpace, MenuBarなど）
-      editorManager_.Update(&core_, [this]() {
-          // ゲーム（シーン）のUIをMenuBarの中（Windowの右）に構築する
-          game_.DrawDebugUI(sceneCtx_);
-      }, game_.GetCurrentScene());
+      {
+        CHASO_PROFILE_SCOPE("Editor: UI build");
+        editorManager_.Update(&core_, [this]() {
+            // ゲーム（シーン）のUIをMenuBarの中（Windowの右）に構築する
+            game_.DrawDebugUI(sceneCtx_);
+        }, game_.GetCurrentScene());
+      }
 
       // 前フレームのViewportホバー状態を入力クラスに伝達
       input_->SetViewportHovered(editorManager_.IsViewportHovered());
@@ -202,7 +206,10 @@ int App::Run() {
 #endif
 
       // 更新
-      Update();
+      {
+        CHASO_PROFILE_SCOPE("App: Update (input/scene/audio)");
+        Update();
+      }
 
       // ポストプロセスの時間更新
       if (postProcess_) {
@@ -210,7 +217,13 @@ int App::Run() {
       }
 
       // 描画
-      core_.BeginFrame();
+      {
+        // コマンドアロケータの再利用前に、2 フレーム前の GPU 完了を待つ（ここが唯一の GPU 待ち）
+        CHASO_PROFILE_SCOPE("App: BeginFrame (wait GPU N-2)");
+        core_.BeginFrame();
+      }
+      // フレームごとの一時バッファを切り替える（CPU と GPU を並行させるため 1 フレーム 1 回）
+      RC::BeginFrame();
 
       // --- オフスクリーンレンダリング開始 ---
       renderTexture_.TransitionToRenderTarget(cl_);
@@ -228,7 +241,10 @@ int App::Run() {
       sceneCtx_.currentDSV = dsv;
       sceneCtx_.currentColorResource = renderTexture_.GetResource().Get();
 
-      Render();
+      {
+        CHASO_PROFILE_SCOPE("App: Render (scene command recording)");
+        Render();
+      }
 
       // --- オフスクリーンレンダリング終了 ---
       renderTexture_.TransitionToShaderResource(cl_);
@@ -252,7 +268,10 @@ int App::Run() {
 
 #if RC_ENABLE_IMGUI
       // エディタモード：ポストプロセスの出力を viewportTexture_ に書き込む
-      postProcess_->Draw(cl_, renderTexture_, &viewportTexture_);
+      {
+        CHASO_PROFILE_SCOPE("App: PostProcess");
+        postProcess_->Draw(cl_, renderTexture_, &viewportTexture_);
+      }
 
       // ポストプロセス後のオーバーレイ（viewportTexture_ がレンダーターゲットのまま）
       game_.RenderOverlay(sceneCtx_, cl_);
@@ -269,12 +288,20 @@ int App::Run() {
       core_.ResetViewportScissorToBackbuffer(appConfig_.width, appConfig_.height);
 
       // エディタの各パネル描画（Viewport含む）
-      editorManager_.DrawUI(viewportTexture_.GetSRVGPU(), &core_, &pm_, sceneCtx_.deltaTime, game_.GetCurrentScene());
+      {
+        CHASO_PROFILE_SCOPE("Editor: UI draw");
+        editorManager_.DrawUI(viewportTexture_.GetSRVGPU(), &core_, &pm_, sceneCtx_.deltaTime, game_.GetCurrentScene());
 
-      // ImGui 描画
-      imgui_.Render(cl_);
+        // ImGui 描画
+        imgui_.Render(cl_);
+      }
 #endif
-      core_.EndFrame();
+      {
+        // Present・GPU 完了待ち・録画・FPS 固定の待ちを含む（CPU の処理量ではない）
+        CHASO_PROFILE_SCOPE("App: EndFrame (present/wait)");
+        core_.EndFrame();
+      }
+      FrameProfiler::Get().EndFrame();
     }
   }
   return static_cast<int>(msg_.wParam);

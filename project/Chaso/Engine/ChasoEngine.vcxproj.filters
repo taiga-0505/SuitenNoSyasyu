@@ -166,6 +166,9 @@
     <Filter Include="Render\Light\Spot">
       <UniqueIdentifier>{75360f83-7368-08f5-316d-83ab852ca33c}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Render\Effect">
+      <UniqueIdentifier>{6f1c2d7a-3b4e-4c5d-9e8f-0a1b2c3d4e5f}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Render\Model">
       <UniqueIdentifier>{ad2b9d8f-005b-f8bb-cef7-c4a633d7461a}</UniqueIdentifier>
     </Filter>
@@ -251,6 +254,12 @@
     </ClCompile>
     <ClCompile Include="..\Engine\ECS\ColliderBroadphase.cpp">
       <Filter>ECS</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Engine\Render\Effect\EffectParticleSystem.cpp">
+      <Filter>Render\Effect</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Engine\Render\Systems\RenderEffectParticle.cpp">
+      <Filter>Render\Systems</Filter>
     </ClCompile>
     <ClCompile Include="..\Engine\Common\Math\Math.cpp">
       <Filter>Common\Math</Filter>
@@ -526,6 +535,12 @@
     </ClInclude>
     <ClInclude Include="..\Engine\ECS\ColliderBroadphase.h">
       <Filter>ECS</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Engine\Render\Effect\EffectParticleSystem.h">
+      <Filter>Render\Effect</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Engine\Common\FrameProfiler.h">
+      <Filter>Common</Filter>
     </ClInclude>
     <ClInclude Include="..\Engine\Common\Math\Math.h">
       <Filter>Common\Math</Filter>

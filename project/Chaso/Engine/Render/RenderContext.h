@@ -32,6 +32,7 @@
 #include "Model/ModelManager.h"
 #include "Model/ModelInstanceBatcher.h"
 #include "Model/ModelProxyPool.h"
+#include "Effect/EffectParticleSystem.h"
 #include "Skydome/SkydomeManager.h"
 #include "Skybox/SkyboxManager.h"
 #include "Mesh/PrimitiveMeshManager.h"
@@ -196,6 +197,8 @@ public:
   ModelInstanceBatcher &InstanceBatcher() { return instanceBatcher_; }
   /// @brief VirtualEntity（ModelProxyPool）を取得
   ModelProxyPool &ModelProxies() { return modelProxies_; }
+  /// @brief Entity を使わないエフェクト粒（水しぶき・泡など）を取得
+  EffectParticleSystem &EffectParticles() { return effectParticles_; }
 
   /// @brief 今描いているパスの ViewProjection（カリング用）
   /// @details 平行光源の影パス → ライト行列、スポット影タイル → そのタイルの行列、それ以外 → カメラ。
@@ -449,6 +452,16 @@ public:
   /// @brief 現在のフレーム用リソースアロケータを取得する
   FrameResource &CurrentFrame() { return frameResources_[frameIndex_]; }
 
+  /// @brief フレーム開始。1 フレームに 1 回、コマンドリストを開いた直後に呼ぶ（App が呼ぶ）
+  /// @details FrameResource を次の 1 枚へ進めてリセットし、フレームの通し番号を進める。
+  ///          CPU と GPU を並行させているので、ここより前（Update 中）に確保した領域は
+  ///          直前の 1 枚の続きに入る。その 1 枚が再利用されるのは 2 フレーム後で、
+  ///          そのときには GPU の完了を待っているので安全。
+  void BeginFrame();
+
+  /// @brief フレームの通し番号（BeginFrame のたびに +1）
+  uint64_t FrameSerial() const { return frameSerial_; }
+
   /// @brief 現在のフレームインデックスを取得
   uint32_t FrameIndex() const { return frameIndex_; }
 
@@ -463,7 +476,8 @@ public:
   void SetFogColor(const Vector4 &color);
 
   /// @brief フォグ用定数バッファのリソースを取得する
-  ID3D12Resource *FogCBResource() const { return fogCB_.Get(); }
+  /// @brief フォグ CB を今フレームの領域へ送り、その GPU アドレスを返す（コマンド記録中に呼ぶ）
+  D3D12_GPU_VIRTUAL_ADDRESS FogCBAddress() { return fogCBMapped_ ? fogCB_.Address() : 0; }
 
 private:
   /// @brief スポット影 CB のタイル数・テクセルサイズをアトラスの実寸で埋める
@@ -501,6 +515,7 @@ private:
   TextureManager texMan_;                          ///< テクスチャ管理
   ModelInstanceBatcher instanceBatcher_;           ///< モデルのインスタンス描画のまとめ役
   ModelProxyPool modelProxies_;                    ///< VirtualEntity（見た目だけの軽量オブジェクト）
+  EffectParticleSystem effectParticles_;           ///< エフェクト粒（水しぶき・泡・水柱）
   Matrix4x4 dirShadowViewProj_{};                  ///< 平行光源の影パスの ViewProjection（カリング用の控え）
   Matrix4x4 spotShadowTileViewProj_{};             ///< 描画中のスポット影タイルの ViewProjection（同上）
 
@@ -511,8 +526,9 @@ private:
     Vector3 worldPos;
     float _pad = 0.0f;
   };
-  Microsoft::WRL::ComPtr<ID3D12Resource> cameraCB_; ///< カメラCB
-  CameraCB *cameraCBMapped_ = nullptr;              ///< カメラCBマップ済みポインタ
+  /// @brief カメラCB（値は CPU 側。バインド時に今フレームの領域へ送る。CPU/GPU 並行のため）
+  DynamicCB<CameraCB> cameraCB_;
+  CameraCB *cameraCBMapped_ = nullptr;              ///< 書き込み先（= cameraCB_.Ptr()）
 
   // Fog CB
   struct FogOverlayCB {
@@ -525,12 +541,14 @@ private:
     float bottomBias = 0.35f;
     Vector4 color = {1.0f, 1.0f, 1.0f, 1.0f};
   };
-  Microsoft::WRL::ComPtr<ID3D12Resource> fogCB_;   ///< フォグCB
-  FogOverlayCB *fogCBMapped_ = nullptr;            ///< フォグCBマップ済みポインタ
+  /// @brief フォグCB（値は CPU 側。バインド時に今フレームの領域へ送る。CPU/GPU 並行のため）
+  DynamicCB<FogOverlayCB> fogCB_;
+  FogOverlayCB *fogCBMapped_ = nullptr;            ///< 書き込み先（= fogCB_.Ptr()）
 
   // Shadow CB
-  Microsoft::WRL::ComPtr<ID3D12Resource> shadowCB_;   ///< シャドウCB
-  ShadowParams *shadowCBMapped_ = nullptr;            ///< シャドウCBマップ済みポインタ
+  /// @brief シャドウCB（値は CPU 側。バインド時に今フレームの領域へ送る。CPU/GPU 並行のため）
+  DynamicCB<ShadowParams> shadowCB_;
+  ShadowParams *shadowCBMapped_ = nullptr;            ///< 書き込み先（= shadowCB_.Ptr()）
   ShadowMap shadowMap_;                               ///< シャドウマップリソース
   ShadowDebugOverride shadowDebug_;                   ///< 確認用のシャドウ上書き設定（既定は無効）
 
@@ -554,7 +572,8 @@ private:
   ///        タイルごとに別スライスを用意して切り替える（同じく PreDraw3D で確保）
   ShadowParams *spotShadowPassParamsMapped_ = nullptr; ///< 先頭スライス（256byte 間隔で kMaxSpotShadows 個）
   D3D12_GPU_VIRTUAL_ADDRESS spotShadowPassParamsAddr_ = 0; ///< 先頭スライスの GPU アドレス
-  /// @brief BindPipeline が b6 に載せるアドレス。通常は shadowCB_、スポットタイル描画中はそのタイルのスライス
+  /// @brief BindPipeline が b6 に載せるアドレスの上書き。0 なら shadowCB_（平行光源の影）、
+  ///        スポットタイル描画中はそのタイルのスライス
   D3D12_GPU_VIRTUAL_ADDRESS shadowCBBoundAddr_ = 0;
   static constexpr uint32_t kShadowParamsSliceStride = 256; ///< ShadowParams スライスの間隔（CB の 256byte 制約）
 
@@ -587,6 +606,7 @@ private:
 
   std::array<FrameResource, FrameResource::kFrameCount> frameResources_; ///< フレーム別リソース
   uint32_t frameIndex_ = 0;                         ///< 現在のフレームリソースインデックス
+  uint64_t frameSerial_ = 1;                        ///< フレームの通し番号（DynamicCB の使い回し判定用）
 
   std::vector<std::future<void>> ongoingTasks_;    ///< 実行中の非同期タスク
   std::mutex mtxTasks_;                            ///< タスク管理用ミューテックス

@@ -2,6 +2,7 @@
 #include "IComponent.h"
 #include "ScriptableEntity.h"
 #include "ScriptRegistry.h"
+#include "Common/FrameProfiler.h"
 #include <functional>
 #include <string>
 #include <vector>
@@ -15,6 +16,7 @@ public:
     std::function<ScriptableEntity*()> InstantiateScript;
     std::function<void(ScriptEntry&)> DestroyScript;
     nlohmann::json pendingData;
+    const char* profileName = nullptr; ///< FrameProfiler の区間名（Intern 済み。ランタイム専用）
   };
 
   std::vector<ScriptEntry> scripts;
@@ -111,7 +113,20 @@ public:
         // Update context each frame (may change between frames)
         entry.instance->scene_ = scene_;
         entry.instance->sceneContext_ = sceneContext_;
+#if RC_ENABLE_IMGUI
+        // スクリプトの種類ごとに Update の時間を集計する（Performance パネルの内訳表示用）
+        if (!entry.profileName && !entry.scriptTypeName.empty()) {
+          entry.profileName = FrameProfiler::Get().Intern("Script: " + entry.scriptTypeName);
+        }
+        if (entry.profileName) {
+          FrameProfileScope scope(entry.profileName);
+          entry.instance->OnUpdate(deltaTime);
+        } else {
+          entry.instance->OnUpdate(deltaTime);
+        }
+#else
         entry.instance->OnUpdate(deltaTime);
+#endif
       }
     }
   }

@@ -1,5 +1,6 @@
 #include "ModelResource.h"
 #include "Render/FrameResource.h"
+#include "DeferredReleaseQueue/DeferredReleaseQueue.h"
 #include "Texture/TextureManager/TextureManager.h"
 #include "SRVManager/SRVManager.h"
 #include "Common/Log/Log.h"
@@ -12,41 +13,39 @@
 using namespace RC;
 
 ModelResource::~ModelResource() {
-  cbMat_.resource.Reset();
-  cbLight_.resource.Reset();
+  // 定数バッファは DynamicCB（毎フレームの一時領域）なので解放するものは無い。
+  // CS スキニング用の GPU リソースは、直前のフレームの GPU がまだ使っている可能性があるので遅延解放する
+  DeferredReleaseQueue::DeferRelease(std::move(skinnedVertexBuffer_));
+  DeferredReleaseQueue::DeferRelease(std::move(skinningInfoCB_));
 }
 
 void ModelResource::Initialize(ID3D12Device *device) {
   device_ = device;
 
   // Material CB
-  cbMat_.resource = CreateBufferResource(device_.Get(), sizeof(Material),
-                                         L"ModelResource::cbMat_");
-  cbMat_.resource->Map(0, nullptr,
-                       reinterpret_cast<void **>(&cbMat_.mapped));
-  cbMat_.mapped->color = {1, 1, 1, 1};
-  cbMat_.mapped->lightingMode = 2; // 既定 HalfLambert
-  cbMat_.mapped->uvTransform = MakeIdentity4x4();
+  cbMat_.dyn.Ptr()->color = {1, 1, 1, 1};
+  cbMat_.dyn.Ptr()->lightingMode = 2; // 既定 HalfLambert
+  cbMat_.dyn.Ptr()->uvTransform = MakeIdentity4x4();
 
   // padding 初期化（ガラスでは environmentCoefficient=IOR, padding=roughness として使う）
-  cbMat_.mapped->environmentCoefficient = 0.0f; // 通常モデル: 映り込みなし / Glass: IOR（0ならPS側で1.5扱い）
-  cbMat_.mapped->useNormalMap = 0;
-  cbMat_.mapped->useRoughnessMap = 0;
-  cbMat_.mapped->padding[0] = 0.0f;                // Glass: roughness
+  cbMat_.dyn.Ptr()->environmentCoefficient = 0.0f; // 通常モデル: 映り込みなし / Glass: IOR（0ならPS側で1.5扱い）
+  cbMat_.dyn.Ptr()->useNormalMap = 0;
+  cbMat_.dyn.Ptr()->useRoughnessMap = 0;
+  cbMat_.dyn.Ptr()->padding[0] = 0.0f;                // Glass: roughness
 
   // Light CB（各Objectが自前で持つ）
-  cbLight_.resource = CreateBufferResource(device_.Get(),
-                                           sizeof(DirectionalLight),
-                                           L"ModelResource::cbLight_");
-  cbLight_.resource->Map(0, nullptr,
-                         reinterpret_cast<void **>(&cbLight_.mapped));
-  cbLight_.mapped->color = {1, 1, 1, 1};
-  cbLight_.mapped->direction = {0.0f, -1.0f, 0.0f};
-  cbLight_.mapped->intensity = 1.0f;
-  cbMat_.mapped->shininess = 32.0f;
+  cbLight_.dyn.Ptr()->color = {1, 1, 1, 1};
+  cbLight_.dyn.Ptr()->direction = {0.0f, -1.0f, 0.0f};
+  cbLight_.dyn.Ptr()->intensity = 1.0f;
+  cbMat_.dyn.Ptr()->shininess = 32.0f;
 }
 
 void ModelResource::SetMesh(const std::shared_ptr<ModelMesh> &mesh) {
+  // 差し替え前のメッシュを直前のフレームの GPU がまだ使っているかもしれないので、
+  // 最後の参照がここで消えても、GPU が使い終わるまで頂点バッファを生かしておく
+  if (mesh_ && mesh_ != mesh) {
+    DeferredReleaseQueue::DeferDelete(mesh_);
+  }
   mesh_ = mesh;
   // meshが変わったらMaterial SRVキャッシュは破棄
   materialSrvs_.clear();
@@ -65,13 +64,13 @@ void ModelResource::ResetTextureToMtl() {
 
 void ModelResource::ApplyLighting(int lightingMode, const float color[3],
                                   const float dir[3], float intensity) {
-  if (cbMat_.mapped) {
-    cbMat_.mapped->lightingMode = lightingMode;
+  if (cbMat_.dyn.Ptr()) {
+    cbMat_.dyn.Ptr()->lightingMode = lightingMode;
   }
-  if (cbLight_.mapped) {
-    cbLight_.mapped->color = {color[0], color[1], color[2], 1.0f};
-    cbLight_.mapped->direction = {dir[0], dir[1], dir[2]};
-    cbLight_.mapped->intensity = intensity;
+  if (cbLight_.dyn.Ptr()) {
+    cbLight_.dyn.Ptr()->color = {color[0], color[1], color[2], 1.0f};
+    cbLight_.dyn.Ptr()->direction = {dir[0], dir[1], dir[2]};
+    cbLight_.dyn.Ptr()->intensity = intensity;
   }
 }
 
@@ -164,17 +163,17 @@ void ModelResource::Draw(ID3D12GraphicsCommandList *cmdList,
   cmdList->IASetVertexBuffers(0, 1, &vbv);
   cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-  cbMat_.mapped->useNormalMap = (normalMapSrv_.ptr != 0) ? 1 : 0;
-  cbMat_.mapped->useRoughnessMap = (roughnessMapSrv_.ptr != 0) ? 1 : 0;
+  cbMat_.dyn.Ptr()->useNormalMap = (normalMapSrv_.ptr != 0) ? 1 : 0;
+  cbMat_.dyn.Ptr()->useRoughnessMap = (roughnessMapSrv_.ptr != 0) ? 1 : 0;
 
   cmdList->SetGraphicsRootConstantBufferView(
-      0, cbMat_.resource->GetGPUVirtualAddress());
+      0, cbMat_.dyn.Address());
 
   // Light CB（b1）: 外部ライトが指定されていればそちらを使う
   const D3D12_GPU_VIRTUAL_ADDRESS lightAddr =
       (externalLightCBAddress_ != 0)
           ? externalLightCBAddress_
-          : cbLight_.resource->GetGPUVirtualAddress();
+          : cbLight_.dyn.Address();
   cmdList->SetGraphicsRootConstantBufferView(3, lightAddr);
 
   if (items.empty()) {
@@ -333,11 +332,11 @@ void ModelResource::DrawBatch(ID3D12GraphicsCommandList *cmdList,
   cmdList->IASetVertexBuffers(0, 1, &vbv);
   cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-  cbMat_.mapped->useNormalMap = (normalMapSrv_.ptr != 0) ? 1 : 0;
-  cbMat_.mapped->useRoughnessMap = (roughnessMapSrv_.ptr != 0) ? 1 : 0;
+  cbMat_.dyn.Ptr()->useNormalMap = (normalMapSrv_.ptr != 0) ? 1 : 0;
+  cbMat_.dyn.Ptr()->useRoughnessMap = (roughnessMapSrv_.ptr != 0) ? 1 : 0;
 
   cmdList->SetGraphicsRootConstantBufferView(
-      0, cbMat_.resource->GetGPUVirtualAddress());
+      0, cbMat_.dyn.Address());
 
   if (textureSrv_.ptr == 0) {
     EnsureMaterialSrvsLoaded_();
@@ -346,7 +345,7 @@ void ModelResource::DrawBatch(ID3D12GraphicsCommandList *cmdList,
   const D3D12_GPU_VIRTUAL_ADDRESS lightAddr =
       (externalLightCBAddress_ != 0)
           ? externalLightCBAddress_
-          : cbLight_.resource->GetGPUVirtualAddress();
+          : cbLight_.dyn.Address();
   cmdList->SetGraphicsRootConstantBufferView(3, lightAddr);
 
   // FrameResource から SRV 領域を一括確保
@@ -434,11 +433,11 @@ void ModelResource::DrawBatch(ID3D12GraphicsCommandList *cmdList,
   cmdList->IASetVertexBuffers(0, 1, &vbv);
   cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-  cbMat_.mapped->useNormalMap = (normalMapSrv_.ptr != 0) ? 1 : 0;
-  cbMat_.mapped->useRoughnessMap = (roughnessMapSrv_.ptr != 0) ? 1 : 0;
+  cbMat_.dyn.Ptr()->useNormalMap = (normalMapSrv_.ptr != 0) ? 1 : 0;
+  cbMat_.dyn.Ptr()->useRoughnessMap = (roughnessMapSrv_.ptr != 0) ? 1 : 0;
 
   cmdList->SetGraphicsRootConstantBufferView(
-      0, cbMat_.resource->GetGPUVirtualAddress());
+      0, cbMat_.dyn.Address());
 
   if (textureSrv_.ptr == 0) {
     EnsureMaterialSrvsLoaded_();
@@ -447,7 +446,7 @@ void ModelResource::DrawBatch(ID3D12GraphicsCommandList *cmdList,
   const D3D12_GPU_VIRTUAL_ADDRESS lightAddr =
       (externalLightCBAddress_ != 0)
           ? externalLightCBAddress_
-          : cbLight_.resource->GetGPUVirtualAddress();
+          : cbLight_.dyn.Address();
   cmdList->SetGraphicsRootConstantBufferView(3, lightAddr);
 
   // FrameResource から SRV 領域を一括確保
@@ -543,16 +542,16 @@ void ModelResource::DrawSkinned(ID3D12GraphicsCommandList *cmdList,
   }
 
   // Material CB (PS b0)
-  cbMat_.mapped->useNormalMap = (normalMapSrv_.ptr != 0) ? 1 : 0;
-  cbMat_.mapped->useRoughnessMap = (roughnessMapSrv_.ptr != 0) ? 1 : 0;
+  cbMat_.dyn.Ptr()->useNormalMap = (normalMapSrv_.ptr != 0) ? 1 : 0;
+  cbMat_.dyn.Ptr()->useRoughnessMap = (roughnessMapSrv_.ptr != 0) ? 1 : 0;
   cmdList->SetGraphicsRootConstantBufferView(
-      Object3DRootParam::kMaterial, cbMat_.resource->GetGPUVirtualAddress());
+      Object3DRootParam::kMaterial, cbMat_.dyn.Address());
 
   // Light CB (PS b1)
   const D3D12_GPU_VIRTUAL_ADDRESS lightAddr =
       (externalLightCBAddress_ != 0)
           ? externalLightCBAddress_
-          : cbLight_.resource->GetGPUVirtualAddress();
+          : cbLight_.dyn.Address();
   cmdList->SetGraphicsRootConstantBufferView(Object3DRootParam::kLight, lightAddr);
 
   // 行列パレットをSRVとして転送 (VS t1)
@@ -755,10 +754,10 @@ void ModelResource::DrawSkinnedCS(ID3D12GraphicsCommandList *cmdList,
   }
 
   // Material CB (slot 0, PS)
-  cbMat_.mapped->useNormalMap = (normalMapSrv_.ptr != 0) ? 1 : 0;
-  cbMat_.mapped->useRoughnessMap = (roughnessMapSrv_.ptr != 0) ? 1 : 0;
+  cbMat_.dyn.Ptr()->useNormalMap = (normalMapSrv_.ptr != 0) ? 1 : 0;
+  cbMat_.dyn.Ptr()->useRoughnessMap = (roughnessMapSrv_.ptr != 0) ? 1 : 0;
   cmdList->SetGraphicsRootConstantBufferView(
-      0, cbMat_.resource->GetGPUVirtualAddress());
+      0, cbMat_.dyn.Address());
 
   // Transform CB (slot 1, VS)
   void *dst = nullptr;
@@ -777,7 +776,7 @@ void ModelResource::DrawSkinnedCS(ID3D12GraphicsCommandList *cmdList,
   const D3D12_GPU_VIRTUAL_ADDRESS lightAddr =
       (externalLightCBAddress_ != 0)
           ? externalLightCBAddress_
-          : cbLight_.resource->GetGPUVirtualAddress();
+          : cbLight_.dyn.Address();
   cmdList->SetGraphicsRootConstantBufferView(3, lightAddr);
 
   if (items.empty()) {

@@ -1,4 +1,5 @@
 #pragma once
+#include "Render/FrameResource.h" // RC::DynamicCB
 #include <cassert>
 #include <d3d12.h>
 #include <memory>
@@ -502,6 +503,7 @@ private:
     float excludeRects[kMaxOutlineExclusions][4]; ///< (minU, minV, maxU, maxV)
   };
   MaterialData* mappedMaterial_ = nullptr;
+  RC::DynamicCB<MaterialData> dynMaterial_; ///< mappedMaterial_ の実体（CPU/GPU 並行のため毎フレームの領域へ送る）
   SRVManager::Handle depthSrv_{};
 
   float outlineColor_[4] = {0.0f, 0.0f, 0.0f, 1.0f};
@@ -538,6 +540,7 @@ private:
     float padding[2] = {0.0f, 0.0f};
   };
   DissolveData *mappedDissolve_ = nullptr;
+  RC::DynamicCB<DissolveData> dynDissolve_; ///< mappedDissolve_ の実体（CPU/GPU 並行のため毎フレームの領域へ送る）
   float dissolveEdgeColor_[3] = {1.0f, 0.4f, 0.3f};
   float dissolveBaseColor_[4] = {0.0f, 0.0f, 0.0f, 1.0f};
   float dissolveThreshold_ = 0.0f;
@@ -562,6 +565,7 @@ private:
     float padding[2] = {0.0f, 0.0f};
   };
   RandomNoiseData *mappedRandom_ = nullptr;
+  RC::DynamicCB<RandomNoiseData> dynRandom_; ///< mappedRandom_ の実体（CPU/GPU 並行のため毎フレームの領域へ送る）
   float randomTime_ = 0.0f;
   float randomIntensity_ = 1.0f;
   float randomColor_[3] = {1.0f, 1.0f, 1.0f};
@@ -582,6 +586,7 @@ private:
     float excludeRects[kMaxOutlineExclusions][4] = {}; ///< (minU, minV, maxU, maxV)
   };
   MaskOutlineData *mappedMaskOutline_ = nullptr;
+  RC::DynamicCB<MaskOutlineData> dynMaskOutline_; ///< mappedMaskOutline_ の実体（CPU/GPU 並行のため毎フレームの領域へ送る）
   float maskOutlineColor_[4] = {1.0f, 1.0f, 1.0f, 1.0f};
   float maskOutlineThickness_ = 2.0f;
   float maskOutlineStrength_ = 1.0f;
@@ -604,6 +609,7 @@ private:
     float power = 1.0f;
   };
   SsaoData *mappedSsao_ = nullptr;
+  RC::DynamicCB<SsaoData> dynSsao_; ///< mappedSsao_ の実体（CPU/GPU 並行のため毎フレームの領域へ送る）
   float ssaoRadius_ = 0.5f;
   float ssaoIntensity_ = 0.6f;
   float ssaoBias_ = 0.02f;
@@ -622,6 +628,7 @@ private:
     float padding[2] = {0.0f, 0.0f};
   };
   ColorGradeData *mappedColorGrade_ = nullptr;
+  RC::DynamicCB<ColorGradeData> dynColorGrade_; ///< mappedColorGrade_ の実体（CPU/GPU 並行のため毎フレームの領域へ送る）
   float gradeColorFilter_[4] = {1.0f, 1.0f, 1.0f, 1.0f};
   float gradeExposure_ = 0.0f;
   float gradeContrast_ = 1.0f;
@@ -644,6 +651,7 @@ private:
     float padding[3] = {0.0f, 0.0f, 0.0f};
   };
   UnderwaterData *mappedUnderwater_ = nullptr;
+  RC::DynamicCB<UnderwaterData> dynUnderwater_; ///< mappedUnderwater_ の実体（CPU/GPU 並行のため毎フレームの領域へ送る）
   float underwaterTintColor_[4] = {0.2f, 0.5f, 1.0f, 1.0f};
   float underwaterFogColor_[4] = {0.0f, 0.3f, 0.6f, 1.0f};
   float underwaterDistortionForce_ = 0.004f;
@@ -675,6 +683,7 @@ private:
     float lerpFactor = 1.0f;                   // 水中ブレンド率
   };
   CausticsData *mappedCaustics_ = nullptr;
+  RC::DynamicCB<CausticsData> dynCaustics_; ///< mappedCaustics_ の実体（CPU/GPU 並行のため毎フレームの領域へ送る）
   float causticsColor_[3] = {0.75f, 0.95f, 1.0f};
   float causticsIntensity_ = 1.5f;
   float causticsScale_ = 0.05f;
@@ -713,6 +722,7 @@ private:
     float sunDir[4] = {-0.464f, -0.743f, 0.464f, 0.0f};   // 光の進む向き（ワールド、正規化済み、y<0）
   };
   LightShaftData *mappedLightShaft_ = nullptr;
+  RC::DynamicCB<LightShaftData> dynLightShaft_; ///< mappedLightShaft_ の実体（CPU/GPU 並行のため毎フレームの領域へ送る）
   float lightShaftSunDir_[3] = {-0.464f, -0.743f, 0.464f};
   float lightShaftColor_[3] = {0.80f, 0.94f, 1.0f};
   float lightShaftIntensity_ = 1.0f;
@@ -737,6 +747,7 @@ private:
     float padding[2] = {0.0f, 0.0f};
   };
   ScreenDropletsData *mappedScreenDroplets_ = nullptr;
+  RC::DynamicCB<ScreenDropletsData> dynScreenDroplets_; ///< mappedScreenDroplets_ の実体（CPU/GPU 並行のため毎フレームの領域へ送る）
   float screenDropletsIntensity_ = 1.0f;
   float screenDropletsSpeed_ = 1.0f;
   float screenDropletsDistortion_ = 0.05f;
@@ -762,6 +773,7 @@ private:
     float padding[3] = {0.0f, 0.0f, 0.0f};
   };
   BloodOverlayData *mappedBloodOverlay_ = nullptr;
+  RC::DynamicCB<BloodOverlayData> dynBloodOverlay_; ///< mappedBloodOverlay_ の実体（CPU/GPU 並行のため毎フレームの領域へ送る）
 
   // InkOverlay パラメータ
   // NOTE: HLSL 側 cbuffer InkOverlayParams (b1) と 1:1 で対応する。
@@ -779,6 +791,7 @@ private:
   static_assert(sizeof(InkOverlayData) == 32 + 32 * kMaxInkSplats,
                 "InkOverlayData must match cbuffer InkOverlayParams");
   InkOverlayData *mappedInkOverlay_ = nullptr;
+  RC::DynamicCB<InkOverlayData> dynInkOverlay_; ///< mappedInkOverlay_ の実体（CPU/GPU 並行のため毎フレームの領域へ送る）
   int inkSplatCount_ = 0;
   float inkMurk_ = 0.0f;
   float inkColor_[4] = {0.03f, 0.02f, 0.05f, 0.96f};

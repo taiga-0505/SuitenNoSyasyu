@@ -2,6 +2,7 @@
 #include "Scene.h"
 #include "SceneFlow.h"
 #include "Common/EngineConfig.h"
+#include "Common/FrameProfiler.h"
 #include "Common/Math/MathUtils.h"
 #include "Common/Math/Math.h"
 #include "Camera/CameraController.h" // ctx.camera->GetWorldPos()（Scene.h は前方宣言のみ）
@@ -113,10 +114,14 @@ public:
     entities_.clear();
     pendingEntities_.clear();
     broadphase_.Clear(); // 弱参照だけになった登録を捨てる
+    RC::ClearEffectParticles();
   }
 
   void Update(SceneManager& sm, SceneContext& ctx) override {
     (void)sm;
+    // 内訳表示用。下の UpdateEntities / ResolveCollisions を除いた残りが、
+    // アニメーション・Transform 同期・ライト・パーティクル更新などのエンティティ走査の時間
+    CHASO_PROFILE_SCOPE("Scene: DataDrivenScene::Update total");
     currentContext_ = &ctx;
 
 #if RC_ENABLE_IMGUI
@@ -421,8 +426,19 @@ public:
         }
     }
 
-    UpdateEntities(updateDt);
-    ResolveCollisions();
+    {
+      CHASO_PROFILE_SCOPE("Scene: UpdateEntities (all components)");
+      UpdateEntities(updateDt);
+    }
+    {
+      // 水しぶき・泡などのエフェクト粒（Entity を使わない）。停止・ポーズ中は updateDt = 0 で止まる
+      CHASO_PROFILE_SCOPE("Scene: UpdateEffectParticles");
+      RC::UpdateEffectParticles(updateDt);
+    }
+    {
+      CHASO_PROFILE_SCOPE("Scene: ResolveCollisions");
+      ResolveCollisions();
+    }
 
     // ※ AudioSource の更新（playOnAwake / BGM keep-alive）はここではなく UpdateAudio() で行う。
     //    SceneManager が演出中も含めて毎フレーム呼ぶため、Update が止まっても BGM が切れない。
@@ -683,6 +699,8 @@ public:
         }
         // VirtualEntity（RC::CreateModelProxy で置いた見た目だけの物）。castShadow の物だけ描かれる
         RC::DrawModelProxies();
+        // エフェクト粒（水しぶき・泡・水柱）。以前は 1 粒ずつ PrimitiveMesh として影を落としていた
+        RC::DrawEffectParticles();
     };
 
     // --- 1) 平行光源 ---
@@ -938,6 +956,7 @@ public:
     // UpdateSpotShadowParams は BeginSpotShadowAtlas に成功したときだけ呼ぶ。
     // 失敗（＝アトラスが使えない）なら b7 は PreDraw3D が入れた count = 0 のままになり、
     // シェーダ側は「遮蔽なし」として扱う（描いていないアトラスを参照しない）
+    CHASO_PROFILE_SCOPE("Scene: Render after PreDraw3D (to end of Scene::Render)");
     if (spotShadowCB.count > 0 && RC::BeginSpotShadowAtlas()) {
         RC::UpdateSpotShadowParams(spotShadowCB); // PreDraw3D の後に呼ぶこと
         for (uint32_t i = 0; i < spotShadowCB.count; ++i) {
@@ -1053,6 +1072,8 @@ public:
 
     // VirtualEntity（RC::CreateModelProxy で置いた見た目だけの物）。BVH で視錐台カリングしてまとめて描く
     RC::DrawModelProxies();
+    // エフェクト粒（水しぶき・泡・水柱）。種類ごとにまとめて描く（水は奥→手前）
+    RC::DrawEffectParticles();
 
     // ワールド空間スプライト（深度テストありで 3D キューに積む）
     // モデルと同じキューに入るので、任意のモデルとモデルの間に挟まる
@@ -1223,6 +1244,7 @@ public:
   bool Load() {
     entities_.clear();
     broadphase_.Clear();
+    RC::ClearEffectParticles();
     gameMode_ = GameModeBase::Create(sceneName_); // GameModeのリセット（Application 側のファクトリで作る）
 
     if (!std::filesystem::exists(filePath_)) {
@@ -1341,6 +1363,7 @@ public:
       entities_.clear();
       pendingEntities_.clear();
       broadphase_.Clear();
+      RC::ClearEffectParticles();
       gameMode_ = GameModeBase::Create(sceneName_); // GameModeのリセット（Application 側のファクトリで作る）
 
       for (auto& ej : backupJson_) {
@@ -1600,14 +1623,27 @@ private:
           if (!pm->texturePath.empty()) pm->texOverride = RC::LoadTex(pm->texturePath);
           if (!pm->normalMapPath.empty()) pm->normalMapOverride = RC::LoadTex(pm->normalMapPath);
           if (!pm->roughnessMapPath.empty()) pm->roughnessMapOverride = RC::LoadTex(pm->roughnessMapPath);
-          switch (pm->type) {
-              case PrimitiveType::Sphere: pm->meshHandle = RC::GenerateSphere(1.0f, pm->texOverride); break;
-              case PrimitiveType::Box: pm->meshHandle = RC::GenerateBox(1.0f, 1.0f, 1.0f, pm->texOverride); break;
-              case PrimitiveType::Plane: pm->meshHandle = RC::GeneratePlane(10.0f, 10.0f, pm->texOverride); break;
-              case PrimitiveType::Cylinder: pm->meshHandle = RC::GenerateCylinder(1.0f, 1.0f, pm->texOverride); break;
-              case PrimitiveType::Cone: pm->meshHandle = RC::GenerateCone(1.0f, 1.0f, pm->texOverride); break;
-              case PrimitiveType::Torus: pm->meshHandle = RC::GenerateTorus(1.0f, 0.3f, pm->texOverride); break;
-              case PrimitiveType::Capsule: pm->meshHandle = RC::GenerateCapsule(0.5f, 1.0f, pm->texOverride); break;
+
+          // 呼び出し側（弾の水しぶき等のスクリプト）が先にメッシュを作ってから
+          // InitDynamicEntityRuntime を呼ぶことがある。以前はここで無条件に作り直しており、
+          // 先に作られたメッシュが参照を失ってシーン終了まで解放されなかった（弾 1 発ごとにリーク）。
+          // テクスチャ指定が無ければ既存のメッシュをそのまま使い、あれば古い方を解放してから作り直す。
+          const bool hasValidMesh =
+              pm->meshHandle >= 0 && RC::GetPrimitiveMeshMaterialPtr(pm->meshHandle) != nullptr;
+          if (hasValidMesh && pm->texOverride >= 0) {
+              RC::UnloadPrimitiveMesh(pm->meshHandle);
+              pm->meshHandle = -1;
+          }
+          if (pm->meshHandle < 0 || !hasValidMesh) {
+              switch (pm->type) {
+                  case PrimitiveType::Sphere: pm->meshHandle = RC::GenerateSphere(1.0f, pm->texOverride); break;
+                  case PrimitiveType::Box: pm->meshHandle = RC::GenerateBox(1.0f, 1.0f, 1.0f, pm->texOverride); break;
+                  case PrimitiveType::Plane: pm->meshHandle = RC::GeneratePlane(10.0f, 10.0f, pm->texOverride); break;
+                  case PrimitiveType::Cylinder: pm->meshHandle = RC::GenerateCylinder(1.0f, 1.0f, pm->texOverride); break;
+                  case PrimitiveType::Cone: pm->meshHandle = RC::GenerateCone(1.0f, 1.0f, pm->texOverride); break;
+                  case PrimitiveType::Torus: pm->meshHandle = RC::GenerateTorus(1.0f, 0.3f, pm->texOverride); break;
+                  case PrimitiveType::Capsule: pm->meshHandle = RC::GenerateCapsule(0.5f, 1.0f, pm->texOverride); break;
+              }
           }
           if (pm->meshHandle >= 0) {
               if (auto* mat = RC::GetPrimitiveMeshMaterialPtr(pm->meshHandle)) {

@@ -19,19 +19,11 @@ PrimitiveMesh::~PrimitiveMesh() {
   if (ctx && ctx->core) {
     auto &dq = ctx->core->DeferredRelease();
     const uint64_t fence = ctx->core->GetNextFenceValue();
-    if (cbWvp_.resource && cbWvp_.mapped) cbWvp_.resource->Unmap(0, nullptr);
-    if (cbMat_.resource && cbMat_.mapped) cbMat_.resource->Unmap(0, nullptr);
-    cbWvp_.mapped = nullptr;
-    cbMat_.mapped = nullptr;
     if (vb_.resource) dq.Enqueue(std::move(vb_.resource), fence);
     if (ib_.resource) dq.Enqueue(std::move(ib_.resource), fence);
-    if (cbWvp_.resource) dq.Enqueue(std::move(cbWvp_.resource), fence);
-    if (cbMat_.resource) dq.Enqueue(std::move(cbMat_.resource), fence);
   } else {
     vb_.resource.Reset();
     ib_.resource.Reset();
-    cbWvp_.resource.Reset();
-    cbMat_.resource.Reset();
   }
 }
 
@@ -41,17 +33,11 @@ void PrimitiveMesh::Initialize(ID3D12Device *device, const ModelData &data) {
   UploadVB_(data.vertices);
   UploadIB_(data.indices);
 
-  // CB: WVP
-  cbWvp_.resource = CreateBufferResource(device_.Get(), sizeof(TransformationMatrix), L"PrimitiveMesh::cbWvp_");
-  cbWvp_.resource->Map(0, nullptr, reinterpret_cast<void **>(&cbWvp_.mapped));
-
-  // CB: Material
-  cbMat_.resource = CreateBufferResource(device_.Get(), sizeof(Material), L"PrimitiveMesh::cbMat_");
-  cbMat_.resource->Map(0, nullptr, reinterpret_cast<void **>(&cbMat_.mapped));
-  cbMat_.mapped->color = {1, 1, 1, 1};
-  cbMat_.mapped->uvTransform = MakeIdentity4x4();
-  cbMat_.mapped->lightingMode = 2; // Half Lambert 既定
-  cbMat_.mapped->shininess = 32.0f;
+  // CB: WVP / Material は DynamicCB（CPU 側に値を持ち、バインド時に今フレームの領域へ送る）
+  cbMat_.dyn.Ptr()->color = {1, 1, 1, 1};
+  cbMat_.dyn.Ptr()->uvTransform = MakeIdentity4x4();
+  cbMat_.dyn.Ptr()->lightingMode = 2; // Half Lambert 既定
+  cbMat_.dyn.Ptr()->shininess = 32.0f;
 }
 
 void PrimitiveMesh::Draw(ID3D12GraphicsCommandList *cmdList) {
@@ -64,12 +50,12 @@ void PrimitiveMesh::Draw(ID3D12GraphicsCommandList *cmdList) {
   }
   cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-  cbMat_.mapped->useNormalMap = (normalMapSrv_.ptr != 0) ? 1 : 0;
-  cbMat_.mapped->useRoughnessMap = (roughnessMapSrv_.ptr != 0) ? 1 : 0;
+  cbMat_.dyn.Ptr()->useNormalMap = (normalMapSrv_.ptr != 0) ? 1 : 0;
+  cbMat_.dyn.Ptr()->useRoughnessMap = (roughnessMapSrv_.ptr != 0) ? 1 : 0;
 
   // RootParam: 0:Material, 1:WVP, 2:SRV, 3:Light
-  cmdList->SetGraphicsRootConstantBufferView(0, cbMat_.resource->GetGPUVirtualAddress());
-  cmdList->SetGraphicsRootConstantBufferView(1, cbWvp_.resource->GetGPUVirtualAddress());
+  cmdList->SetGraphicsRootConstantBufferView(0, cbMat_.dyn.Address());
+  cmdList->SetGraphicsRootConstantBufferView(1, cbWvp_.dyn.Address());
   const D3D12_GPU_DESCRIPTOR_HANDLE mainSrv = textureSrv_.ptr != 0 ? textureSrv_ : D3D12_GPU_DESCRIPTOR_HANDLE{};
   if (mainSrv.ptr != 0) {
     cmdList->SetGraphicsRootDescriptorTable(2, mainSrv);
@@ -91,18 +77,58 @@ void PrimitiveMesh::Draw(ID3D12GraphicsCommandList *cmdList) {
   // 必要に応じて RenderContext から 共通ライトを取得してバインド
 }
 
+void PrimitiveMesh::DrawInstancedPrepared(ID3D12GraphicsCommandList *cmdList,
+                                          D3D12_GPU_VIRTUAL_ADDRESS materialCB,
+                                          D3D12_GPU_VIRTUAL_ADDRESS lightCB,
+                                          D3D12_GPU_VIRTUAL_ADDRESS instanceAddr,
+                                          uint32_t count) {
+  if (!vb_.resource || count == 0 || instanceAddr == 0 || materialCB == 0) {
+    return;
+  }
+
+  cmdList->IASetVertexBuffers(0, 1, &vb_.view);
+  if (ib_.resource) {
+    cmdList->IASetIndexBuffer(&ib_.view);
+  }
+  cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+  // RootParam (Object3DInstancing): 0:Material, 1:Instance SRV, 2:Texture, 3:DirectionalLight
+  cmdList->SetGraphicsRootConstantBufferView(0, materialCB);
+  cmdList->SetGraphicsRootShaderResourceView(1, instanceAddr);
+  if (lightCB != 0) {
+    cmdList->SetGraphicsRootConstantBufferView(3, lightCB);
+  }
+  if (textureSrv_.ptr != 0) {
+    cmdList->SetGraphicsRootDescriptorTable(2, textureSrv_);
+  }
+  const D3D12_GPU_DESCRIPTOR_HANDLE normalSrv = (normalMapSrv_.ptr != 0) ? normalMapSrv_ : textureSrv_;
+  const D3D12_GPU_DESCRIPTOR_HANDLE roughSrv = (roughnessMapSrv_.ptr != 0) ? roughnessMapSrv_ : textureSrv_;
+  if (normalSrv.ptr != 0) {
+    cmdList->SetGraphicsRootDescriptorTable(9, normalSrv);
+  }
+  if (roughSrv.ptr != 0) {
+    cmdList->SetGraphicsRootDescriptorTable(10, roughSrv);
+  }
+
+  if (ib_.resource) {
+    cmdList->DrawIndexedInstanced(ib_.indexCount, count, 0, 0, 0);
+  } else {
+    cmdList->DrawInstanced(vb_.vertexCount, count, 0, 0);
+  }
+}
+
 void PrimitiveMesh::Draw(ID3D12GraphicsCommandList *cmdList, const RC::Matrix4x4 &world) {
-  if (!vb_.resource || !visible_ || !cbWvp_.mapped)
+  if (!vb_.resource || !visible_)
     return;
 
   auto &ctx = GetRenderContext();
-  cbWvp_.mapped->World = world;
+  cbWvp_.dyn.Ptr()->World = world;
   if (!ctx.IsShadowPass()) {
     // シャドウパスの VS は World しか読まないので、WVP / 逆転置行列（4x4 逆行列）は
     // 通常パスのときだけ計算する（影タイル数ぶん毎フレーム繰り返されるため）
     Matrix4x4 vp = Multiply(ctx.View(), ctx.Proj());
-    cbWvp_.mapped->WVP = Multiply(world, vp);
-    cbWvp_.mapped->worldInverseTranspose = Transpose(Inverse(world));
+    cbWvp_.dyn.Ptr()->WVP = Multiply(world, vp);
+    cbWvp_.dyn.Ptr()->worldInverseTranspose = Transpose(Inverse(world));
   }
 
   // IA
@@ -112,12 +138,12 @@ void PrimitiveMesh::Draw(ID3D12GraphicsCommandList *cmdList, const RC::Matrix4x4
   }
   cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-  cbMat_.mapped->useNormalMap = (normalMapSrv_.ptr != 0) ? 1 : 0;
-  cbMat_.mapped->useRoughnessMap = (roughnessMapSrv_.ptr != 0) ? 1 : 0;
+  cbMat_.dyn.Ptr()->useNormalMap = (normalMapSrv_.ptr != 0) ? 1 : 0;
+  cbMat_.dyn.Ptr()->useRoughnessMap = (roughnessMapSrv_.ptr != 0) ? 1 : 0;
 
   // RootParam: 0:Material, 1:WVP, 2:SRV, 3:Light
-  cmdList->SetGraphicsRootConstantBufferView(0, cbMat_.resource->GetGPUVirtualAddress());
-  cmdList->SetGraphicsRootConstantBufferView(1, cbWvp_.resource->GetGPUVirtualAddress());
+  cmdList->SetGraphicsRootConstantBufferView(0, cbMat_.dyn.Address());
+  cmdList->SetGraphicsRootConstantBufferView(1, cbWvp_.dyn.Address());
   const D3D12_GPU_DESCRIPTOR_HANDLE mainSrv2 = textureSrv_.ptr != 0 ? textureSrv_ : D3D12_GPU_DESCRIPTOR_HANDLE{};
   if (mainSrv2.ptr != 0) {
     cmdList->SetGraphicsRootDescriptorTable(2, mainSrv2);

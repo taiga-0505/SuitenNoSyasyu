@@ -1,4 +1,6 @@
 #include "SpriteManager.h"
+#include "DeferredReleaseQueue/DeferredReleaseQueue.h"
+#include <memory>
 
 #include "Math/Math.h"
 #include "Texture/TextureManager/TextureManager.h"
@@ -126,7 +128,8 @@ void SpriteManager::Unload(int handle) {
     return;
   }
   Log::Print("[Sprite] 破棄完了: " + Log::NormalizePath(s.ptr->GetFilePath()));
-  s.ptr.reset();
+  // 直前のフレームの GPU が使い終わってから破棄する（CPU と GPU を並行させているため）
+  DeferredReleaseQueue::DeferDelete(std::move(s.ptr));
   s.inUse = false;
   s.texHandle = -1;
   s.texResolved = false;

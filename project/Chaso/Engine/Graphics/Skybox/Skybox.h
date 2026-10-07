@@ -1,4 +1,5 @@
 #pragma once
+#include "Render/FrameResource.h" // RC::DynamicCB
 #include "Math/MathTypes.h"
 #include "function/function.h"
 #include "struct.h"
@@ -44,7 +45,7 @@ public:
 
   /// @brief マテリアル情報を取得する（読み書き可能）
   /// @return Material へのポインタ
-  Material *Mat() { return cbMat_.mapped; }
+  Material *Mat() { return cbMat_.dyn.Ptr(); }
 
   /// @brief 可視状態を設定する
   /// @param v true で表示
@@ -83,22 +84,19 @@ private:
   /// @struct CB_WVP
   /// @brief 行列用定数バッファ
   struct CB_WVP {
-    Microsoft::WRL::ComPtr<ID3D12Resource> resource;
-    TransformationMatrix *mapped = nullptr;
+    RC::DynamicCB<TransformationMatrix> dyn; ///< 値は CPU 側。バインド時に今フレームの領域へ送る（CPU/GPU 並行のため）
   };
 
   /// @struct CB_Material
   /// @brief マテリアル用定数バッファ
   struct CB_Material {
-    Microsoft::WRL::ComPtr<ID3D12Resource> resource;
-    Material *mapped = nullptr;
+    RC::DynamicCB<Material> dyn; ///< 値は CPU 側。バインド時に今フレームの領域へ送る（CPU/GPU 並行のため）
   };
 
   /// @struct CB_Light
   /// @brief ライト用定数バッファ
   struct CB_Light {
-    Microsoft::WRL::ComPtr<ID3D12Resource> resource;
-    DirectionalLight *mapped = nullptr;
+    RC::DynamicCB<DirectionalLight> dyn; ///< 値は CPU 側。バインド時に今フレームの領域へ送る（CPU/GPU 並行のため）
   };
 
 private:

@@ -1,4 +1,5 @@
 #pragma once
+#include "Render/FrameResource.h" // RC::DynamicCB
 #include "ComputeShader/ComputeShader.h"
 #include "GraphicsPipeline/GraphicsPipeline.h"
 #include "SRVManager/SRVManager.h"
@@ -162,8 +163,9 @@ private:
   SRVManager::Handle freeListIndexUavHandle_{};                ///< UAV (u1)
 
   // PerView 定数バッファ（UPLOAD ヒープ）
-  Microsoft::WRL::ComPtr<ID3D12Resource> perViewCB_;
-  GPUParticlePerView *perViewMapped_ = nullptr;
+  /// @details 値は CPU 側。バインド時に今フレームの領域へ送る（CPU と GPU を並行させるため）
+  RC::DynamicCB<GPUParticlePerView> perViewCB_;
+  GPUParticlePerView *perViewMapped_ = nullptr; ///< 書き込み先（= perViewCB_.Ptr()）
 
   // 板ポリ頂点バッファ
   Microsoft::WRL::ComPtr<ID3D12Resource> vbResource_;
@@ -181,8 +183,9 @@ private:
   ParticleType currentType_ = ParticleType::Default;
 
   // PerFrame 定数バッファ（deltaTime 用、UPLOAD ヒープ）
-  Microsoft::WRL::ComPtr<ID3D12Resource> perFrameCB_;
-  GPUParticlePerFrame *perFrameMapped_ = nullptr;
+  /// @details 値は CPU 側。バインド時に今フレームの領域へ送る（CPU と GPU を並行させるため）
+  RC::DynamicCB<GPUParticlePerFrame> perFrameCB_;
+  GPUParticlePerFrame *perFrameMapped_ = nullptr; ///< 書き込み先（= perFrameCB_.Ptr()）
 
   // ブレンドモード
   BlendMode blendMode_ = kBlendModeAdd;

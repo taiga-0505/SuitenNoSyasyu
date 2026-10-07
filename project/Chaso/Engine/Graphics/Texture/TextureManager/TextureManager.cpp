@@ -1,4 +1,6 @@
 #include "TextureManager.h"
+#include "DeferredReleaseQueue/DeferredReleaseQueue.h"
+#include <memory>
 #include "DescriptorHeap/DescriptorHeap.h"
 #include "SRVManager/SRVManager.h"
 #include "Common/Log/Log.h"
@@ -167,8 +169,13 @@ void TextureManager::Unload(TextureID id) {
   std::string path = it->second;
   auto itTex = cache_.find(path);
   if (itTex != cache_.end()) {
-    itTex->second.Term(srv_);
+    // テクスチャ本体と SRV の返却は、直前のフレームの GPU が使い終わってから行う。
+    // （SRV を先に返すと、同じスロットが別のテクスチャに再利用されて、描画中のフレームが
+    //   別の絵を読んでしまう）
+    auto tex = std::make_shared<Texture2D>(std::move(itTex->second));
+    SRVManager *srv = srv_;
     cache_.erase(itTex);
+    DeferredReleaseQueue::DeferCall([tex, srv]() { tex->Term(srv); });
   }
 
   pathToId_.erase(path);

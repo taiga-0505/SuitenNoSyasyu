@@ -33,6 +33,9 @@
 #include "ECS/WaterComponent.h"
 #include "ECS/RigidbodyComponent.h"
 #include "Render/RenderCommon.h"
+#include "Common/FrameProfiler.h"
+#include <algorithm>
+#include <array>
 #include "Math/Math.h"
 #include "Math/MathUtils.h"
 #include "Camera/CameraMath.h"
@@ -1304,15 +1307,45 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
           ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "FPS: %.1f", fps);
           ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Frame Time: %.3f ms", frameTime);
           if (core) {
-              // どちらがボトルネックかの切り分け用（このエンジンは毎フレーム GPU 完了を待つので、
-              // おおよそ Frame Time ≒ CPU + GPU + Capture + VSync 待ち になる）
-              ImGui::Text("CPU: %.2f ms   GPU: %.2f ms   Capture: %.2f ms",
-                          core->CpuFrameMs(), core->GpuFrameMs(), core->CaptureMs());
+              // どちらがボトルネックかの切り分け用。CPU と GPU は並行して動くので、
+              // おおよそ Frame Time ≒ max(CPU, GPU) + Capture（＋VSync 待ち）。
+              // Wait（BeginFrame で GPU の完了を待った時間）が大きいほど GPU 側が詰まっている
+              ImGui::Text("CPU: %.2f ms   GPU: %.2f ms   Wait(GPU): %.2f ms   Capture: %.2f ms",
+                          core->CpuFrameMs(), core->GpuFrameMs(), core->GpuWaitMs(),
+                          core->CaptureMs());
           }
           {
               const auto st = RC::GetModelInstancingStats();
               ImGui::Text("Instancing: %u drawn / %u batches / %u draws (flush %.2f ms)",
                           st.instancesDrawn, st.batches, st.drawCalls, st.flushMs);
+              const auto ep = RC::GetEffectParticleStats();
+              ImGui::Text("Effect particles: %u alive / %u drawn / %u draws (all passes)",
+                          ep.alive, ep.drawn, ep.drawCalls);
+          }
+          // CPU 時間の内訳（前フレーム）。重い順に並べる。入れ子の区間は親にも含まれる
+          if (ImGui::TreeNodeEx("CPU Breakdown (prev frame)", ImGuiTreeNodeFlags_DefaultOpen)) {
+              const auto &prof = FrameProfiler::Get();
+              const size_t n = prof.LastCount();
+              std::array<size_t, FrameProfiler::kMaxEntries> order{};
+              for (size_t i = 0; i < n; ++i) order[i] = i;
+              std::sort(order.begin(), order.begin() + n, [&](size_t a, size_t b) {
+                  return prof.Last()[a].ms > prof.Last()[b].ms;
+              });
+              if (ImGui::BeginTable("##cpuBreakdown", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+                  ImGui::TableSetupColumn("Section");
+                  ImGui::TableSetupColumn("ms");
+                  ImGui::TableSetupColumn("calls");
+                  ImGui::TableHeadersRow();
+                  for (size_t k = 0; k < n; ++k) {
+                      const auto &e = prof.Last()[order[k]];
+                      ImGui::TableNextRow();
+                      ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(e.name);
+                      ImGui::TableSetColumnIndex(1); ImGui::Text("%.2f", e.ms);
+                      ImGui::TableSetColumnIndex(2); ImGui::Text("%u", e.calls);
+                  }
+                  ImGui::EndTable();
+              }
+              ImGui::TreePop();
           }
 
           ImGui::Separator();

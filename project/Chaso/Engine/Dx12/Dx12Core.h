@@ -166,6 +166,8 @@ public:
   float CpuFrameMs() const { return cpuFrameMs_; }
   /// @brief 前フレームの録画処理（VideoRecorder::Update）にかかった時間 (ms)
   float CaptureMs() const { return captureMs_; }
+  /// @brief BeginFrame で GPU の完了を待った時間 (ms)。大きいほど GPU 側がボトルネック
+  float GpuWaitMs() const { return gpuWaitMs_; }
 
   /// @brief ビューポートを設定
   /// @param vp ビューポート設定
@@ -227,9 +229,12 @@ private:
   Microsoft::WRL::ComPtr<ID3D12QueryHeap> timestampHeap_;  ///< [0]=フレーム先頭, [1]=フレーム末尾
   Microsoft::WRL::ComPtr<ID3D12Resource> timestampReadback_; ///< 解決先（READBACK ヒープ、uint64 × 2）
   uint64_t timestampFrequency_ = 0;  ///< GPU タイムスタンプの周波数 (Hz)
-  bool timestampPending_ = false;    ///< 解決済みで読み出し待ちの値があるか
+  /// @brief 計測スロット数。バックバッファ番号をそのまま使う（同じ番号は BeginFrame の待ちで完了済み）
+  static constexpr uint32_t kTimestampSlots = CommandContext::kMaxFrames;
+  bool timestampPending_[kTimestampSlots]{};     ///< スロットごとに、解決済みで読み出し待ちの値があるか
   float gpuFrameMs_ = 0.0f;          ///< 前フレームの GPU 時間
   float cpuFrameMs_ = 0.0f;          ///< 前フレームの CPU 時間
   float captureMs_ = 0.0f;           ///< 前フレームの録画処理時間
+  float gpuWaitMs_ = 0.0f;           ///< BeginFrame で GPU 完了を待った時間
   std::chrono::steady_clock::time_point cpuFrameStart_{}; ///< CPU 時間の計測開始点
 };

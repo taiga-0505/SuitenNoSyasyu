@@ -1,6 +1,7 @@
 #include "RenderContext.h"
 
 #include "Common/Log/Log.h"
+#include "Common/FrameProfiler.h"
 #include "Dx12/Dx12Core.h"
 #include "PipelineManager.h"
 #include "Primitive/Primitive2D.h"
@@ -11,6 +12,7 @@
 #include "Graphics/Texture/RenderTexture/RenderTexture.h" // マスクRT（unique_ptr の実体化に必要）
 #include "RenderCommon.h"
 #include <algorithm>
+#include <cassert>
 #include <format>
 
 namespace RC {
@@ -58,29 +60,23 @@ void RenderContext::Init(SceneContext &ctx) {
   arLightMan_.Init(device_.Get());
 
   // CameraCB
-  cameraCB_ = CreateBufferResource(device_.Get(), sizeof(CameraCB),
-                                   L"RenderContext::CameraCB");
-  cameraCB_->Map(0, nullptr, reinterpret_cast<void **>(&cameraCBMapped_));
+  cameraCBMapped_ = cameraCB_.Ptr(); // DynamicCB（バインド時に今フレームの領域へ送る）
 
   // FogOverlayCB
-  fogCB_ = CreateBufferResource(device_.Get(), sizeof(FogOverlayCB),
-                                L"RenderContext::FogCB");
-  fogCB_->Map(0, nullptr, reinterpret_cast<void **>(&fogCBMapped_));
+  fogCBMapped_ = fogCB_.Ptr(); // DynamicCB（バインド時に今フレームの領域へ送る）
   if (fogCBMapped_) {
     *fogCBMapped_ = FogOverlayCB{};
   }
 
   // ShadowCB
-  shadowCB_ = CreateBufferResource(device_.Get(), sizeof(ShadowParams),
-                                   L"RenderContext::ShadowCB");
-  shadowCB_->Map(0, nullptr, reinterpret_cast<void **>(&shadowCBMapped_));
+  shadowCBMapped_ = shadowCB_.Ptr(); // DynamicCB（バインド時に今フレームの領域へ送る）
   if (shadowCBMapped_) {
     *shadowCBMapped_ = ShadowParams{};
   }
 
   // ShadowMap 初期化 (例: 2048x2048)
   shadowMap_.Create(ctx.core, 2048, 2048);
-  shadowCBBoundAddr_ = shadowCB_ ? shadowCB_->GetGPUVirtualAddress() : 0;
+  shadowCBBoundAddr_ = 0; // 0 = 平行光源の影の CB（shadowCB_）を使う
 
   // スポット影アトラス初期化（kSpotShadowTileSize px のタイルを kSpotShadowTilesX × kSpotShadowTilesY 枚）
   spotShadowAtlas_.Create(ctx.core, kSpotShadowTileSize * kSpotShadowTilesX,
@@ -121,6 +117,15 @@ void RenderContext::Init(SceneContext &ctx) {
   }
   frameIndex_ = 0;
 
+  // CPU と GPU を並行させるので、FrameResource の枚数は「バックバッファ数 + 1」以上が必要
+  // （Update 中の確保が前の 1 枚の続きに入るため。2 枚なら 3 で足りる）
+  if (ctx.core && ctx.core->FrameCount() + 1 > FrameResource::kFrameCount) {
+    Log::Print(std::format("[RenderContext] 警告: バックバッファ {} 枚に対して FrameResource が {} 枚しかありません。"
+                           "FrameResource::kFrameCount を {} 以上にしてください",
+                           ctx.core->FrameCount(), FrameResource::kFrameCount, ctx.core->FrameCount() + 1));
+    assert(false && "FrameResource::kFrameCount must be >= backbuffer count + 1");
+  }
+
   initialized_ = true;
 
   // CS スキニング用パイプラインを ModelManager に注入
@@ -142,9 +147,14 @@ void RenderContext::Term() {
   // 残っている非同期タスクを全て待機
   WaitAllLoads();
 
+  // シーン終了で遅延破棄に回したモデル・テクスチャ等を、マネージャを壊す前に片付ける
+  // （App::Term が WaitForGPU 済みなので GPU はアイドル）
+  DeferredReleaseQueue::FlushAllGlobal();
+
   // インスタンス描画の要求と VirtualEntity を破棄（ModelObject を指しているので ModelManager より先に）
   instanceBatcher_.Clear();
   modelProxies_.Clear();
+  effectParticles_.Term(*this); // 共有メッシュを PrimitiveMeshManager の終了より先に返す
 
   shadowMap_.Term();
   spotShadowAtlas_.Term();
@@ -175,28 +185,12 @@ void RenderContext::Term() {
     frameResources_[i].Term();
   }
 
-  if (cameraCB_) {
-    if (cameraCBMapped_) {
-      cameraCB_->Unmap(0, nullptr);
-      cameraCBMapped_ = nullptr;
-    }
-    cameraCB_.Reset();
-  }
+  cameraCBMapped_ = nullptr;
 
-  if (fogCB_) {
-    if (fogCBMapped_) {
-      fogCB_->Unmap(0, nullptr);
-      fogCBMapped_ = nullptr;
-    }
-    fogCB_.Reset();
-  }
+  fogCBMapped_ = nullptr;
 
-  if (shadowCB_) {
-    if (shadowCBMapped_) {
-      shadowCB_->Unmap(0, nullptr);
-      shadowCBMapped_ = nullptr;
-    }
-    shadowCB_.Reset();
+  {
+    shadowCBMapped_ = nullptr;
   }
 
   texMan_.Term();
@@ -288,11 +282,10 @@ void RenderContext::PreDraw3D(SceneContext &ctx, ID3D12GraphicsCommandList *cl) 
   // BindShadow() は Execute3DCommands で通常パスの実行時のみバインドする
 
   modelMan_.ResetAllBatchCursors();
-  instanceBatcher_.BeginFrame(); // 前フレームのインスタンス描画統計を確定
 
-  // FrameResource: フレームインデックスを進めてリセット
-  AdvanceFrame();
-  CurrentFrame().Reset();
+  // ※ FrameResource のリング切り替えは BeginFrame（1 フレーム 1 回）で行う。
+  //    PreDraw3D は 1 フレームに複数回呼ばれることがある（シーン遷移中など）ため、
+  //    ここで進めると GPU がまだ読んでいる領域を再利用してしまう。
 
   // スポット影用の一時 CB を今フレーム分だけ確保する。
   // GPU が前フレームを実行中でも書き込みが競合しないよう、Map 済みの固定 CB ではなく
@@ -312,7 +305,7 @@ void RenderContext::PreDraw3D(SceneContext &ctx, ID3D12GraphicsCommandList *cl) 
         kShadowParamsSliceStride * kMaxSpotShadows, &sliceDst);
     spotShadowPassParamsMapped_ = reinterpret_cast<ShadowParams *>(sliceDst);
   }
-  shadowCBBoundAddr_ = shadowCB_ ? shadowCB_->GetGPUVirtualAddress() : 0;
+  shadowCBBoundAddr_ = 0; // 0 = 平行光源の影の CB（shadowCB_）を使う
   spotShadowAtlasOpen_ = false;
   currentSpotShadowTile_ = -1;
 
@@ -613,8 +606,10 @@ GraphicsPipeline *RenderContext::BindPipeline(std::string_view prefix) {
 
     // 12: b6 ShadowParams（3 種のルートシグネチャすべて 12 番。
     //     スポット影タイル描画中はそのタイルのライト行列が入ったスライスに差し替わる）
-    if (shadowCBBoundAddr_ != 0) {
-      cl_->SetGraphicsRootConstantBufferView(12, shadowCBBoundAddr_);
+    {
+      const D3D12_GPU_VIRTUAL_ADDRESS shadowAddr =
+          (shadowCBBoundAddr_ != 0) ? shadowCBBoundAddr_ : shadowCB_.Address();
+      cl_->SetGraphicsRootConstantBufferView(12, shadowAddr);
     }
 
     // 14: b7 SpotShadowCB（Skin は 15）
@@ -628,9 +623,7 @@ GraphicsPipeline *RenderContext::BindPipeline(std::string_view prefix) {
     // 影は 15: b7 (ShadowParams) / 16: t7 (ShadowMap) に載せる（GraphicsPipeline 参照）。
     // 水面はシャドウパス・スポット影アトラスの最中には描かれない（その間 "water" は
     // "shadow" へ振り替わる）ので、ここでのシャドウマップは常に SRV 状態。
-    if (shadowCB_) {
-      cl_->SetGraphicsRootConstantBufferView(15, shadowCB_->GetGPUVirtualAddress());
-    }
+    cl_->SetGraphicsRootConstantBufferView(15, shadowCB_.Address());
     D3D12_GPU_DESCRIPTOR_HANDLE shadowSrv = {};
     if (shadowMap_.GetResource() != nullptr && ctxRef_ && ctxRef_->core) {
       shadowSrv = ctxRef_->core->SRV().GPUAt(shadowMap_.GetSrvIndex());
@@ -647,11 +640,11 @@ GraphicsPipeline *RenderContext::BindPipeline(std::string_view prefix) {
 }
 
 void RenderContext::BindCameraCB() {
-  if (!cl_ || !cameraCB_) {
+  if (!cl_ || !initialized_) {
     return;
   }
   cl_->SetGraphicsRootConstantBufferView(4,
-                                         cameraCB_->GetGPUVirtualAddress());
+                                         cameraCB_.Address());
 }
 
 void RenderContext::SyncLightCBs() {
@@ -974,7 +967,7 @@ void RenderContext::EndSpotShadowTile() {
   isShadowPass_ = false;
   currentSpotShadowTile_ = -1;
   // b6 を通常の（平行光源用）ShadowParams に戻す
-  shadowCBBoundAddr_ = shadowCB_ ? shadowCB_->GetGPUVirtualAddress() : 0;
+  shadowCBBoundAddr_ = 0; // 0 = 平行光源の影の CB（shadowCB_）を使う
 }
 
 void RenderContext::EndSpotShadowAtlas() {
@@ -1086,6 +1079,18 @@ void RenderContext::PushPrimitive3DCommand(bool depth, uint32_t start,
   commandQueue3D_.push_back(std::move(cmd));
 }
 
+void RenderContext::BeginFrame() {
+  AdvanceFrame();
+  CurrentFrame().Reset();
+  ++frameSerial_;
+  instanceBatcher_.BeginFrame(); // 前フレームのインスタンス描画統計を確定
+  effectParticles_.BeginFrame();
+}
+
+FrameResource &CurrentFrameResource() { return GetRenderContext().CurrentFrame(); }
+
+uint64_t CurrentFrameSerial() { return GetRenderContext().FrameSerial(); }
+
 Matrix4x4 RenderContext::CurrentPassViewProjection() const {
   if (isShadowPass_) {
     return (currentSpotShadowTile_ >= 0) ? spotShadowTileViewProj_ : dirShadowViewProj_;
@@ -1097,10 +1102,12 @@ void RenderContext::Execute3DCommands() {
   if (!cl_) {
     return;
   }
+  CHASO_PROFILE_SCOPE("Render: Execute3DCommands");
 
   // DrawModelInstanced / DrawModelProxies で溜めた要求を、このパスの視錐台でカリングして
   // バッチ化し、コマンドキューへ積む（下のソートより前に行う）
   instanceBatcher_.Flush(*this, modelProxies_);
+  effectParticles_.Flush(*this);
 
   // BindShadow(); // BindPipeline に移行したため不要
 
@@ -1228,7 +1235,8 @@ void RenderContext::Execute3DCommands() {
 }
 
 void RenderContext::ExecuteOverlay3DCommands() {
-  if (!cl_ || (commandQueue3D_.empty() && !instanceBatcher_.HasPending())) {
+  if (!cl_ || (commandQueue3D_.empty() && !instanceBatcher_.HasPending() &&
+               !effectParticles_.HasPending())) {
     return;
   }
 

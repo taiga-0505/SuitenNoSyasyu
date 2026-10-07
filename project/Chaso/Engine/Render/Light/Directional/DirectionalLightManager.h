@@ -1,4 +1,5 @@
 #pragma once
+#include "Render/FrameResource.h" // RC::DynamicCB
 
 #include "Light/Directional/DirectionalLightSource.h" // RC::DirectionalLightSource / DirectionalLight
 
@@ -85,8 +86,10 @@ private:
   /// @brief ライト管理用のスロット構造体
   struct Slot {
     DirectionalLightSource light; ///< ライトソース実体
-    Microsoft::WRL::ComPtr<ID3D12Resource> cb; ///< GPU定数バッファ
-    DirectionalLight *mapped = nullptr;       ///< マップ済みポインタ
+    /// @brief 定数バッファ。値は CPU 側に持ち、アドレスを求められたときに今フレームの領域へ送る
+    /// @details 以前は Map しっぱなしの固定 CB だった（CPU と GPU を並行させると上書き競合が起きる）
+    DynamicCB<DirectionalLight> dyn;
+    bool hasCB = false;                       ///< CB を使える状態か（デバイス初期化後）
     bool inUse = false;                       ///< 使用中フラグ
   };
 

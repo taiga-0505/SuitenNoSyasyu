@@ -933,6 +933,37 @@ void PipelineManager::RegisterDefaultPipelines() {
   }
 
   // ====================
+  // Water Ball / Water Column のインスタンシング版（EffectParticleSystem 用）
+  //   水しぶき・水柱を粒ごとに描かず、共有メッシュ 1 つでまとめて描く。
+  //   VS だけ Object3D_Inst（インスタンスごとの行列・色を StructuredBuffer から読む）に替え、
+  //   PS・ブレンド・深度・カリングは上の単体描画版と同じ。
+  // ====================
+  {
+    struct InstWater {
+      const char *prefix;
+      const std::wstring *ps;
+      D3D12_CULL_MODE cull;
+    };
+    const InstWater instWaters[] = {
+        {"object3d_water_inst", &waterBallPs, D3D12_CULL_MODE_BACK},
+        {"object3d_water_inst_front", &waterBallPs, D3D12_CULL_MODE_FRONT},
+        {"object3d_watercolumn_inst", &waterColumnPs, D3D12_CULL_MODE_BACK},
+        {"object3d_watercolumn_inst_front", &waterColumnPs, D3D12_CULL_MODE_FRONT},
+    };
+    for (const InstWater &w : instWaters) {
+      GPipelineOptions opt{};
+      opt.rootType = RootSignatureType::Object3DInstancing;
+      opt.enableDepth = true;
+      opt.enableDepthWrite = false;
+      opt.enableAlphaBlend = true;
+      opt.blendMode = kBlendModePremultiplied;
+      opt.cull = w.cull;
+      CreateFromFiles(MakeKey(w.prefix, kBlendModePremultiplied), objVsInst, *w.ps,
+                      InputLayoutType::Object3D, opt);
+    }
+  }
+
+  // ====================
   // Scan Ring / Scan Beam Shader（場所指定ホログラム用エフェクト）
   //   床に置くリングデカールと、そこへ伸びる接続ビームの2種。
   //   加算合成・深度テストON・深度書き込みOFF・カリング無し。

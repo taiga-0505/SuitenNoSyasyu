@@ -9,6 +9,7 @@
 #include "struct.h"
 #include "Model/ModelProxyPool.h"       // ModelProxyHandle（VirtualEntity）
 #include "Model/ModelInstanceBatcher.h" // ModelInstanceBatcher::Stats
+#include "Effect/EffectParticleSystem.h" // EffectParticleSpawn
 
 // D3D12 GPUハンドルを返すために必要
 struct D3D12_GPU_DESCRIPTOR_HANDLE;
@@ -301,6 +302,11 @@ void EndSpotShadowAtlas();
 /// @brief 蓄積された3D描画コマンドを即時実行する
 void Execute3DCommands();
 
+/// @brief 描画フレームの開始（1 フレームに 1 回。App がコマンドリストを開いた直後に呼ぶ）
+/// @details フレームごとの一時バッファ（FrameResource）を次の 1 枚へ切り替える。
+///          CPU と GPU を並行させるために必要で、呼び忘れると前フレームの描画中の領域を上書きする。
+void BeginFrame();
+
 // ============================================================================
 // 3D Pass
 // ============================================================================
@@ -456,6 +462,28 @@ void ClearModelProxies();
 /// @details メイン 3D・平行光源の影・スポット影タイルの各パスで 1 回ずつ呼ぶ。
 ///          影パスでは SetModelProxyCastShadow(false) の物は描かれない。
 void DrawModelProxies();
+
+// ── エフェクト粒（水しぶき・泡・水柱） ─────────────────────────────
+//
+// Entity を作らずに、短命の粒を大量に出すための API。
+// 粒は種類ごとに共有メッシュでまとめて描かれるので、数が増えても描画コマンドは増えない。
+// 使い方:
+//   RC::SpawnEffectParticle({RC::EffectParticleKind::Splash, pos, 0.2f, color, impact});
+//   毎フレーム RC::UpdateEffectParticles(dt) と、各描画パスで RC::DrawEffectParticles()
+//   （DataDrivenScene が行う）
+
+/// @brief エフェクト粒を 1 個出す
+void SpawnEffectParticle(const EffectParticleSpawn &desc);
+/// @brief 全エフェクト粒を進める（dt = 0 なら止まったまま）
+void UpdateEffectParticles(float dt);
+/// @brief 現在の描画パスにエフェクト粒を描く（カリング・まとめ描画は Execute 時に自動）
+void DrawEffectParticles();
+/// @brief 全エフェクト粒を消す（シーン切り替え時など）
+void ClearEffectParticles();
+/// @brief 生きているエフェクト粒の数
+uint32_t GetEffectParticleCount();
+/// @brief 前フレームのエフェクト粒の統計
+EffectParticleSystem::Stats GetEffectParticleStats();
 
 /// @brief モデルを解放する（ハンドルは無効化される）
 /// @param modelHandle モデルハンドル

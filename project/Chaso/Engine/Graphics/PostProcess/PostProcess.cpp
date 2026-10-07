@@ -147,7 +147,7 @@ void PostProcess::Initialize(Dx12Core *dxCore,
       D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
       IID_PPV_ARGS(&cbufferMaterial_));
   assert(SUCCEEDED(hr));
-  cbufferMaterial_->Map(0, nullptr, reinterpret_cast<void **>(&mappedMaterial_));
+  mappedMaterial_ = dynMaterial_.Ptr(); // DynamicCB: CPU 側に書き、バインド時に今フレームの領域へ送る
 
   if (mappedMaterial_) {
     memcpy(mappedMaterial_->outlineColor, outlineColor_, sizeof(float) * 4);
@@ -176,7 +176,7 @@ void PostProcess::Initialize(Dx12Core *dxCore,
         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
         IID_PPV_ARGS(&cbufferDissolve_));
     assert(SUCCEEDED(hr));
-    cbufferDissolve_->Map(0, nullptr, reinterpret_cast<void **>(&mappedDissolve_));
+    mappedDissolve_ = dynDissolve_.Ptr(); // DynamicCB: CPU 側に書き、バインド時に今フレームの領域へ送る
 
     if (mappedDissolve_) {
       mappedDissolve_->edgeColor[0] = dissolveEdgeColor_[0];
@@ -213,7 +213,7 @@ void PostProcess::Initialize(Dx12Core *dxCore,
         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
         IID_PPV_ARGS(&cbufferRandom_));
     assert(SUCCEEDED(hr));
-    cbufferRandom_->Map(0, nullptr, reinterpret_cast<void **>(&mappedRandom_));
+    mappedRandom_ = dynRandom_.Ptr(); // DynamicCB: CPU 側に書き、バインド時に今フレームの領域へ送る
 
     if (mappedRandom_) {
       mappedRandom_->color[0] = randomColor_[0];
@@ -244,7 +244,7 @@ void PostProcess::Initialize(Dx12Core *dxCore,
         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
         IID_PPV_ARGS(&cbufferMaskOutline_));
     assert(SUCCEEDED(hr));
-    cbufferMaskOutline_->Map(0, nullptr, reinterpret_cast<void **>(&mappedMaskOutline_));
+    mappedMaskOutline_ = dynMaskOutline_.Ptr(); // DynamicCB: CPU 側に書き、バインド時に今フレームの領域へ送る
 
     if (mappedMaskOutline_) {
       mappedMaskOutline_->color[0] = maskOutlineColor_[0];
@@ -276,7 +276,7 @@ void PostProcess::Initialize(Dx12Core *dxCore,
         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
         IID_PPV_ARGS(&cbufferSsao_));
     assert(SUCCEEDED(hr));
-    cbufferSsao_->Map(0, nullptr, reinterpret_cast<void **>(&mappedSsao_));
+    mappedSsao_ = dynSsao_.Ptr(); // DynamicCB: CPU 側に書き、バインド時に今フレームの領域へ送る
 
     if (mappedSsao_) {
       // 行列は SetProjectionInverse が来るまで単位行列にしておく
@@ -313,7 +313,7 @@ void PostProcess::Initialize(Dx12Core *dxCore,
         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
         IID_PPV_ARGS(&cbufferColorGrade_));
     assert(SUCCEEDED(hr));
-    cbufferColorGrade_->Map(0, nullptr, reinterpret_cast<void **>(&mappedColorGrade_));
+    mappedColorGrade_ = dynColorGrade_.Ptr(); // DynamicCB: CPU 側に書き、バインド時に今フレームの領域へ送る
 
     if (mappedColorGrade_) {
       memcpy(mappedColorGrade_->colorFilter, gradeColorFilter_, sizeof(float) * 4);
@@ -345,7 +345,7 @@ void PostProcess::Initialize(Dx12Core *dxCore,
         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
         IID_PPV_ARGS(&cbufferUnderwater_));
     assert(SUCCEEDED(hr));
-    cbufferUnderwater_->Map(0, nullptr, reinterpret_cast<void **>(&mappedUnderwater_));
+    mappedUnderwater_ = dynUnderwater_.Ptr(); // DynamicCB: CPU 側に書き、バインド時に今フレームの領域へ送る
 
     if (mappedUnderwater_) {
       mappedUnderwater_->tintColor[0] = underwaterTintColor_[0];
@@ -383,7 +383,7 @@ void PostProcess::Initialize(Dx12Core *dxCore,
         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
         IID_PPV_ARGS(&cbufferCaustics_));
     assert(SUCCEEDED(hr));
-    cbufferCaustics_->Map(0, nullptr, reinterpret_cast<void **>(&mappedCaustics_));
+    mappedCaustics_ = dynCaustics_.Ptr(); // DynamicCB: CPU 側に書き、バインド時に今フレームの領域へ送る
 
     if (mappedCaustics_) {
       // 行列は SetProjectionInverse / SetViewInverse が来るまで単位行列にしておく
@@ -433,7 +433,7 @@ void PostProcess::Initialize(Dx12Core *dxCore,
         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
         IID_PPV_ARGS(&cbufferLightShaft_));
     assert(SUCCEEDED(hr));
-    cbufferLightShaft_->Map(0, nullptr, reinterpret_cast<void **>(&mappedLightShaft_));
+    mappedLightShaft_ = dynLightShaft_.Ptr(); // DynamicCB: CPU 側に書き、バインド時に今フレームの領域へ送る
 
     if (mappedLightShaft_) {
       const float identity[16] = {1.0f, 0.0f, 0.0f, 0.0f,
@@ -487,7 +487,7 @@ void PostProcess::Initialize(Dx12Core *dxCore,
         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
         IID_PPV_ARGS(&cbufferScreenDroplets_));
     assert(SUCCEEDED(hr));
-    cbufferScreenDroplets_->Map(0, nullptr, reinterpret_cast<void **>(&mappedScreenDroplets_));
+    mappedScreenDroplets_ = dynScreenDroplets_.Ptr(); // DynamicCB: CPU 側に書き、バインド時に今フレームの領域へ送る
 
     if (mappedScreenDroplets_) {
       mappedScreenDroplets_->time = 0.0f;
@@ -521,7 +521,7 @@ void PostProcess::Initialize(Dx12Core *dxCore,
         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
         IID_PPV_ARGS(&cbufferBloodOverlay_));
     assert(SUCCEEDED(hr));
-    cbufferBloodOverlay_->Map(0, nullptr, reinterpret_cast<void **>(&mappedBloodOverlay_));
+    mappedBloodOverlay_ = dynBloodOverlay_.Ptr(); // DynamicCB: CPU 側に書き、バインド時に今フレームの領域へ送る
 
     if (mappedBloodOverlay_) {
       mappedBloodOverlay_->time = 0.0f;
@@ -563,7 +563,7 @@ void PostProcess::Initialize(Dx12Core *dxCore,
         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
         IID_PPV_ARGS(&cbufferInkOverlay_));
     assert(SUCCEEDED(hr));
-    cbufferInkOverlay_->Map(0, nullptr, reinterpret_cast<void **>(&mappedInkOverlay_));
+    mappedInkOverlay_ = dynInkOverlay_.Ptr(); // DynamicCB: CPU 側に書き、バインド時に今フレームの領域へ送る
 
     if (mappedInkOverlay_) {
       *mappedInkOverlay_ = InkOverlayData{};
@@ -1445,7 +1445,7 @@ void PostProcess::DrawSinglePass(ID3D12GraphicsCommandList *cmdList,
     // params[2]: t1
     cmdList->SetGraphicsRootDescriptorTable(2, depthSrv_.gpu);
     // params[3]: b1
-    cmdList->SetGraphicsRootConstantBufferView(3, cbufferMaterial_->GetGPUVirtualAddress());
+    cmdList->SetGraphicsRootConstantBufferView(3, dynMaterial_.Address());
   }
 
   if (effectType == PostEffectType::Dissolve) {
@@ -1455,12 +1455,12 @@ void PostProcess::DrawSinglePass(ID3D12GraphicsCommandList *cmdList,
       cmdList->SetGraphicsRootDescriptorTable(2, dissolveNoiseTextures_[idx].srv);
     }
     // params[3]: b1 (DissolveParams CBuffer)
-    cmdList->SetGraphicsRootConstantBufferView(3, cbufferDissolve_->GetGPUVirtualAddress());
+    cmdList->SetGraphicsRootConstantBufferView(3, dynDissolve_.Address());
   }
 
   if (effectType == PostEffectType::RandomNoise) {
     // params[3]: b1 (RandomNoise CBuffer)
-    cmdList->SetGraphicsRootConstantBufferView(3, cbufferRandom_->GetGPUVirtualAddress());
+    cmdList->SetGraphicsRootConstantBufferView(3, dynRandom_.Address());
   }
 
   if (effectType == PostEffectType::Ssao) {
@@ -1471,12 +1471,12 @@ void PostProcess::DrawSinglePass(ID3D12GraphicsCommandList *cmdList,
     // params[2]: t1 (Depth SRV)
     cmdList->SetGraphicsRootDescriptorTable(2, depthSrv_.gpu);
     // params[3]: b1 (SSAO CBuffer。projectionInverse を含む)
-    cmdList->SetGraphicsRootConstantBufferView(3, cbufferSsao_->GetGPUVirtualAddress());
+    cmdList->SetGraphicsRootConstantBufferView(3, dynSsao_.Address());
   }
 
   if (effectType == PostEffectType::ColorGrade) {
     // params[3]: b1 (ColorGrade CBuffer)
-    cmdList->SetGraphicsRootConstantBufferView(3, cbufferColorGrade_->GetGPUVirtualAddress());
+    cmdList->SetGraphicsRootConstantBufferView(3, dynColorGrade_.Address());
   }
 
   // Bloom と Fxaa は t0 と b0 だけで足りるので追加バインドは無い
@@ -1485,7 +1485,7 @@ void PostProcess::DrawSinglePass(ID3D12GraphicsCommandList *cmdList,
     // params[2]: t1 (マスクRT)
     cmdList->SetGraphicsRootDescriptorTable(2, maskSrv_);
     // params[3]: b1 (MaskOutline CBuffer)
-    cmdList->SetGraphicsRootConstantBufferView(3, cbufferMaskOutline_->GetGPUVirtualAddress());
+    cmdList->SetGraphicsRootConstantBufferView(3, dynMaskOutline_.Address());
   }
 
   if (effectType == PostEffectType::Underwater) {
@@ -1496,7 +1496,7 @@ void PostProcess::DrawSinglePass(ID3D12GraphicsCommandList *cmdList,
     // params[2]: t1 (Depth SRV)
     cmdList->SetGraphicsRootDescriptorTable(2, depthSrv_.gpu);
     // params[3]: b1 (Underwater CBuffer)
-    cmdList->SetGraphicsRootConstantBufferView(3, cbufferUnderwater_->GetGPUVirtualAddress());
+    cmdList->SetGraphicsRootConstantBufferView(3, dynUnderwater_.Address());
   }
 
   if (effectType == PostEffectType::Caustics) {
@@ -1507,7 +1507,7 @@ void PostProcess::DrawSinglePass(ID3D12GraphicsCommandList *cmdList,
     // params[2]: t1 (Depth SRV)
     cmdList->SetGraphicsRootDescriptorTable(2, depthSrv_.gpu);
     // params[3]: b1 (Caustics CBuffer)
-    cmdList->SetGraphicsRootConstantBufferView(3, cbufferCaustics_->GetGPUVirtualAddress());
+    cmdList->SetGraphicsRootConstantBufferView(3, dynCaustics_.Address());
   }
 
   if (effectType == PostEffectType::LightShaft) {
@@ -1518,22 +1518,22 @@ void PostProcess::DrawSinglePass(ID3D12GraphicsCommandList *cmdList,
     // params[2]: t1 (Depth SRV)
     cmdList->SetGraphicsRootDescriptorTable(2, depthSrv_.gpu);
     // params[3]: b1 (LightShaft CBuffer)
-    cmdList->SetGraphicsRootConstantBufferView(3, cbufferLightShaft_->GetGPUVirtualAddress());
+    cmdList->SetGraphicsRootConstantBufferView(3, dynLightShaft_.Address());
   }
 
   if (effectType == PostEffectType::ScreenDroplets) {
     // params[3]: b1 (ScreenDroplets CBuffer)
-    cmdList->SetGraphicsRootConstantBufferView(3, cbufferScreenDroplets_->GetGPUVirtualAddress());
+    cmdList->SetGraphicsRootConstantBufferView(3, dynScreenDroplets_.Address());
   }
 
   if (effectType == PostEffectType::BloodOverlay) {
     // params[3]: b1 (BloodOverlay CBuffer)
-    cmdList->SetGraphicsRootConstantBufferView(3, cbufferBloodOverlay_->GetGPUVirtualAddress());
+    cmdList->SetGraphicsRootConstantBufferView(3, dynBloodOverlay_.Address());
   }
 
   if (effectType == PostEffectType::InkOverlay) {
     // params[3]: b1 (InkOverlay CBuffer)
-    cmdList->SetGraphicsRootConstantBufferView(3, cbufferInkOverlay_->GetGPUVirtualAddress());
+    cmdList->SetGraphicsRootConstantBufferView(3, dynInkOverlay_.Address());
   }
 
   // 全画面三角形（頂点バッファなし、SV_VertexID 使用）

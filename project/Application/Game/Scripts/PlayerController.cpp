@@ -252,70 +252,18 @@ private:
         int splashCount = static_cast<int>(8 + (impactFactor * 8));
         if (splashCount > 30) splashCount = 30; // Max
 
+        // 水しぶきは Entity を作らず、エンジンのエフェクト粒として出す
+        // （以前は 1 粒ごとに Entity＋専用メッシュ＋スクリプトを作っていて、数が増えると重かった）
         for (int i = 0; i < splashCount; ++i) {
-            std::shared_ptr<Entity> splash = nullptr;
-            for (auto& e : scene->GetEntities()) {
-                if (e->GetName() == "Splash" && !e->IsActive() && !e->IsPendingDestroy()) {
-                    splash = e;
-                    splash->SetActive(true);
-                    splash->SetTag("reused", 1);
-                    break;
-                }
-            }
-            bool isNew = false;
-            if (!splash) {
-                splash = scene->CreateEntity("Splash");
-                isNew = true;
-            }
-
-            splash->SetTag("impact_factor", static_cast<int>(impactFactor * 100));
-
-            auto* tr = splash->GetComponent<TransformComponent>();
-            if (!tr) tr = &splash->AddComponent<TransformComponent>();
-            tr->position = pos;
-            
-            float s = (0.15f + (i % 4) * 0.05f) * (1.0f + impactFactor * 0.3f);
-            tr->scale = { s, s, s };
-
-            auto* pm = splash->GetComponent<PrimitiveMeshComponent>();
-            if (!pm) {
-                pm = &splash->AddComponent<PrimitiveMeshComponent>();
-                pm->type = PrimitiveType::Sphere;
-                pm->meshHandle = RC::GenerateSphere(1.0f);
-            } else if (pm->meshHandle < 0) {
-                pm->meshHandle = RC::GenerateSphere(1.0f);
-            }
-            // 水の質感で描く（以前は DataDrivenScene がエンティティ名で判定していた）
-            pm->drawStyle = PrimitiveDrawStyle::Water;
-
-            if (pm->meshHandle >= 0) {
-                if (auto* mat = RC::GetPrimitiveMeshMaterialPtr(pm->meshHandle)) {
-                    float r = 0.3f + (i % 3) * 0.15f;
-                    float g = 0.6f + (i % 2) * 0.2f;
-                    mat->color = { r, g, 1.0f, 0.85f };
-                }
-            }
-
-            auto* nsc = splash->GetComponent<NativeScriptComponent>();
-            if (!nsc) {
-                nsc = &splash->AddComponent<NativeScriptComponent>();
-                nsc->AddScript("SplashParticle");
-                nsc->SetScene(scene);
-                if (GetSceneContext()) nsc->SetSceneContext(GetSceneContext());
-            }
-
-            if (isNew) {
-                scene->InitDynamicEntityRuntime(*splash);
-            }
-
-            // 即座に PrimitiveMesh の Transform を同期して原点でのチラつきを防ぐ
-            if (pm->meshHandle >= 0) {
-                if (auto* pmTr = RC::GetPrimitiveMeshTransformPtr(pm->meshHandle)) {
-                    pmTr->scale = tr->scale;
-                    pmTr->rotation = tr->rotation;
-                    pmTr->translation = tr->position;
-                }
-            }
+            RC::EffectParticleSpawn splash;
+            splash.kind = RC::EffectParticleKind::Splash;
+            splash.position = pos;
+            splash.scale = (0.15f + (i % 4) * 0.05f) * (1.0f + impactFactor * 0.3f);
+            const float r = 0.3f + (i % 3) * 0.15f;
+            const float g = 0.6f + (i % 2) * 0.2f;
+            splash.color = { r, g, 1.0f, 0.85f };
+            splash.impactFactor = impactFactor;
+            RC::SpawnEffectParticle(splash);
         }
     }
 };

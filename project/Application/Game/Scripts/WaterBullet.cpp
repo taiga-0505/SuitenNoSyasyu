@@ -10,6 +10,7 @@
 #include "Scene.h"
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 /// @brief Water bullet: flies forward, detects collision, spawns splash effect
 class WaterBullet : public ScriptableEntity {
@@ -144,8 +145,25 @@ protected:
             
             bool isPlayerBullet = (self->GetName() == "PlayerBullet");
 
-            for (auto& e : scene->GetEntities()) {
-                if (e.get() == self || !e->IsActive() || e->IsPendingDestroy()) continue;
+            // 候補は BVH から引く（以前は弾 1 発ごとに全エンティティを走査しており、
+            // 弾 20 発で毎フレーム数 ms かかっていた）。範囲は今回の移動線分を、
+            // 自分の半径と余裕（同じフレームで相手が少し動いた分）だけ広げた箱。
+            float myRadius = 0.0f;
+            if (auto* myCol = GetComponent<ColliderComponent>()) {
+                myRadius = myCol->radius * (std::max)((std::max)(std::abs(tr->scale.x), std::abs(tr->scale.y)), std::abs(tr->scale.z));
+            }
+            const float pad = myRadius + 1.0f;
+            const RC::BoundingBox sweepBox = {
+                {(std::min)(oldPos.x, tr->position.x) - pad, (std::min)(oldPos.y, tr->position.y) - pad,
+                 (std::min)(oldPos.z, tr->position.z) - pad},
+                {(std::max)(oldPos.x, tr->position.x) + pad, (std::max)(oldPos.y, tr->position.y) + pad,
+                 (std::max)(oldPos.z, tr->position.z) + pad}};
+            static std::vector<Entity*> s_candidates; // 使い回して毎フレームの確保をなくす
+            s_candidates.clear();
+            scene->QueryColliderCandidates(sweepBox, [](Entity* c) { s_candidates.push_back(c); });
+
+            for (Entity* e : s_candidates) {
+                if (e == self || !e->IsActive() || e->IsPendingDestroy()) continue;
                 
                 const std::string& eName = e->GetName();
                 // 弾やパーティクルなど、確実に当たり判定対象外のものはGetComponentやGetTagの前に除外する（超高速化）
@@ -202,7 +220,7 @@ protected:
 
                 if (hit && t >= 0.0f && t <= closestDist) {
                     closestDist = t;
-                    hitEntity = e.get();
+                    hitEntity = e;
                     hitPoint = RC::Add(ray.origin, RC::Mul(ray.direction, t));
                 }
             }
@@ -423,193 +441,40 @@ protected:
         int splashCount = (bulletType == "heavy") ? 0 : 12;
         int bubbleCount = (bulletType == "heavy") ? 8 : 4;
         
-        std::vector<std::shared_ptr<Entity>> inactiveSplashes;
-        std::vector<std::shared_ptr<Entity>> inactiveBubbles;
-        std::shared_ptr<Entity> inactiveHeavySplash = nullptr;
-
-        for (auto& e : scene->GetEntities()) {
-            if (!e->IsActive() && !e->IsPendingDestroy()) {
-                const std::string& name = e->GetName();
-                if (splashCount > 0 && name == "Splash" && inactiveSplashes.size() < splashCount) {
-                    inactiveSplashes.push_back(e);
-                } else if (bubbleCount > 0 && name == "Bubble" && inactiveBubbles.size() < bubbleCount) {
-                    inactiveBubbles.push_back(e);
-                } else if (bulletType == "heavy" && !inactiveHeavySplash && name == "HeavySplash") {
-                    inactiveHeavySplash = e;
-                }
-            }
-            // 必要な数が集まったら即座にループを抜ける（O(N)ループ回避）
-            if (inactiveSplashes.size() >= splashCount && 
-                inactiveBubbles.size() >= bubbleCount && 
-                (bulletType != "heavy" || inactiveHeavySplash)) {
-                break;
-            }
-        }
-
+        // 水しぶき・泡・水柱は Entity を作らず、エンジンのエフェクト粒として出す。
+        // （以前は 1 粒ごとに Entity＋専用メッシュ＋スクリプトを作っており、
+        //   弾を撃つと数百個の Entity が増えて更新・描画・エディタ表示が重くなっていた）
         if (bulletType == "heavy") {
-            // Spawn HeavySplash as a single water column cylinder
-            std::shared_ptr<Entity> splash = inactiveHeavySplash;
-            bool isNew = false;
-            if (splash) {
-                splash->SetActive(true);
-                splash->SetTag("reused", 1);
-            } else {
-                splash = scene->CreateEntity("HeavySplash");
-                isNew = true;
-            }
-
-            splash->SetTag("impact_factor", 150); // Larger impact
-
-            auto* tr = splash->GetComponent<TransformComponent>();
-            if (!tr) tr = &splash->AddComponent<TransformComponent>();
-            tr->position = pos;
-            splash->SetParentGuid(GetEffectsFolder(scene));
-            tr->scale = { 1.5f, 0.1f, 1.5f }; // Start flat and wide
-
-            auto* pm = splash->GetComponent<PrimitiveMeshComponent>();
-            if (!pm) {
-                pm = &splash->AddComponent<PrimitiveMeshComponent>();
-                pm->type = PrimitiveType::Cylinder;
-                pm->meshHandle = RC::GenerateCylinder(1.0f, 1.0f);
-            } else if (pm->meshHandle < 0) {
-                pm->meshHandle = RC::GenerateCylinder(1.0f, 1.0f);
-            }
-            // 水柱として描く（以前は DataDrivenScene がエンティティ名で判定していた）
-            pm->drawStyle = PrimitiveDrawStyle::WaterColumn;
-
-            if (pm->meshHandle >= 0) {
-                if (auto* mat = RC::GetPrimitiveMeshMaterialPtr(pm->meshHandle)) mat->color = { 0.9f, 0.95f, 1.0f, 1.0f }; 
-            }
-
-            auto* nsc = splash->GetComponent<NativeScriptComponent>();
-            if (!nsc) {
-                nsc = &splash->AddComponent<NativeScriptComponent>();
-                nsc->AddScript("HeavySplashParticle");
-                nsc->SetScene(scene);
-                if (GetSceneContext()) nsc->SetSceneContext(GetSceneContext());
-            }
-
-            if (isNew) {
-                scene->InitDynamicEntityRuntime(*splash);
-            }
-
-            if (pm->meshHandle >= 0) {
-                if (auto* pmTr = RC::GetPrimitiveMeshTransformPtr(pm->meshHandle)) {
-                    pmTr->scale = tr->scale; pmTr->rotation = tr->rotation; pmTr->translation = tr->position;
-                }
-            }
+            // 水柱：太さ 1.5 の平たい状態から一気に伸びる（旧 HeavySplash の impact_factor = 150）
+            RC::EffectParticleSpawn column;
+            column.kind = RC::EffectParticleKind::HeavySplash;
+            column.position = pos;
+            column.scale = 1.5f;
+            column.color = { 0.9f, 0.95f, 1.0f, 1.0f };
+            column.impactFactor = 1.5f;
+            RC::SpawnEffectParticle(column);
         } else {
-            // Spawn normal visual splash particles
             for (int i = 0; i < splashCount; ++i) {
-                std::shared_ptr<Entity> splash = nullptr;
-                bool isNew = false;
-                if (i < inactiveSplashes.size()) {
-                    splash = inactiveSplashes[i];
-                    splash->SetActive(true);
-                    splash->SetTag("reused", 1);
-                } else {
-                    splash = scene->CreateEntity("Splash");
-                    isNew = true;
-                }
-
-                auto* tr = splash->GetComponent<TransformComponent>();
-                if (!tr) tr = &splash->AddComponent<TransformComponent>();
-                tr->position = pos;
-                splash->SetParentGuid(GetEffectsFolder(scene));
-                float s = 0.15f + (i % 4) * 0.05f;
-                tr->scale = { s, s, s };
-
-                auto* pm = splash->GetComponent<PrimitiveMeshComponent>();
-                if (!pm) {
-                    pm = &splash->AddComponent<PrimitiveMeshComponent>();
-                    pm->type = PrimitiveType::Sphere;
-                    pm->meshHandle = RC::GenerateSphere(1.0f);
-                } else if (pm->meshHandle < 0) {
-                    pm->meshHandle = RC::GenerateSphere(1.0f);
-                }
-                // 水の質感で描く（以前は DataDrivenScene がエンティティ名で判定していた）
-                pm->drawStyle = PrimitiveDrawStyle::Water;
-
-                if (pm->meshHandle >= 0) {
-                    if (auto* mat = RC::GetPrimitiveMeshMaterialPtr(pm->meshHandle)) {
-                        float r = 0.3f + (i % 3) * 0.15f;
-                        float g = 0.6f + (i % 2) * 0.2f;
-                        mat->color = { r, g, 1.0f, 0.85f };
-                    }
-                }
-
-                auto* nsc = splash->GetComponent<NativeScriptComponent>();
-                if (!nsc) {
-                    nsc = &splash->AddComponent<NativeScriptComponent>();
-                    nsc->AddScript("SplashParticle");
-                    nsc->SetScene(scene);
-                    if (GetSceneContext()) nsc->SetSceneContext(GetSceneContext());
-                }
-
-                if (isNew) {
-                    scene->InitDynamicEntityRuntime(*splash);
-                }
-
-                if (pm->meshHandle >= 0) {
-                    if (auto* pmTr = RC::GetPrimitiveMeshTransformPtr(pm->meshHandle)) {
-                        pmTr->scale = tr->scale;
-                        pmTr->rotation = tr->rotation;
-                        pmTr->translation = tr->position;
-                    }
-                }
+                RC::EffectParticleSpawn splash;
+                splash.kind = RC::EffectParticleKind::Splash;
+                splash.position = pos;
+                splash.scale = 0.15f + (i % 4) * 0.05f;
+                const float r = 0.3f + (i % 3) * 0.15f;
+                const float g = 0.6f + (i % 2) * 0.2f;
+                splash.color = { r, g, 1.0f, 0.85f };
+                splash.impactFactor = 1.0f;
+                RC::SpawnEffectParticle(splash);
             }
         }
 
-        // Spawn Bubbles for all bullet types as an accent
+        // アクセントの泡（全弾種）
         for (int i = 0; i < bubbleCount; ++i) {
-            std::shared_ptr<Entity> bubble = nullptr;
-            bool isNew = false;
-            if (i < inactiveBubbles.size()) {
-                bubble = inactiveBubbles[i];
-                bubble->SetActive(true);
-                bubble->SetTag("reused", 1);
-            } else {
-                bubble = scene->CreateEntity("Bubble");
-                isNew = true;
-            }
-
-            auto* tr = bubble->GetComponent<TransformComponent>();
-            if (!tr) tr = &bubble->AddComponent<TransformComponent>();
-            tr->position = pos;
-            bubble->SetParentGuid(GetEffectsFolder(scene));
-            float s = 0.05f + (i % 3) * 0.05f;
-            tr->scale = { s, s, s };
-            
-            auto* pm = bubble->GetComponent<PrimitiveMeshComponent>();
-            if (!pm) {
-                pm = &bubble->AddComponent<PrimitiveMeshComponent>();
-                pm->type = PrimitiveType::Sphere;
-                pm->meshHandle = RC::GenerateSphere(1.0f);
-            } else if (pm->meshHandle < 0) {
-                pm->meshHandle = RC::GenerateSphere(1.0f);
-            }
-
-            if (pm->meshHandle >= 0) {
-                if (auto* mat = RC::GetPrimitiveMeshMaterialPtr(pm->meshHandle)) mat->color = { 0.8f, 0.9f, 1.0f, 0.6f };
-            }
-
-            auto* nsc = bubble->GetComponent<NativeScriptComponent>();
-            if (!nsc) {
-                nsc = &bubble->AddComponent<NativeScriptComponent>();
-                nsc->AddScript("BubbleParticle");
-                nsc->SetScene(scene);
-                if (GetSceneContext()) nsc->SetSceneContext(GetSceneContext());
-            }
-
-            if (isNew) {
-                scene->InitDynamicEntityRuntime(*bubble);
-            }
-
-            if (pm->meshHandle >= 0) {
-                if (auto* pmTr = RC::GetPrimitiveMeshTransformPtr(pm->meshHandle)) {
-                    pmTr->scale = tr->scale; pmTr->rotation = tr->rotation; pmTr->translation = tr->position;
-                }
-            }
+            RC::EffectParticleSpawn bubble;
+            bubble.kind = RC::EffectParticleKind::Bubble;
+            bubble.position = pos;
+            bubble.scale = 0.05f + (i % 3) * 0.05f;
+            bubble.color = { 0.8f, 0.9f, 1.0f, 0.6f };
+            RC::SpawnEffectParticle(bubble);
         }
     }
 };

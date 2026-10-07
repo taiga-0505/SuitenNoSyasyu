@@ -108,7 +108,7 @@ ModelInstanceBatcher::MakeKey_(RenderContext &ctx, ::ModelObject &m, Material &o
   key.texture = res.TextureOverridePtr();
   key.normalMap = res.NormalMapPtr();
   key.roughnessMap = res.RoughnessMapPtr();
-  key.lightCB = res.EffectiveLightCBAddress();
+  key.lightCB = res.LightIdentity(); // 外部ライトならそのアドレス、自前ライトならモデルごとに別
   key.lightingMode = outMaterial.lightingMode;
   key.shininess = outMaterial.shininess;
   key.environmentCoefficient = outMaterial.environmentCoefficient;

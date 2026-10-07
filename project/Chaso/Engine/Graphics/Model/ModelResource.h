@@ -9,6 +9,7 @@
 #include <vector>
 #include <wrl/client.h>
 #include "ComputeShader/ComputeShader.h"
+#include "Render/FrameResource.h" // RC::DynamicCB
 
 class TextureManager; // 前方宣言
 class SRVManager;     // 前方宣言
@@ -64,13 +65,13 @@ public:
 
   /// @brief マテリアルの定数バッファ（CPUマップ済み）を取得する
   /// @return Material 構造体へのポインタ
-  Material *Mat() { return cbMat_.mapped; }
-  const Material *Mat() const { return cbMat_.mapped; }
+  Material *Mat() { return cbMat_.dyn.Ptr(); }
+  const Material *Mat() const { return cbMat_.dyn.Ptr(); }
 
   /// @brief ライトの定数バッファ（CPUマップ済み）を取得する
   /// @return DirectionalLight 構造体へのポインタ
-  DirectionalLight *Light() { return cbLight_.mapped; }
-  const DirectionalLight *Light() const { return cbLight_.mapped; }
+  DirectionalLight *Light() { return cbLight_.dyn.Ptr(); }
+  const DirectionalLight *Light() const { return cbLight_.dyn.Ptr(); }
 
   /// @brief 外部で管理されているライトCBのアドレスを設定する
   /// @param addr ライトCBの GPU 仮想アドレス
@@ -213,9 +214,16 @@ public:
   uint64_t RoughnessMapPtr() const { return roughnessMapSrv_.ptr; }
 
   /// @brief 描画時に実際に使うライト CB のアドレス（外部ライト優先、無ければ自前）
-  D3D12_GPU_VIRTUAL_ADDRESS EffectiveLightCBAddress() const {
+  /// @note 自前ライトの場合は今フレームの領域へ送ってからアドレスを返す（コマンド記録中に呼ぶこと）
+  D3D12_GPU_VIRTUAL_ADDRESS EffectiveLightCBAddress() {
     if (externalLightCBAddress_ != 0) return externalLightCBAddress_;
-    return cbLight_.resource ? cbLight_.resource->GetGPUVirtualAddress() : 0;
+    return cbLight_.dyn.Address();
+  }
+
+  /// @brief ライトの識別子（バッチのまとめ判定用。外部ライトならそのアドレス、自前ならこのオブジェクト）
+  uint64_t LightIdentity() const {
+    return (externalLightCBAddress_ != 0) ? externalLightCBAddress_
+                                          : reinterpret_cast<uint64_t>(this);
   }
 
   /// @brief CS スキニング済み頂点を使って描画する（通常の object3d パイプラインで）
@@ -231,17 +239,18 @@ public:
 
 private:
   /// @struct CB_Material
-  /// @brief マテリアル定数バッファのリソースとポインタを保持する内部構造体
+  /// @brief マテリアル定数バッファ
+  /// @details 値は CPU 側に持ち、バインドするときに今フレームの領域へ送る（RC::DynamicCB）。
+  ///          以前は Map しっぱなしの固定 CB だったが、CPU と GPU を並行させると
+  ///          GPU が前フレームを描いている最中に上書きしてしまうため変更した。
   struct CB_Material {
-    Microsoft::WRL::ComPtr<ID3D12Resource> resource;
-    Material *mapped = nullptr;
+    RC::DynamicCB<Material> dyn;
   };
 
   /// @struct CB_Light
-  /// @brief ライト定数バッファのリソースとポインタを保持する内部構造体
+  /// @brief モデル自前のライト定数バッファ（外部ライトが無いときに使う）
   struct CB_Light {
-    Microsoft::WRL::ComPtr<ID3D12Resource> resource;
-    DirectionalLight *mapped = nullptr;
+    RC::DynamicCB<DirectionalLight> dyn;
   };
 
   /// @struct InstanceDataGPU

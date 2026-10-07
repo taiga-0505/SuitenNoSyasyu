@@ -47,8 +47,10 @@ static SRVManager::Handle s_srvs[3];
 static SRVManager::Handle s_uavs[3];
 static int s_currIdx = 0; // 最新のハイトマップのインデックス
 
-static Microsoft::WRL::ComPtr<ID3D12Resource> s_simCB;
-static WaveSimCB* s_simCBMapped = nullptr;
+/// @brief 波シミュレーションの CB。値は CPU 側に持ち、バインド時に今フレームの領域へ送る
+/// @details 以前は Map しっぱなしの固定 CB だった（CPU と GPU を並行させると上書き競合が起きる）
+static RC::DynamicCB<WaveSimCB> s_simCB;
+static WaveSimCB* s_simCBMapped = nullptr; ///< 書き込み先（= s_simCB.Ptr()）
 
 static std::vector<WaveSource> s_pendingSources;
 static std::vector<WaveSource> s_pendingFoamSources;  ///< 引き波の泡の波源（strength = 足す量）
@@ -290,8 +292,7 @@ void InitInteractiveWater() {
   }
 
   // 定数バッファの作成
-  s_simCB = CreateBufferResource(device, sizeof(WaveSimCB), L"WaveSimCB");
-  s_simCB->Map(0, nullptr, reinterpret_cast<void**>(&s_simCBMapped));
+  s_simCBMapped = s_simCB.Ptr();
   if (s_simCBMapped) {
     s_simCBMapped->alpha = 0.45f;
     s_simCBMapped->damping = 0.985f;
@@ -321,11 +322,7 @@ void TermInteractiveWater() {
     s_heightMaps[i].Reset();
   }
 
-  if (s_simCB) {
-    s_simCB->Unmap(0, nullptr);
-    s_simCBMapped = nullptr;
-    s_simCB.Reset();
-  }
+  s_simCBMapped = nullptr;
 
   // 読み戻し（RC::Term は GPU 完了待ちのあとに呼ばれる前提。ハイトマップの Reset と同じ）
   s_readbackEnabled = false;
@@ -490,7 +487,7 @@ void UpdateInteractiveWater() {
       cl->SetComputeRootSignature(root);
 
       // b0
-      cl->SetComputeRootConstantBufferView(0, s_simCB->GetGPUVirtualAddress());
+      cl->SetComputeRootConstantBufferView(0, s_simCB.Address());
 
       // t0 (h1: 最新のハイトマップ)
       cl->SetComputeRootDescriptorTable(1, s_srvs[h1Idx].gpu);

@@ -54,11 +54,20 @@ void FrameResource::Reset() {
 D3D12_GPU_VIRTUAL_ADDRESS FrameResource::AllocCB(uint32_t sizeBytes,
                                                   void **outMapped) {
   const uint32_t aligned = Align256(sizeBytes);
-  assert(cbOffset_ + aligned <= cbCapacity_ &&
-         "FrameResource CB capacity exceeded!");
-
-  const uint64_t offset = cbOffset_;
-  cbOffset_ += aligned;
+  // 末尾 kOverflowScratch バイトは「溢れたとき用の捨て場」として通常の確保には使わない
+  const uint64_t usable = (cbCapacity_ > kOverflowScratch) ? cbCapacity_ - kOverflowScratch : cbCapacity_;
+  uint64_t offset = cbOffset_;
+  if (offset + aligned > usable) {
+    // 容量オーバー。範囲外へ書いて落ちないよう、捨て場を返す（その描画の値は壊れうる）。
+    // Debug ビルドでは気付けるよう一度だけ知らせる
+    if (!overflowReported_) {
+      overflowReported_ = true;
+      Log::Print("[FrameResource] CB capacity exceeded. kDefaultCBSize を増やしてください");
+    }
+    offset = (aligned <= kOverflowScratch) ? usable : 0;
+  } else {
+    cbOffset_ += aligned;
+  }
 
   if (outMapped) {
     *outMapped = cbMapped_ + offset;
@@ -69,11 +78,11 @@ D3D12_GPU_VIRTUAL_ADDRESS FrameResource::AllocCB(uint32_t sizeBytes,
 
 D3D12_GPU_VIRTUAL_ADDRESS FrameResource::AllocSRV(uint32_t sizeBytes,
                                                    void **outMapped) {
-  assert(srvOffset_ + sizeBytes <= srvCapacity_ &&
+  // 頂点バッファや StructuredBuffer として使えるよう、先頭を 16byte 境界に揃える
+  const uint64_t offset = (srvOffset_ + 15u) & ~uint64_t(15u);
+  assert(offset + sizeBytes <= srvCapacity_ &&
          "FrameResource SRV capacity exceeded!");
-
-  const uint64_t offset = srvOffset_;
-  srvOffset_ += sizeBytes;
+  srvOffset_ = offset + sizeBytes;
 
   if (outMapped) {
     *outMapped = srvMapped_ + offset;
@@ -83,11 +92,13 @@ D3D12_GPU_VIRTUAL_ADDRESS FrameResource::AllocSRV(uint32_t sizeBytes,
 }
 
 bool FrameResource::HasCBSpace(uint32_t sizeBytes) const {
-  return cbOffset_ + Align256(sizeBytes) <= cbCapacity_;
+  const uint64_t usable = (cbCapacity_ > kOverflowScratch) ? cbCapacity_ - kOverflowScratch : cbCapacity_;
+  return cbOffset_ + Align256(sizeBytes) <= usable;
 }
 
 bool FrameResource::HasSRVSpace(uint32_t sizeBytes) const {
-  return srvOffset_ + sizeBytes <= srvCapacity_;
+  const uint64_t offset = (srvOffset_ + 15u) & ~uint64_t(15u);
+  return offset + sizeBytes <= srvCapacity_;
 }
 
 } // namespace RC

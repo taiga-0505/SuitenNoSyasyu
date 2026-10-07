@@ -1,4 +1,5 @@
 #include "Primitive3D.h"
+#include "Render/FrameResource.h"
 #include <cassert>
 #include <cmath>
 #include <format>
@@ -481,18 +482,32 @@ void Primitive3D::TransferVertices() {
   if (total == 0 || !device_)
     return;
 
-  EnsureVB_(total);
+  // 頂点は今フレームの一時領域（FrameResource）へ毎回書く。
+  // 以前は 1 本の固定 VB に上書きしていたため、CPU と GPU を並行させると
+  // GPU が前フレームの線を描いている最中に次フレームの頂点で上書きしてしまう。
+  // （同じフレームで 2 回転送するとき＝メイン 3D とオーバーレイでも、前の転送分を壊さない）
+  const uint64_t bytes64 = sizeof(Vertex) * total;
+  auto &frame = RC::CurrentFrameResource();
+  if (bytes64 > UINT32_MAX || !frame.HasSRVSpace(static_cast<uint32_t>(bytes64))) {
+    vbView_ = {}; // 容量不足：今回の線は描かない
+    return;
+  }
+  void *dst = nullptr;
+  const D3D12_GPU_VIRTUAL_ADDRESS addr = frame.AllocSRV(static_cast<uint32_t>(bytes64), &dst);
+  auto *vb = static_cast<Vertex *>(dst);
 
   // vtxDepth_ を先に、vtxNoDepth_ を後にコピーする
   if (!vtxDepth_.empty()) {
-    std::memcpy(vbMap_, vtxDepth_.data(), sizeof(Vertex) * vtxDepth_.size());
+    std::memcpy(vb, vtxDepth_.data(), sizeof(Vertex) * vtxDepth_.size());
   }
   if (!vtxNoDepth_.empty()) {
-    std::memcpy(vbMap_ + vtxDepth_.size(), vtxNoDepth_.data(),
+    std::memcpy(vb + vtxDepth_.size(), vtxNoDepth_.data(),
                 sizeof(Vertex) * vtxNoDepth_.size());
   }
 
-  vbView_.SizeInBytes = (UINT)(sizeof(Vertex) * total);
+  vbView_.BufferLocation = addr;
+  vbView_.StrideInBytes = (UINT)sizeof(Vertex);
+  vbView_.SizeInBytes = (UINT)bytes64;
 }
 
 void Primitive3D::DrawRange(ID3D12GraphicsCommandList *cl, bool depth,
@@ -500,12 +515,8 @@ void Primitive3D::DrawRange(ID3D12GraphicsCommandList *cl, bool depth,
   if (count == 0 || !cl || !vbView_.BufferLocation)
     return;
 
-  // GPUに送るフレームごとの定数バッファを更新
-  const uint32_t idx =
-      (cbCursor_ < kMaxDrawPerFrame) ? cbCursor_++ : (cbCursor_ = 1, 0);
-
-  std::memcpy(cbMap_ + idx * cbStride_, &perFrame_, sizeof(PerFrameCB));
-  D3D12_GPU_VIRTUAL_ADDRESS cbAddr = cbRes_->GetGPUVirtualAddress() + idx * cbStride_;
+  // 行列 CB は今フレームの一時領域へ送る（固定 CB の使い回しだと、GPU が前フレームを描いている最中に上書きする）
+  const D3D12_GPU_VIRTUAL_ADDRESS cbAddr = RC::UploadFrameCB(perFrame_);
 
   cl->IASetVertexBuffers(0, 1, &vbView_);
   cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);

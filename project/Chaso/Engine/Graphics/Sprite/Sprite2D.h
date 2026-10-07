@@ -8,6 +8,7 @@
 #include <wrl/client.h>
 
 #include "Math/Math.h"
+#include "Render/FrameResource.h" // RC::DynamicCB
 #include "function/function.h"
 #include "imgui/imgui.h"
 
@@ -88,12 +89,12 @@ public:
   /// @brief スプライトのカラー（乗算色）を設定する
   /// @param color RGBA カラー
   void SetColor(const RC::Vector4 &color) {
-    cbMat_.map->color = RC::Vector4(color.x, color.y, color.z, color.w);
+    cbMat_.dyn.Ptr()->color = RC::Vector4(color.x, color.y, color.z, color.w);
   }
 
   /// @brief スプライトのカラー（乗算色）を取得する
   /// @return RGBA カラー
-  RC::Vector4 GetColor() { return cbMat_.map->color; }
+  RC::Vector4 GetColor() { return cbMat_.dyn.Ptr()->color; }
 
   /// @brief トランスフォーム情報を取得する（読み書き可能）
   /// @return Transform への参照
@@ -101,11 +102,11 @@ public:
 
   /// @brief マテリアル情報を取得する（読み書き可能）
   /// @return SpriteMaterial 構造体へのポインタ
-  SpriteMaterial *Mat() { return cbMat_.map; }
+  SpriteMaterial *Mat() { return cbMat_.dyn.Ptr(); }
 
   /// @brief UV 変換行列を取得する（読み書き可能）
   /// @return UV 変換行列への参照
-  RC::Matrix4x4 &UVTransform() { return cbMat_.map->uvTransform; }
+  RC::Matrix4x4 &UVTransform() { return cbMat_.dyn.Ptr()->uvTransform; }
 
   /// @brief 関連付けられたファイルパスを保存する（アセット管理用）
   /// @param path ファイルパス
@@ -119,15 +120,13 @@ private:
   /// @struct CBW
   /// @brief 行列用定数バッファ管理構造体
   struct CBW {
-    Microsoft::WRL::ComPtr<ID3D12Resource> res;
-    TransformationMatrix *map = nullptr;
+    RC::DynamicCB<TransformationMatrix> dyn; ///< 値は CPU 側。バインド時に今フレームの領域へ送る（CPU/GPU 並行のため）
   };
 
   /// @struct CBM
   /// @brief マテリアル用定数バッファ管理構造体
   struct CBM {
-    Microsoft::WRL::ComPtr<ID3D12Resource> res;
-    SpriteMaterial *map = nullptr;
+    RC::DynamicCB<SpriteMaterial> dyn; ///< 値は CPU 側。バインド時に今フレームの領域へ送る（CPU/GPU 並行のため）
   };
 
   /// @brief リソースの解放処理

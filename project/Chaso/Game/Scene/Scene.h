@@ -228,6 +228,27 @@ public:
   RC::Vector3 MoveWithCollision(Entity* self, const RC::Vector3& delta,
                                 float maxStep = 0.1f, float skin = 0.05f);
 
+  /// @brief box と重なる可能性のある「有効なコライダーを持つエンティティ」を列挙する（BVH による粗い判定）
+  /// @param box 調べる範囲（ワールド座標の AABB）
+  /// @param cb void(Entity*)。重なる「可能性がある」物なので、正確な判定は呼び出し側で行うこと
+  /// @details 全エンティティを走査して当たり判定する代わりに使う（弾の当たり判定など）。
+  ///          BVH の位置は UpdateEntities / ResolveCollisions の先頭で同期した時点のもの
+  ///          （葉は少し太らせてあるので、同じフレーム内の小さな移動では取りこぼさない）。
+  ///          非アクティブ・破棄予定・コライダー無効のエンティティは含まれない。
+  template <class Callback>
+  void QueryColliderCandidates(const RC::BoundingBox& box, Callback&& cb) {
+      if (broadphase_.IsDirty()) {
+          broadphase_.Sync(entities_);
+      }
+      broadphase_.QueryBox(box, [&](const ColliderBroadphase::Entry& en) {
+          // Sync 以降に破棄されたエンティティを触らないよう、生存を確かめてから渡す
+          if (std::shared_ptr<Entity> e = en.weak.lock()) {
+              cb(e.get());
+          }
+          return true;
+      });
+  }
+
   /// @brief 動的に生成したエンティティのランタイムリソースを初期化する
   /// @param e 初期化するエンティティ
   /// @details 派生クラスでオーバーライドして、モデルロードやメッシュ生成を行う

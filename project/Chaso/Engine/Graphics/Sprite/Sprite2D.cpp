@@ -12,14 +12,7 @@ Sprite2D::~Sprite2D() {
 void Sprite2D::Release() {
   mesh_.reset();
 
-  if (cbWVP_.res) {
-    cbWVP_.res.Reset();
-    cbWVP_.map = nullptr;
-  }
-  if (cbMat_.res) {
-    cbMat_.res.Reset();
-    cbMat_.map = nullptr;
-  }
+  // 定数バッファは DynamicCB（毎フレームの一時領域）なので解放するものは無い
 }
 
 void Sprite2D::Initialize(ID3D12Device *device,
@@ -32,17 +25,12 @@ void Sprite2D::Initialize(ID3D12Device *device,
   screenH_ = screenHeight;
 
   // CB: WVP
-  cbWVP_.res =
-      CreateBufferResource(device_.Get(), sizeof(TransformationMatrix));
-  cbWVP_.res->Map(0, nullptr, reinterpret_cast<void **>(&cbWVP_.map));
-  cbWVP_.map->World = MakeIdentity4x4();
-  cbWVP_.map->WVP = MakeIdentity4x4();
+  cbWVP_.dyn.Ptr()->World = MakeIdentity4x4();
+  cbWVP_.dyn.Ptr()->WVP = MakeIdentity4x4();
 
   // CB: Material
-  cbMat_.res = CreateBufferResource(device_.Get(), sizeof(SpriteMaterial));
-  cbMat_.res->Map(0, nullptr, reinterpret_cast<void **>(&cbMat_.map));
-  cbMat_.map->color = {1, 1, 1, 1};
-  cbMat_.map->uvTransform = MakeIdentity4x4();
+  cbMat_.dyn.Ptr()->color = {1, 1, 1, 1};
+  cbMat_.dyn.Ptr()->uvTransform = MakeIdentity4x4();
 
   // ビュー/プロジェクション（左上基準の直交）
   view_ = MakeIdentity4x4();
@@ -81,15 +69,15 @@ void Sprite2D::Update() {
     Matrix4x4 world =
         Multiply(pre, MakeAffineMatrix(transform_.scale, transform_.rotation,
                                        transform_.translation));
-    cbWVP_.map->World = world;
-    cbWVP_.map->WVP = Multiply(world, Multiply(camView_, camProj_));
+    cbWVP_.dyn.Ptr()->World = world;
+    cbWVP_.dyn.Ptr()->WVP = Multiply(world, Multiply(camView_, camProj_));
     return;
   }
 
   Matrix4x4 world = MakeAffineMatrix(transform_.scale, transform_.rotation,
                                      transform_.translation);
-  cbWVP_.map->World = world;
-  cbWVP_.map->WVP = Multiply(world, Multiply(view_, proj_));
+  cbWVP_.dyn.Ptr()->World = world;
+  cbWVP_.dyn.Ptr()->WVP = Multiply(world, Multiply(view_, proj_));
 }
 
 void Sprite2D::Draw(ID3D12GraphicsCommandList *cmdList) const {
@@ -109,9 +97,9 @@ void Sprite2D::Draw(ID3D12GraphicsCommandList *cmdList) const {
 
   // RootParam: 0=Material, 1=WVP, 2=SRV
   cmdList->SetGraphicsRootConstantBufferView(
-      0, cbMat_.res->GetGPUVirtualAddress());
+      0, cbMat_.dyn.Address());
   cmdList->SetGraphicsRootConstantBufferView(
-      1, cbWVP_.res->GetGPUVirtualAddress());
+      1, cbWVP_.dyn.Address());
   cmdList->SetGraphicsRootDescriptorTable(2, srv_);
 
   cmdList->DrawIndexedInstanced(mesh_->IndexCount(), 1, 0, 0, 0);

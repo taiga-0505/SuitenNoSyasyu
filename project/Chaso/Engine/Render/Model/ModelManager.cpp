@@ -1,4 +1,6 @@
 #include "ModelManager.h"
+#include "DeferredReleaseQueue/DeferredReleaseQueue.h"
+#include <memory>
 
 #include "Model/ModelObject.h"
 #include "Model/ModelMesh.h"
@@ -193,7 +195,9 @@ void ModelManager::Unload(int handle) {
     return;
   }
   Log::Print("[Model] 破棄完了: " + Log::NormalizePath(models_[handle].ptr->GetFilePath()));
-  models_[handle].ptr.reset();
+  // CPU と GPU を並行させているので、直前のフレームの GPU がまだこのモデルを描いているかもしれない。
+  // 実体の破棄（頂点バッファ・CS スキニング用バッファの解放）は GPU が使い終わってから行う
+  DeferredReleaseQueue::DeferDelete(std::move(models_[handle].ptr));
   models_[handle].inUse = false;
 }
 
