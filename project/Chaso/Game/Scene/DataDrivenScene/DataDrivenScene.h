@@ -112,6 +112,7 @@ public:
     }
     entities_.clear();
     pendingEntities_.clear();
+    broadphase_.Clear(); // 弱参照だけになった登録を捨てる
   }
 
   void Update(SceneManager& sm, SceneContext& ctx) override {
@@ -659,7 +660,8 @@ public:
             if (excludeEntityId != 0u && c.entityId == excludeEntityId) continue;
 
             if (c.ren) {
-                RC::DrawModel(c.ren->modelHandle, c.ren->texOverride);
+                // 同じメッシュ・見た目の物は自動でまとめてインスタンス描画（ライト視錐台外は描かない）
+                RC::DrawModelInstanced(c.ren->modelHandle, c.ren->texOverride);
             }
             if (c.pm) {
                 RC::DrawPrimitiveMesh(c.pm->meshHandle, c.pm->texOverride);
@@ -679,6 +681,8 @@ public:
                 }
             }
         }
+        // VirtualEntity（RC::CreateModelProxy で置いた見た目だけの物）。castShadow の物だけ描かれる
+        RC::DrawModelProxies();
     };
 
     // --- 1) 平行光源 ---
@@ -1001,7 +1005,9 @@ public:
                 if (e->Name() == "Block") {
                     RC::DrawModelGlassTwoPass(ren->modelHandle, ren->texOverride);
                 } else {
-                    RC::DrawModel(ren->modelHandle, ren->texOverride);
+                    // 同じメッシュ・見た目の物は自動でまとめてインスタンス描画＋視錐台カリング
+                    // （半透明・スキニングは内部で従来の DrawModel に回る）
+                    RC::DrawModelInstanced(ren->modelHandle, ren->texOverride);
                 }
                 // スケルトンのデバッグ表示
                 if (auto* anim = e->GetComponent<AnimationComponent>()) {
@@ -1044,6 +1050,9 @@ public:
         //    2D パス（下の PreDraw2D 以降）で 1 フレームに 1 回だけ呼ぶ規約。
         //    3D パスでも呼ぶと二重描画になる。
     }
+
+    // VirtualEntity（RC::CreateModelProxy で置いた見た目だけの物）。BVH で視錐台カリングしてまとめて描く
+    RC::DrawModelProxies();
 
     // ワールド空間スプライト（深度テストありで 3D キューに積む）
     // モデルと同じキューに入るので、任意のモデルとモデルの間に挟まる
@@ -1213,6 +1222,7 @@ public:
   /// @brief Load entities from JSON file
   bool Load() {
     entities_.clear();
+    broadphase_.Clear();
     gameMode_ = GameModeBase::Create(sceneName_); // GameModeのリセット（Application 側のファクトリで作る）
 
     if (!std::filesystem::exists(filePath_)) {
@@ -1330,6 +1340,7 @@ public:
       }
       entities_.clear();
       pendingEntities_.clear();
+      broadphase_.Clear();
       gameMode_ = GameModeBase::Create(sceneName_); // GameModeのリセット（Application 側のファクトリで作る）
 
       for (auto& ej : backupJson_) {

@@ -251,6 +251,71 @@ void ModelResource::Draw(ID3D12GraphicsCommandList *cmdList,
 }
 
 // ============================================================================
+// DrawInstancesPrepared（ModelInstanceBatcher 用。インスタンスデータは呼び出し側で作成済み）
+// ============================================================================
+
+void ModelResource::DrawInstancesPrepared(ID3D12GraphicsCommandList *cmdList,
+                                          D3D12_GPU_VIRTUAL_ADDRESS materialCB,
+                                          D3D12_GPU_VIRTUAL_ADDRESS instanceAddr,
+                                          uint32_t count, bool perItem) {
+  if (!isReady_ || !mesh_ || !mesh_->Ready() || count == 0 || instanceAddr == 0) {
+    return;
+  }
+
+  if (textureSrv_.ptr == 0) {
+    EnsureMaterialSrvsLoaded_();
+  }
+
+  const auto &vbv = mesh_->VBV();
+  cmdList->IASetVertexBuffers(0, 1, &vbv);
+  cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+  cmdList->SetGraphicsRootConstantBufferView(0, materialCB);
+  cmdList->SetGraphicsRootConstantBufferView(3, EffectiveLightCBAddress());
+
+  auto bindTextures = [&](uint32_t materialIndex) {
+    const D3D12_GPU_DESCRIPTOR_HANDLE mainSrv =
+        (textureSrv_.ptr != 0) ? textureSrv_ : GetSrvForMaterial_(materialIndex);
+    cmdList->SetGraphicsRootDescriptorTable(2, mainSrv);
+    cmdList->SetGraphicsRootDescriptorTable(9, (normalMapSrv_.ptr != 0) ? normalMapSrv_ : mainSrv);
+    cmdList->SetGraphicsRootDescriptorTable(10, (roughnessMapSrv_.ptr != 0) ? roughnessMapSrv_ : mainSrv);
+  };
+
+  const auto &items = mesh_->DrawItems();
+  if (items.empty()) {
+    cmdList->SetGraphicsRootShaderResourceView(1, instanceAddr);
+    bindTextures(0);
+    if (mesh_->HasIndexBuffer()) {
+      cmdList->IASetIndexBuffer(&mesh_->IBV());
+      cmdList->DrawIndexedInstanced(mesh_->IndexCount(), count, 0, 0, 0);
+    } else {
+      cmdList->DrawInstanced(mesh_->VertexCount(), count, 0, 0);
+    }
+    return;
+  }
+
+  if (mesh_->HasIndexBuffer()) {
+    cmdList->IASetIndexBuffer(&mesh_->IBV());
+  }
+  const uint64_t itemStride = static_cast<uint64_t>(count) * sizeof(InstanceGPU);
+  if (!perItem) {
+    cmdList->SetGraphicsRootShaderResourceView(1, instanceAddr);
+  }
+  for (size_t k = 0; k < items.size(); ++k) {
+    const auto &it = items[k];
+    if (perItem) {
+      cmdList->SetGraphicsRootShaderResourceView(1, instanceAddr + itemStride * k);
+    }
+    bindTextures(it.materialIndex);
+    if (mesh_->HasIndexBuffer() && it.indexCount > 0) {
+      cmdList->DrawIndexedInstanced(it.indexCount, count, it.indexStart, 0, 0);
+    } else {
+      cmdList->DrawInstanced(it.vertexCount, count, it.vertexStart, 0);
+    }
+  }
+}
+
+// ============================================================================
 // DrawBatch（インスタンシング・白色版）
 // ============================================================================
 
@@ -288,6 +353,10 @@ void ModelResource::DrawBatch(ID3D12GraphicsCommandList *cmdList,
   const uint32_t count = static_cast<uint32_t>(instances.size());
   const uint32_t dataSize = count * static_cast<uint32_t>(sizeof(InstanceDataGPU));
 
+  // フレームリソースが足りないときは描かない（AllocSRV は Release ビルドで範囲外を返すため）
+  if (!frame.HasSRVSpace(dataSize)) {
+    return;
+  }
   void *mapped = nullptr;
   D3D12_GPU_VIRTUAL_ADDRESS instAddr = frame.AllocSRV(dataSize, &mapped);
   auto *dst = reinterpret_cast<InstanceDataGPU *>(mapped);
@@ -385,6 +454,10 @@ void ModelResource::DrawBatch(ID3D12GraphicsCommandList *cmdList,
   const uint32_t count = static_cast<uint32_t>(instances.size());
   const uint32_t dataSize = count * static_cast<uint32_t>(sizeof(InstanceDataGPU));
 
+  // フレームリソースが足りないときは描かない（AllocSRV は Release ビルドで範囲外を返すため）
+  if (!frame.HasSRVSpace(dataSize)) {
+    return;
+  }
   void *mapped = nullptr;
   D3D12_GPU_VIRTUAL_ADDRESS instAddr = frame.AllocSRV(dataSize, &mapped);
   auto *dst = reinterpret_cast<InstanceDataGPU *>(mapped);
@@ -485,6 +558,9 @@ void ModelResource::DrawSkinned(ID3D12GraphicsCommandList *cmdList,
   // 行列パレットをSRVとして転送 (VS t1)
   const uint32_t matCount = static_cast<uint32_t>(skinMatrices.size());
   const uint32_t matSize = matCount * static_cast<uint32_t>(sizeof(Matrix4x4));
+  if (!frame.HasSRVSpace(matSize)) {
+    return; // フレームリソース不足（範囲外へ書かないよう描画を諦める）
+  }
   void *matMapped = nullptr;
   D3D12_GPU_VIRTUAL_ADDRESS matAddr = frame.AllocSRV(matSize, &matMapped);
   std::memcpy(matMapped, skinMatrices.data(), matSize);
@@ -630,6 +706,9 @@ void ModelResource::DispatchSkinning(ID3D12GraphicsCommandList *cmdList,
   // 行列パレットを FrameResource から確保してコピー
   const uint32_t matCount = static_cast<uint32_t>(skinMatrices.size());
   const uint32_t matSize = matCount * static_cast<uint32_t>(sizeof(Matrix4x4));
+  if (!frame.HasSRVSpace(matSize)) {
+    return; // フレームリソース不足（範囲外へ書かないよう描画を諦める）
+  }
   void *matMapped = nullptr;
   D3D12_GPU_VIRTUAL_ADDRESS matAddr = frame.AllocSRV(matSize, &matMapped);
   std::memcpy(matMapped, skinMatrices.data(), matSize);

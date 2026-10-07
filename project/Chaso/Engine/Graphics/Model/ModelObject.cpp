@@ -41,6 +41,49 @@ void ModelObject::Update(const Matrix4x4 &view, const Matrix4x4 &proj) {
   hasVP_ = true;
 }
 
+const Matrix4x4 &ModelObject::CachedWorld() {
+  auto sameMatrix = [](const Matrix4x4 &a, const Matrix4x4 &b) {
+    for (int r = 0; r < 4; ++r)
+      for (int c = 0; c < 4; ++c)
+        if (a.m[r][c] != b.m[r][c]) return false;
+    return true;
+  };
+  auto sameVec = [](const Vector3 &a, const Vector3 &b) {
+    return a.x == b.x && a.y == b.y && a.z == b.z;
+  };
+
+  WorldCache &c = worldCache_;
+  if (hasWorldOverride_) {
+    if (c.valid && c.usedOverride && sameMatrix(c.overrideMatrix, worldOverride_)) {
+      return c.world;
+    }
+    c.overrideMatrix = worldOverride_;
+    c.world = worldOverride_;
+    c.usedOverride = true;
+  } else {
+    if (c.valid && !c.usedOverride && sameVec(c.transform.scale, transform_.scale) &&
+        sameVec(c.transform.rotation, transform_.rotation) &&
+        sameVec(c.transform.translation, transform_.translation)) {
+      return c.world;
+    }
+    c.transform = transform_;
+    c.world = MakeAffineMatrix(transform_.scale, transform_.rotation, transform_.translation);
+    c.usedOverride = false;
+  }
+  c.valid = true;
+  c.witValid = false;
+  return c.world;
+}
+
+const Matrix4x4 &ModelObject::CachedWorldInverseTranspose() {
+  const Matrix4x4 &w = CachedWorld();
+  if (!worldCache_.witValid) {
+    worldCache_.worldInvTranspose = Transpose(Inverse(w));
+    worldCache_.witValid = true;
+  }
+  return worldCache_.worldInvTranspose;
+}
+
 void ModelObject::Draw(ID3D12GraphicsCommandList *cmdList,
                        const Matrix4x4 &world, FrameResource &frame,
                        bool worldOnly) {

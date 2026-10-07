@@ -88,6 +88,9 @@ void Dx12Core::Init(HWND hwnd, const Desc &d) {
   // ビューポート/シザー設定
   ResetViewportScissorToBackbuffer(d.width, d.height);
 
+  // フレーム時間の計測（GPU タイムスタンプ）
+  InitFrameTimer_();
+
   // ====================
   // FixFps
   // ====================
@@ -129,6 +132,41 @@ void Dx12Core::Init(HWND hwnd, const Desc &d) {
   }
 }
 
+void Dx12Core::InitFrameTimer_() {
+  ID3D12Device *dev = device_.GetDevice();
+  if (!dev || !cmd_.Queue()) return;
+
+  D3D12_QUERY_HEAP_DESC qd{};
+  qd.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+  qd.Count = 2;
+  if (FAILED(dev->CreateQueryHeap(&qd, IID_PPV_ARGS(&timestampHeap_)))) {
+    timestampHeap_.Reset();
+    return;
+  }
+
+  D3D12_HEAP_PROPERTIES hp{};
+  hp.Type = D3D12_HEAP_TYPE_READBACK;
+  D3D12_RESOURCE_DESC rd{};
+  rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+  rd.Width = sizeof(uint64_t) * 2;
+  rd.Height = 1;
+  rd.DepthOrArraySize = 1;
+  rd.MipLevels = 1;
+  rd.SampleDesc.Count = 1;
+  rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+  if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+                                          D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                          IID_PPV_ARGS(&timestampReadback_))) ||
+      FAILED(cmd_.Queue()->GetTimestampFrequency(&timestampFrequency_)) ||
+      timestampFrequency_ == 0) {
+    timestampHeap_.Reset();
+    timestampReadback_.Reset();
+    return;
+  }
+  timestampReadback_->SetName(L"Dx12Core::timestampReadback_");
+  cpuFrameStart_ = std::chrono::steady_clock::now();
+}
+
 void Dx12Core::BeginFrame() {
   // ====================
   // Deferred Release
@@ -142,6 +180,11 @@ void Dx12Core::BeginFrame() {
   // フレーム開始とバックバッファ取得
   backIndex_ = swap_.CurrentBackBufferIndex();
   cmd_.BeginFrame(backIndex_);
+
+  // GPU 時間の計測開始（フレームの最初のコマンド）
+  if (timestampHeap_) {
+    cmd_.List()->EndQuery(timestampHeap_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0);
+  }
 
   // ====================
   // Resource Transition
@@ -201,6 +244,18 @@ void Dx12Core::EndFrame() {
                   D3D12_RESOURCE_STATE_RENDER_TARGET,
                   D3D12_RESOURCE_STATE_PRESENT);
 
+  // GPU 時間の計測終了（フレームの最後のコマンド）→ 読み出し用バッファへ解決
+  if (timestampHeap_) {
+    cmd_.List()->EndQuery(timestampHeap_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 1);
+    cmd_.List()->ResolveQueryData(timestampHeap_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, 2,
+                                  timestampReadback_.Get(), 0);
+    timestampPending_ = true;
+  }
+
+  // CPU 時間（前フレームの EndFrame 終了〜ここ。GPU 待ち・VSync 待ちを含まない）
+  const auto cpuEnd = std::chrono::steady_clock::now();
+  cpuFrameMs_ = std::chrono::duration<float, std::milli>(cpuEnd - cpuFrameStart_).count();
+
   // ====================
   // Present
   // ====================
@@ -214,14 +269,33 @@ void Dx12Core::EndFrame() {
     requestScreenshot_ = false;
   }
 
-  // ビデオ録画の更新
+  // ビデオ録画の更新（録画自体の負荷を切り分けられるよう時間を測る）
+  const auto captureStart = std::chrono::steady_clock::now();
   if (videoRecorder_.IsRecording()) {
     videoRecorder_.Update(swap_.BackBuffer(backIndex_));
   }
+  captureMs_ = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() -
+                                                        captureStart).count();
 
   // vsync=1, tearingなら 0 でもOK（好みで）
   swap_.Present(1, 0);
   cmd_.WaitForFrame(backIndex_);
+
+  // このフレームの GPU 処理は WaitForFrame で完了しているので、タイムスタンプを読める
+  if (timestampPending_ && timestampReadback_) {
+    D3D12_RANGE readRange{0, sizeof(uint64_t) * 2};
+    void *mapped = nullptr;
+    if (SUCCEEDED(timestampReadback_->Map(0, &readRange, &mapped)) && mapped) {
+      const uint64_t *ts = static_cast<const uint64_t *>(mapped);
+      if (ts[1] > ts[0]) {
+        gpuFrameMs_ = static_cast<float>(static_cast<double>(ts[1] - ts[0]) * 1000.0 /
+                                         static_cast<double>(timestampFrequency_));
+      }
+      D3D12_RANGE writeRange{0, 0};
+      timestampReadback_->Unmap(0, &writeRange);
+    }
+    timestampPending_ = false;
+  }
 
   // ====================
   // FixFps
@@ -230,6 +304,9 @@ void Dx12Core::EndFrame() {
   if (fixFps_) {
     fixFps_->Update();
   }
+
+  // 次フレームの CPU 時間はここから測る（Present・GPU 待ち・FPS 固定の待ちを除くため）
+  cpuFrameStart_ = std::chrono::steady_clock::now();
 }
 
 void Dx12Core::WaitForGPU() {

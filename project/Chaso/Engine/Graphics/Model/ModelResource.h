@@ -184,6 +184,40 @@ public:
   /// @brief CS スキニングの Dispatch フラグをリセットする
   void ResetSkinningDispatched() { skinningDispatched_ = false; }
 
+  // === インスタンスバッチ描画（ModelInstanceBatcher から使う） ===
+
+  /// @brief インスタンス 1 個ぶんの GPU データ（Object3D_Inst.VS の InstanceData と同じ並び）
+  struct InstanceGPU {
+    RC::Matrix4x4 WVP;                   ///< ワールド・ビュー・プロジェクション行列（影パスでは未使用）
+    RC::Matrix4x4 World;                 ///< ワールド行列
+    RC::Matrix4x4 WorldInverseTranspose; ///< 法線用（影パスでは未使用）
+    RC::Vector4 color;                   ///< インスタンスカラー（PS で Material.color と乗算）
+  };
+
+  /// @brief 用意済みのマテリアル CB とインスタンス配列で、全 DrawItem をインスタンス描画する
+  /// @param materialCB このバッチ用のマテリアル CB（b0 / PS）
+  /// @param instanceAddr InstanceGPU 配列の先頭（t1 / VS）
+  /// @param count インスタンス数
+  /// @param perItem true なら DrawItem ごとに count 個ずつ並べたデータ（nodeWorld を掛け済み）を使う
+  /// @note パイプライン（object3d_inst 系）・カメラ・ライト CB のバインドは呼び出し側で済ませておくこと
+  void DrawInstancesPrepared(ID3D12GraphicsCommandList *cmdList,
+                             D3D12_GPU_VIRTUAL_ADDRESS materialCB,
+                             D3D12_GPU_VIRTUAL_ADDRESS instanceAddr,
+                             uint32_t count, bool perItem);
+
+  /// @brief テクスチャ上書き（0 = mtl のテクスチャ）の SRV ポインタ。バッチのまとめ判定用
+  uint64_t TextureOverridePtr() const { return textureSrv_.ptr; }
+  /// @brief 法線マップの SRV ポインタ（0 = 無し）
+  uint64_t NormalMapPtr() const { return normalMapSrv_.ptr; }
+  /// @brief ラフネスマップの SRV ポインタ（0 = 無し）
+  uint64_t RoughnessMapPtr() const { return roughnessMapSrv_.ptr; }
+
+  /// @brief 描画時に実際に使うライト CB のアドレス（外部ライト優先、無ければ自前）
+  D3D12_GPU_VIRTUAL_ADDRESS EffectiveLightCBAddress() const {
+    if (externalLightCBAddress_ != 0) return externalLightCBAddress_;
+    return cbLight_.resource ? cbLight_.resource->GetGPUVirtualAddress() : 0;
+  }
+
   /// @brief CS スキニング済み頂点を使って描画する（通常の object3d パイプラインで）
   /// @param cmdList コマンドリスト
   /// @param world ワールド行列
@@ -218,6 +252,9 @@ private:
     RC::Matrix4x4 WorldInverseTranspose; ///< ワールド逆転置行列（法線用）
     RC::Vector4 color;                   ///< インスタンスカラー
   };
+
+  static_assert(sizeof(InstanceDataGPU) == sizeof(InstanceGPU),
+                "InstanceGPU と InstanceDataGPU（シェーダーの InstanceData）の並びを揃えること");
 
   /// @brief メッシュに含まれる全マテリアルのテクスチャがロードされていることを保証する
   void EnsureMaterialSrvsLoaded_();

@@ -389,6 +389,16 @@ public:
   /// @brief 上書き中のワールド行列
   const RC::Matrix4x4 &WorldOverride() const { return worldOverride_; }
 
+  // === ワールド行列のキャッシュ（インスタンス描画用） ===
+
+  /// @brief 描画に使うワールド行列（WorldOverride があればそれ、無ければ Transform から）
+  /// @details Transform / WorldOverride が前回と同じなら再計算しない。
+  ///          影パス × 灯数ぶん同じ物を描いても、行列の計算は 1 フレーム 1 回で済む。
+  const RC::Matrix4x4 &CachedWorld();
+
+  /// @brief CachedWorld の逆転置行列（法線変換用）。必要になったときに 1 回だけ計算する
+  const RC::Matrix4x4 &CachedWorldInverseTranspose();
+
   /// @brief スキンデータが有効かどうか（ボーンウェイト付きモデルか）
   bool HasSkinData() const;
 
@@ -433,6 +443,18 @@ private:
   // === ワールド行列の上書き ===
   RC::Matrix4x4 worldOverride_{};      ///< 上書き用ワールド行列
   bool hasWorldOverride_ = false;      ///< 上書きが有効か
+
+  // === ワールド行列のキャッシュ ===
+  struct WorldCache {
+    Transform transform{};             ///< 計算に使った Transform
+    RC::Matrix4x4 overrideMatrix{};    ///< 計算に使った WorldOverride
+    bool usedOverride = false;         ///< WorldOverride から作ったか
+    bool valid = false;                ///< world が有効か
+    bool witValid = false;             ///< worldInvTranspose が有効か
+    RC::Matrix4x4 world{};             ///< ワールド行列
+    RC::Matrix4x4 worldInvTranspose{}; ///< 逆転置行列
+  };
+  WorldCache worldCache_{};
 
   // === ルートモーション除去関連 ===
   bool removeRootMotion_ = true;      ///< アニメーションに焼き込まれた移動量を打ち消すか

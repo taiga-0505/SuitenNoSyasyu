@@ -192,6 +192,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClCompile Include="..\Chaso\Game\Game.cpp" />
     <ClCompile Include="..\Chaso\Game\Framework\GameModeBase.cpp" />
     <ClCompile Include="..\Application\Game\Scripts\TestRotatorScript.cpp" />
+    <ClCompile Include="..\Application\Game\Scripts\InstancingStressTestScript.cpp" />
     <ClCompile Include="..\Application\Game\Scripts\MoveCollider.cpp" />
     <ClCompile Include="..\Application\Game\Scripts\PlayerController.cpp" />
     <ClCompile Include="..\Application\Game\Scripts\RailShooterController.cpp" />

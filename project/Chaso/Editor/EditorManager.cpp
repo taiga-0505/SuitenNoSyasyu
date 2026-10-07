@@ -1303,6 +1303,17 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
       if (ImGui::CollapsingHeader("Timing & Performance", ImGuiTreeNodeFlags_DefaultOpen)) {
           ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "FPS: %.1f", fps);
           ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Frame Time: %.3f ms", frameTime);
+          if (core) {
+              // どちらがボトルネックかの切り分け用（このエンジンは毎フレーム GPU 完了を待つので、
+              // おおよそ Frame Time ≒ CPU + GPU + Capture + VSync 待ち になる）
+              ImGui::Text("CPU: %.2f ms   GPU: %.2f ms   Capture: %.2f ms",
+                          core->CpuFrameMs(), core->GpuFrameMs(), core->CaptureMs());
+          }
+          {
+              const auto st = RC::GetModelInstancingStats();
+              ImGui::Text("Instancing: %u drawn / %u batches / %u draws (flush %.2f ms)",
+                          st.instancesDrawn, st.batches, st.drawCalls, st.flushMs);
+          }
 
           ImGui::Separator();
 

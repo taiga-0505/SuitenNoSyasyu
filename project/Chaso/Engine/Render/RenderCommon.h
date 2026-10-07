@@ -7,6 +7,8 @@
 #include <string>
 #include <future>
 #include "struct.h"
+#include "Model/ModelProxyPool.h"       // ModelProxyHandle（VirtualEntity）
+#include "Model/ModelInstanceBatcher.h" // ModelInstanceBatcher::Stats
 
 // D3D12 GPUハンドルを返すために必要
 struct D3D12_GPU_DESCRIPTOR_HANDLE;
@@ -402,6 +404,58 @@ void DrawModelBatchColored(int modelHandle,
                            const std::vector<Transform> &instances,
                            const Vector4 &color,
                            int texHandle = -1);
+
+// ── インスタンス描画（自動バッチ＋視錐台カリング） ──────────────────
+//
+// DrawModel の代わりに使うと、同じメッシュ・同じ見た目（テクスチャ・ライティング設定等）の
+// モデルを自動でまとめて 1 回のインスタンス描画にする。描画パス（メイン・影・スポット影タイル）
+// ごとに、そのパスの視錐台の外にある物は描かない。
+// 色（SetModelColor）はインスタンスごとに持てるので、色違いでも同じバッチにまとまる。
+//
+// 半透明（色の α < 1）・スキニング・ブレンドモード指定中は自動で従来の DrawModel に回る。
+
+/// @brief モデルをインスタンス描画の候補として積む（DrawModel と同じ使い方）
+/// @param modelHandle モデルハンドル
+/// @param texHandle テクスチャハンドル（-1 なら mtl のテクスチャ）
+void DrawModelInstanced(int modelHandle, int texHandle = -1);
+
+/// @brief 前フレームのインスタンス描画の統計（受付数・カリング数・バッチ数など）
+ModelInstanceBatcher::Stats GetModelInstancingStats();
+
+// ── VirtualEntity（ModelProxyPool） ─────────────────────────────
+//
+// Entity を作らずに「見た目だけの物」を大量に置くための軽量ハンドル。
+// 例: 1 万本の木や岩。テンプレート（RC::LoadModel のハンドル）を 1 つ用意し、
+//     CreateModelProxy で好きなだけ置く。行列が変わった物だけ境界箱・BVH を更新するので、
+//     動かない物は毎フレームの CPU コストがほぼゼロ。
+// 描画は各パスで DrawModelProxies() を 1 回呼ぶだけ（BVH で視錐台カリング → インスタンス描画）。
+// 制約: 不透明・非スキニングのテンプレートのみ。テンプレートを UnloadModel すると描かれなくなる。
+
+/// @brief プロキシを作る
+/// @param modelHandle 見た目のテンプレート（RC::LoadModel のハンドル）
+ModelProxyHandle CreateModelProxy(int modelHandle);
+/// @brief プロキシを破棄する
+void DestroyModelProxy(ModelProxyHandle h);
+/// @brief プロキシが生きているか
+bool IsModelProxyAlive(ModelProxyHandle h);
+/// @brief プロキシの Transform（SRT）を設定する
+void SetModelProxyTransform(ModelProxyHandle h, const Transform &t);
+/// @brief プロキシのワールド行列を直接設定する
+void SetModelProxyWorld(ModelProxyHandle h, const Matrix4x4 &world);
+/// @brief プロキシの乗算カラー（テンプレートのマテリアル色にさらに掛かる）
+void SetModelProxyColor(ModelProxyHandle h, const Vector4 &color);
+/// @brief プロキシの表示／非表示
+void SetModelProxyVisible(ModelProxyHandle h, bool visible);
+/// @brief プロキシが影を落とすか
+void SetModelProxyCastShadow(ModelProxyHandle h, bool cast);
+/// @brief 生存しているプロキシ数
+uint32_t GetModelProxyCount();
+/// @brief 全プロキシを破棄する（シーン切り替え時など）
+void ClearModelProxies();
+/// @brief 現在の描画パスに全プロキシを描く（カリング・バッチ化は Execute 時に自動）
+/// @details メイン 3D・平行光源の影・スポット影タイルの各パスで 1 回ずつ呼ぶ。
+///          影パスでは SetModelProxyCastShadow(false) の物は描かれない。
+void DrawModelProxies();
 
 /// @brief モデルを解放する（ハンドルは無効化される）
 /// @param modelHandle モデルハンドル

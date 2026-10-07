@@ -10,9 +10,11 @@
 #include "StructuredBufferManager/StructuredBufferManager.h"
 #include "SwapChain/SwapChain.h"
 #include "Utility/VideoRecorder.h"
+#include <chrono>
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <memory>
+#include <wrl/client.h>
 
 /// @brief DirectX12の主要コンポーネント（デバイス、コマンド、スワップチェーン、記述子ヒープ等）を統括管理するクラス
 class Dx12Core {
@@ -154,6 +156,17 @@ public:
   /// @brief VideoRecorder のインスタンスを取得する
   VideoRecorder& GetVideoRecorder() { return videoRecorder_; }
 
+  // ── フレーム時間の内訳（CPU と GPU のどちらが重いかを切り分ける用） ──
+
+  /// @brief 前フレームの GPU 実行時間 (ms)。BeginFrame〜EndFrame のコマンドを GPU が処理した時間
+  /// @details タイムスタンプクエリで計測。取得できない環境では 0。
+  float GpuFrameMs() const { return gpuFrameMs_; }
+  /// @brief 前フレームの CPU 時間 (ms)。前フレームの EndFrame 終了から今フレームの Present 直前まで
+  /// @details Update・描画コマンドの記録を含み、GPU 待ち・VSync 待ち・録画は含まない。
+  float CpuFrameMs() const { return cpuFrameMs_; }
+  /// @brief 前フレームの録画処理（VideoRecorder::Update）にかかった時間 (ms)
+  float CaptureMs() const { return captureMs_; }
+
   /// @brief ビューポートを設定
   /// @param vp ビューポート設定
   void SetViewport(const D3D12_VIEWPORT &vp) { viewport_ = vp; }
@@ -207,4 +220,16 @@ private:
   std::string latestScreenshotPath_; ///< 最新のスクリーンショットパス
   VideoRecorder videoRecorder_;    ///< ビデオ録画管理
   float targetFps_ = 60.0f;        ///< 目標FPS
+
+  // ── フレーム時間の計測 ──
+  /// @brief タイムスタンプクエリを用意する（失敗しても動作は続ける）
+  void InitFrameTimer_();
+  Microsoft::WRL::ComPtr<ID3D12QueryHeap> timestampHeap_;  ///< [0]=フレーム先頭, [1]=フレーム末尾
+  Microsoft::WRL::ComPtr<ID3D12Resource> timestampReadback_; ///< 解決先（READBACK ヒープ、uint64 × 2）
+  uint64_t timestampFrequency_ = 0;  ///< GPU タイムスタンプの周波数 (Hz)
+  bool timestampPending_ = false;    ///< 解決済みで読み出し待ちの値があるか
+  float gpuFrameMs_ = 0.0f;          ///< 前フレームの GPU 時間
+  float cpuFrameMs_ = 0.0f;          ///< 前フレームの CPU 時間
+  float captureMs_ = 0.0f;           ///< 前フレームの録画処理時間
+  std::chrono::steady_clock::time_point cpuFrameStart_{}; ///< CPU 時間の計測開始点
 };

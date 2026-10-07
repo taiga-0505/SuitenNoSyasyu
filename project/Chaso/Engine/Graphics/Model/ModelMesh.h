@@ -1,6 +1,7 @@
 #pragma once
 #include "Math/Math.h"
 #include "Math/MathTypes.h"
+#include "Math/BoundingBox.h"
 #include "function/function.h"
 #include "struct.h"
 #include <assimp/Importer.hpp>
@@ -111,6 +112,14 @@ public:
   /// @return 描画項目の配列
   const std::vector<DrawItem> &DrawItems() const { return drawItems_; }
 
+  /// @brief モデル空間の境界箱（DrawItem の nodeWorld を反映済み）。カリング用
+  /// @details スキニングモデルはバインドポーズでの値なので、アニメーション中ははみ出しうる。
+  const RC::BoundingBox &LocalBounds() const { return localBounds_; }
+
+  /// @brief 全 DrawItem の nodeWorld が単位行列か
+  /// @details true なら全描画単位で同じインスタンスデータ（World 行列）を共有できる。
+  bool AllNodeWorldIdentity() const { return allNodeWorldIdentity_; }
+
   /// @brief 読み込み時に指定された入力パスを取得する
   /// @return 入力パス文字列
   const std::string &SourceInputPath() const {
@@ -161,6 +170,9 @@ private:
   std::vector<uint32_t> indices_;        ///< インデックスデータ
   Node rootNode_{};                      ///< 解析されたノード階層のルート
   std::vector<DrawItem> drawItems_;      ///< 最終的な描画項目のリスト
+  /// @brief モデル空間の境界箱（カリング用）。未計算のうちは「消えないよう十分大きい箱」
+  RC::BoundingBox localBounds_ = RC::BoundingBox::FromCenterHalf({0.0f, 0.0f, 0.0f}, {1.0e4f, 1.0e4f, 1.0e4f});
+  bool allNodeWorldIdentity_ = true;     ///< 全 DrawItem の nodeWorld が単位行列か
   SkinData skinData_{};                  ///< スキンデータ
 
   /// @brief Assimpを使用してファイルを読み込む（内部処理）
@@ -193,6 +205,9 @@ private:
 
   /// @brief 頂点データを GPU にアップロードする
   void UploadVB_(const std::vector<VertexData> &vertices);
+
+  /// @brief 頂点と DrawItem から localBounds_ / allNodeWorldIdentity_ を求める
+  void ComputeBounds_(const std::vector<VertexData> &vertices);
 
   /// @brief インデックスデータを GPU にアップロードする
   void UploadIB_();

@@ -128,11 +128,13 @@
     <!-- Camera -->
     <ClCompile Include="..\\Engine\\Camera\\CameraController.cpp" />
     <ClCompile Include="..\\Engine\\ECS\\ScriptRegistry.cpp" />
+    <ClCompile Include="..\Engine\ECS\ColliderBroadphase.cpp" />
     <ClCompile Include="..\Engine\Camera\DebugCamera\DebugCamera.cpp" />
     <ClCompile Include="..\Engine\Camera\MainCamera\MainCamera.cpp" />
     <!-- Common -->
     <ClCompile Include="..\Engine\Common\Log\Log.cpp" />
     <ClCompile Include="..\Engine\Common\Math\Math.cpp" />
+    <ClCompile Include="..\Engine\Common\Math\DynamicBVH.cpp" />
     <!-- Dx12 -->
     <ClCompile Include="..\Engine\Dx12\CommandContext\CommandContext.cpp" />
     <ClCompile Include="..\Engine\Dx12\DepthStencil\DepthStencil.cpp" />
@@ -182,6 +184,8 @@
     <ClCompile Include="..\Engine\Render\Light\Point\PointLightManager.cpp" />
     <ClCompile Include="..\Engine\Render\Light\Spot\SpotLightManager.cpp" />
     <ClCompile Include="..\Engine\Render\Model\ModelManager.cpp" />
+    <ClCompile Include="..\Engine\Render\Model\ModelProxyPool.cpp" />
+    <ClCompile Include="..\Engine\Render\Model\ModelInstanceBatcher.cpp" />
     <ClCompile Include="..\Engine\Render\Systems\RenderCommon.cpp" />
     <ClCompile Include="..\Engine\Render\Systems\RenderContext.cpp" />
     <ClCompile Include="..\Engine\Render\Systems\RenderLight.cpp" />
@@ -224,6 +228,8 @@
     <ClInclude Include="..\Engine\Common\Math\Math.h" />
     <ClInclude Include="..\Engine\Common\Math\MathTypes.h" />
     <ClInclude Include="..\Engine\Common\Math\MathUtils.h" />
+    <ClInclude Include="..\Engine\Common\Math\BoundingBox.h" />
+    <ClInclude Include="..\Engine\Common\Math\DynamicBVH.h" />
     <ClInclude Include="..\Engine\Common\RC.h" />
     <ClInclude Include="..\Engine\Common\struct.h" />
     <ClInclude Include="..\Engine\Common\Water\WaterSurface.h" />
@@ -278,6 +284,8 @@
     <ClInclude Include="..\Engine\Render\Light\Point\PointLightManager.h" />
     <ClInclude Include="..\Engine\Render\Light\Spot\SpotLightManager.h" />
     <ClInclude Include="..\Engine\Render\Model\ModelManager.h" />
+    <ClInclude Include="..\Engine\Render\Model\ModelProxyPool.h" />
+    <ClInclude Include="..\Engine\Render\Model\ModelInstanceBatcher.h" />
     <ClInclude Include="..\Engine\Render\RenderCommon.h" />
     <ClInclude Include="..\Engine\Render\Systems\RenderInteractiveWater.h" />
     <ClInclude Include="..\Engine\Render\RenderContext.h" />
@@ -304,6 +312,7 @@
     <ClInclude Include="..\Engine\ECS\TransformComponent.h" />
     <ClInclude Include="..\Engine\ECS\ModelRendererComponent.h" />
     <ClInclude Include="..\Engine\ECS\ColliderComponent.h" />
+    <ClInclude Include="..\Engine\ECS\ColliderBroadphase.h" />
     <ClInclude Include="..\Engine\ECS\WaterComponent.h" />
     <ClInclude Include="..\Engine\ECS\AudioSourceComponent.h" />
     <ClInclude Include="..\Engine\ECS\AudioListenerComponent.h" />

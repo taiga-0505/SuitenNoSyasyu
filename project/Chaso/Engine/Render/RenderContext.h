@@ -30,6 +30,8 @@
 #include "Light/Point/PointLightManager.h"
 #include "Light/Spot/SpotLightManager.h"
 #include "Model/ModelManager.h"
+#include "Model/ModelInstanceBatcher.h"
+#include "Model/ModelProxyPool.h"
 #include "Skydome/SkydomeManager.h"
 #include "Skybox/SkyboxManager.h"
 #include "Mesh/PrimitiveMeshManager.h"
@@ -190,6 +192,14 @@ public:
   AreaLightManager &ArLights() { return arLightMan_; }
   /// @brief テクスチャマネージャを取得
   TextureManager &Textures() { return texMan_; }
+  /// @brief モデルのインスタンス描画のまとめ役を取得
+  ModelInstanceBatcher &InstanceBatcher() { return instanceBatcher_; }
+  /// @brief VirtualEntity（ModelProxyPool）を取得
+  ModelProxyPool &ModelProxies() { return modelProxies_; }
+
+  /// @brief 今描いているパスの ViewProjection（カリング用）
+  /// @details 平行光源の影パス → ライト行列、スポット影タイル → そのタイルの行列、それ以外 → カメラ。
+  Matrix4x4 CurrentPassViewProjection() const;
 
   /// @brief ポストプロセスオブジェクトを取得
   /// @return PostProcessへのポインタ
@@ -489,6 +499,10 @@ private:
   SpotLightManager spLightMan_;                    ///< スポットライト管理
   AreaLightManager arLightMan_;                    ///< エリアライト管理
   TextureManager texMan_;                          ///< テクスチャ管理
+  ModelInstanceBatcher instanceBatcher_;           ///< モデルのインスタンス描画のまとめ役
+  ModelProxyPool modelProxies_;                    ///< VirtualEntity（見た目だけの軽量オブジェクト）
+  Matrix4x4 dirShadowViewProj_{};                  ///< 平行光源の影パスの ViewProjection（カリング用の控え）
+  Matrix4x4 spotShadowTileViewProj_{};             ///< 描画中のスポット影タイルの ViewProjection（同上）
 
   D3D12_GPU_DESCRIPTOR_HANDLE environmentMapSrv_{}; ///< 環境マップSRV
 

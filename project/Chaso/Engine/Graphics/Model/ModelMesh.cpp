@@ -135,6 +135,9 @@ bool ModelMesh::LoadAssimp_(const std::string &filePath) {
   Log::Print(std::format("[ModelMesh] DrawItems: {}, Vertices: {}, Indices: {}, Submeshes: {}, Materials: {}, HasSkin: {}, Path: {}",
       drawItems_.size(), verts.size(), indices_.size(), submeshes_.size(), materials_.size(), HasSkinData(), filePath));
 
+  // カリング用の境界箱（VB 作成＝Ready() になる前に確定させておく）
+  ComputeBounds_(verts);
+
   start = std::chrono::high_resolution_clock::now();
   // VBアップロード
   UploadVB_(verts);
@@ -364,6 +367,50 @@ void ModelMesh::EnsureSphericalUVIfMissing() {
   }
 
   vb_.resource->Unmap(0, nullptr);
+}
+
+void ModelMesh::ComputeBounds_(const std::vector<VertexData> &vertices) {
+  auto isIdentity = [](const RC::Matrix4x4 &m) {
+    for (int r = 0; r < 4; ++r) {
+      for (int c = 0; c < 4; ++c) {
+        const float expect = (r == c) ? 1.0f : 0.0f;
+        if (std::abs(m.m[r][c] - expect) > 1e-5f) return false;
+      }
+    }
+    return true;
+  };
+
+  RC::BoundingBox total = RC::BoundingBox::Empty();
+  allNodeWorldIdentity_ = true;
+
+  auto rangeBounds = [&](uint32_t start, uint32_t count) {
+    RC::BoundingBox b = RC::BoundingBox::Empty();
+    const uint32_t end = (std::min)(static_cast<uint32_t>(vertices.size()), start + count);
+    for (uint32_t i = start; i < end; ++i) {
+      const auto &p = vertices[i].position;
+      b.Encapsulate({p.x, p.y, p.z});
+    }
+    return b;
+  };
+
+  if (drawItems_.empty()) {
+    total = rangeBounds(0, static_cast<uint32_t>(vertices.size()));
+  } else {
+    for (const auto &it : drawItems_) {
+      if (!isIdentity(it.nodeWorld)) allNodeWorldIdentity_ = false;
+      const RC::BoundingBox b = rangeBounds(it.vertexStart, it.vertexCount);
+      if (!b.IsValid()) continue;
+      // ノード行列で回した 8 頂点を包む（保守的）
+      const RC::BoundingBox w = b.Transformed(it.nodeWorld);
+      total = RC::BoundingBox::Union(total, w);
+    }
+  }
+
+  // 頂点が無い・壊れている場合は「十分大きい箱」にしてカリングで消えないようにする
+  if (!total.IsValid()) {
+    total = RC::BoundingBox::FromCenterHalf({0.0f, 0.0f, 0.0f}, {1.0e4f, 1.0e4f, 1.0e4f});
+  }
+  localBounds_ = total;
 }
 
 void ModelMesh::UploadVB_(const std::vector<VertexData> &vertices) {

@@ -28,6 +28,12 @@ public:
   /// @brief Trigger mode. If true, no physics response, only event notification.
   bool isTrigger = false;
 
+  /// @brief 衝突ブロードフェーズ（ColliderBroadphase）内の登録番号。ランタイム専用で保存しない
+  /// @details -1 なら未登録。ColliderBroadphase が書き換える（ゲーム側から触らないこと）。
+  ///          コンポーネントが複製された場合でも、ブロードフェーズ側でエンティティとの対応を
+  ///          照合してから使うので、番号が重複しても壊れない。
+  int32_t broadphaseEntry = -1;
+
   const char* TypeName() const override { return "ColliderComponent"; }
 
   nlohmann::json Serialize() const override {

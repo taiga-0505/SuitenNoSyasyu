@@ -240,6 +240,18 @@
     <ClCompile Include="..\Engine\Common\Log\Log.cpp">
       <Filter>Common\Log</Filter>
     </ClCompile>
+    <ClCompile Include="..\Engine\Common\Math\DynamicBVH.cpp">
+      <Filter>Common\Math</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Engine\Render\Model\ModelProxyPool.cpp">
+      <Filter>Render\Model</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Engine\Render\Model\ModelInstanceBatcher.cpp">
+      <Filter>Render\Model</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Engine\ECS\ColliderBroadphase.cpp">
+      <Filter>ECS</Filter>
+    </ClCompile>
     <ClCompile Include="..\Engine\Common\Math\Math.cpp">
       <Filter>Common\Math</Filter>
     </ClCompile>
@@ -499,6 +511,21 @@
     </ClInclude>
     <ClInclude Include="..\Engine\Common\Log\Log.h">
       <Filter>Common\Log</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Engine\Common\Math\BoundingBox.h">
+      <Filter>Common\Math</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Engine\Common\Math\DynamicBVH.h">
+      <Filter>Common\Math</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Engine\Render\Model\ModelProxyPool.h">
+      <Filter>Render\Model</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Engine\Render\Model\ModelInstanceBatcher.h">
+      <Filter>Render\Model</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Engine\ECS\ColliderBroadphase.h">
+      <Filter>ECS</Filter>
     </ClInclude>
     <ClInclude Include="..\Engine\Common\Math\Math.h">
       <Filter>Common\Math</Filter>

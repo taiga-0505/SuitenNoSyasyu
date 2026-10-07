@@ -142,6 +142,10 @@ void RenderContext::Term() {
   // 残っている非同期タスクを全て待機
   WaitAllLoads();
 
+  // インスタンス描画の要求と VirtualEntity を破棄（ModelObject を指しているので ModelManager より先に）
+  instanceBatcher_.Clear();
+  modelProxies_.Clear();
+
   shadowMap_.Term();
   spotShadowAtlas_.Term();
   spotShadowFallbackCB_.Reset();
@@ -284,6 +288,7 @@ void RenderContext::PreDraw3D(SceneContext &ctx, ID3D12GraphicsCommandList *cl) 
   // BindShadow() は Execute3DCommands で通常パスの実行時のみバインドする
 
   modelMan_.ResetAllBatchCursors();
+  instanceBatcher_.BeginFrame(); // 前フレームのインスタンス描画統計を確定
 
   // FrameResource: フレームインデックスを進めてリセット
   AdvanceFrame();
@@ -688,6 +693,8 @@ void RenderContext::BindEnvironmentMap() {
 }
 
 void RenderContext::UpdateShadowParams(const ShadowParams& params) {
+  // カリング用に控えておく（マップ済みのアップロードヒープは読み出しが遅いので、引数側から取る）
+  dirShadowViewProj_ = params.lightViewProjection;
   if (shadowCBMapped_) {
     *shadowCBMapped_ = params;
 
@@ -923,6 +930,7 @@ void RenderContext::BeginSpotShadowTile(int tileIndex) {
       static_cast<size_t>(kShadowParamsSliceStride) * static_cast<size_t>(tileIndex));
   *slice = ShadowParams{};
   slice->lightViewProjection = spotShadowCBMapped_->entries[tileIndex].lightViewProjection;
+  spotShadowTileViewProj_ = slice->lightViewProjection; // カリング用の控え
   slice->shadowMapEnabled = 0u;
   shadowCBBoundAddr_ = spotShadowPassParamsAddr_ +
                        static_cast<D3D12_GPU_VIRTUAL_ADDRESS>(kShadowParamsSliceStride) *
@@ -1078,10 +1086,21 @@ void RenderContext::PushPrimitive3DCommand(bool depth, uint32_t start,
   commandQueue3D_.push_back(std::move(cmd));
 }
 
+Matrix4x4 RenderContext::CurrentPassViewProjection() const {
+  if (isShadowPass_) {
+    return (currentSpotShadowTile_ >= 0) ? spotShadowTileViewProj_ : dirShadowViewProj_;
+  }
+  return Multiply(view_, proj_);
+}
+
 void RenderContext::Execute3DCommands() {
   if (!cl_) {
     return;
   }
+
+  // DrawModelInstanced / DrawModelProxies で溜めた要求を、このパスの視錐台でカリングして
+  // バッチ化し、コマンドキューへ積む（下のソートより前に行う）
+  instanceBatcher_.Flush(*this, modelProxies_);
 
   // BindShadow(); // BindPipeline に移行したため不要
 
@@ -1209,7 +1228,7 @@ void RenderContext::Execute3DCommands() {
 }
 
 void RenderContext::ExecuteOverlay3DCommands() {
-  if (!cl_ || commandQueue3D_.empty()) {
+  if (!cl_ || (commandQueue3D_.empty() && !instanceBatcher_.HasPending())) {
     return;
   }
 

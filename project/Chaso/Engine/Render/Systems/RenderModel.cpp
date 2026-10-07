@@ -247,6 +247,89 @@ void DrawModel(int modelHandle, int texHandle) {
 void DrawModel(int modelHandle) { DrawModel(modelHandle, -1); }
 
 // ============================================================================
+// インスタンス描画（自動バッチ＋視錐台カリング）
+// ============================================================================
+
+void DrawModelInstanced(int modelHandle, int texHandle) {
+  auto &ctx = GetRenderContext();
+  if (!ctx.IsInitialized()) {
+    return;
+  }
+  auto *m = ctx.Models().Get(modelHandle);
+  if (!m || !m->IsReady()) {
+    return;
+  }
+
+  // まとめられない物は従来経路へ:
+  //   半透明（奥から順に描く必要がある）・ブレンドモード指定中（PSO が変わる）・
+  //   スキニング（ボーン行列がオブジェクトごとに違う）
+  const Material *mat = m->Mat();
+  const bool translucent = (mat && mat->color.w < 1.0f);
+  if (translucent || ctx.CurrentBlendMode() != kBlendModeNone || m->HasSkinData()) {
+    DrawModel(modelHandle, texHandle);
+    return;
+  }
+
+  ctx.InstanceBatcher().Submit(m, modelHandle, texHandle);
+}
+
+ModelInstanceBatcher::Stats GetModelInstancingStats() {
+  return GetRenderContext().InstanceBatcher().LastFrameStats();
+}
+
+// ============================================================================
+// VirtualEntity（ModelProxyPool）
+// ============================================================================
+
+ModelProxyHandle CreateModelProxy(int modelHandle) {
+  return GetRenderContext().ModelProxies().Create(modelHandle);
+}
+
+void DestroyModelProxy(ModelProxyHandle h) {
+  GetRenderContext().ModelProxies().Destroy(h);
+}
+
+bool IsModelProxyAlive(ModelProxyHandle h) {
+  return GetRenderContext().ModelProxies().IsAlive(h);
+}
+
+void SetModelProxyTransform(ModelProxyHandle h, const Transform &t) {
+  GetRenderContext().ModelProxies().SetTransform(h, t);
+}
+
+void SetModelProxyWorld(ModelProxyHandle h, const Matrix4x4 &world) {
+  GetRenderContext().ModelProxies().SetWorld(h, world);
+}
+
+void SetModelProxyColor(ModelProxyHandle h, const Vector4 &color) {
+  GetRenderContext().ModelProxies().SetColor(h, color);
+}
+
+void SetModelProxyVisible(ModelProxyHandle h, bool visible) {
+  GetRenderContext().ModelProxies().SetVisible(h, visible);
+}
+
+void SetModelProxyCastShadow(ModelProxyHandle h, bool cast) {
+  GetRenderContext().ModelProxies().SetCastShadow(h, cast);
+}
+
+uint32_t GetModelProxyCount() {
+  return GetRenderContext().ModelProxies().Count();
+}
+
+void ClearModelProxies() {
+  GetRenderContext().ModelProxies().Clear();
+}
+
+void DrawModelProxies() {
+  auto &ctx = GetRenderContext();
+  if (!ctx.IsInitialized() || ctx.ModelProxies().Count() == 0) {
+    return;
+  }
+  ctx.InstanceBatcher().RequestProxies();
+}
+
+// ============================================================================
 // Batch
 // ============================================================================
 

@@ -8,6 +8,7 @@
 #include "AppConfig.h"
 #include "ECS/Entity.h"
 #include "ECS/NativeScriptComponent.h"
+#include "ECS/ColliderBroadphase.h"
 #include "Common/Math/MathTypes.h"
 #include "Common/SceneContext.h"
 #include "../Framework/GameModeBase.h"
@@ -98,6 +99,7 @@ public:
 
   /// @brief 破棄マークされたエンティティを実際に除去する
   void CleanupDestroyedEntities() {
+      broadphase_.MarkDirty();
       entities_.erase(
           std::remove_if(entities_.begin(), entities_.end(),
               [this](const std::shared_ptr<Entity>& e) {
@@ -154,6 +156,7 @@ public:
       }
       entities_.clear();
       pendingEntities_.clear();
+      broadphase_.MarkDirty();
 
       for (auto& ej : snapshot) {
           auto entity = std::make_shared<Entity>();
@@ -247,10 +250,19 @@ protected:
   bool showColliderGizmos_ = false; ///< コライダーを全描画するデバッグフラグ
   bool showAllGizmos_ = false; ///< 全デバッグ描画（F4）フラグ
 
+  /// @brief コライダーの粗い判定（DynamicBVH）。ResolveCollisions / TestBlockingOverlap が使う
+  /// @details UpdateEntities と ResolveCollisions の先頭で全エンティティと同期する
+  ///          （前フレームの ResolveCollisions 以降に、押し出し・アニメーションの読み戻し・
+  ///          エディタ操作などで位置が変わっている可能性があるため）。
+  ///          同期は 1 体あたりコンポーネント検索 4 回＋箱の比較で、動いていない物は BVH を触らない。
+  ColliderBroadphase broadphase_;
+
   /// @brief Update all active entities
   /// @details インデックスベースループを使用し、ループ中の entities_ push_back による
   ///          イテレータ無効化を回避する（新規エンティティは pendingEntities_ 経由で追加される）
   void UpdateEntities(float deltaTime) {
+    // スクリプトの MoveAndSlide（TestBlockingOverlap）が引く BVH を最新にしておく
+    broadphase_.Sync(entities_);
     const size_t count = entities_.size(); // ループ前にサイズを固定
     for (size_t i = 0; i < count; ++i) {
       auto& e = entities_[i];
@@ -275,6 +287,7 @@ protected:
     }
     if (doomed.empty()) return;
 
+    broadphase_.MarkDirty();
     entities_.erase(
       std::remove_if(entities_.begin(), entities_.end(),
         [](const std::shared_ptr<Entity>& e) {
