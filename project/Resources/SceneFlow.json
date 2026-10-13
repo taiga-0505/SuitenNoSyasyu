@@ -51,6 +51,13 @@
       "note": "ポーズ「セレクトへ」（画面を深海色へ沈めてから遷移し、セレクトは深海から浮上）"
     },
     {
+      "from": "Stage*",
+      "trigger": "demo_end",
+      "to": "Title",
+      "transition": "dive",
+      "note": "遷移の見せ用デモ（TransitionDemo::kEnabled）：開始 3 秒後に沈んでタイトルへ"
+    },
+    {
       "from": "Result",
       "trigger": "next",
       "to": "$nextStage",

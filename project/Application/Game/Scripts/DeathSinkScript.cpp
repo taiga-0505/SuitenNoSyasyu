@@ -4,6 +4,7 @@
 #include "Common/Log/Log.h"
 #include "Scene.h"
 #include "Game/Framework/WaterCameraFx.h"
+#include "Game/Framework/TransitionDemo.h"
 
 #if RC_ENABLE_IMGUI
 #include "imgui/imgui.h"
@@ -91,6 +92,8 @@ public:
 protected:
   void OnCreate() override {
     phase_ = Phase::Idle;
+    demo_ = false;
+    demoTimer_ = 0.0f;
     if (Entity *self = GetEntity()) self->ClearTag(kOwnerTag); // 前回のプレイで保存された分を消す
     if (enabled && bubbles) bubbles_.Spawn(GetScene(), "DeathBubbles");
   }
@@ -102,14 +105,26 @@ protected:
     if (!self || !tr) return;
 
     if (phase_ == Phase::Idle) {
-      if (self->GetTagInt("game_over", 0) != 1) return;
       SceneContext *ctx = GetSceneContext();
+      // 遷移の見せ用デモ：開始演出が終わって一定時間たったら、力尽きていなくても沈む
+      bool demoStart = false;
+      if (TransitionDemo::kEnabled && ctx && ctx->isPlaying() &&
+          self->GetTagInt(kOwnerTag, 0) != 1) { // クリアの演出（ClearAscendScript）が先なら譲る
+        if (self->GetTagInt("intro_playing", 0) == 1) {
+          demoTimer_ = 0.0f;
+        } else {
+          demoTimer_ += dt;
+          demoStart = demoTimer_ >= TransitionDemo::kDelayAfterStart;
+        }
+      }
+      if (!demoStart && self->GetTagInt("game_over", 0) != 1) return;
       if (!ctx || !ctx->isPlaying()) return;
-      self->SetTag(kOwnerTag, 1); // DataDrivenScene の自動遷移を止める
+      demo_ = demoStart && self->GetTagInt("game_over", 0) != 1;
+      self->SetTag(kOwnerTag, 1); // DataDrivenScene の自動遷移を止める（RailMovement / 視点操作も止まる）
       waterY_ = WaterCameraFx::FindWaterY(GetScene());
       phase_ = Phase::Wait;
       t_ = 0.0f;
-      Log::Print("[DeathSinkScript] begin");
+      Log::Print(demo_ ? "[DeathSinkScript] begin (transition demo)" : "[DeathSinkScript] begin");
     }
 
     t_ += dt;
@@ -157,7 +172,16 @@ protected:
       if (!requested_) {
         // 行き先と演出は遷移表のきっかけ "gameover"（GameMode の決着と同じ行）で引く
         if (resultTarget_.empty()) {
-          LookupTransition(kTriggerGameOver, resultTarget_, resultTransition_);
+          if (demo_) {
+            // デモは Result ではなく遷移表の "demo_end"（Title へ dive）。行が無ければ Title へ dive
+            if (!LookupTransition(TransitionDemo::kTrigger, resultTarget_, resultTransition_) ||
+                resultTarget_.empty()) {
+              resultTarget_ = "Title";
+              resultTransition_ = SceneTransitions::kDive;
+            }
+          } else {
+            LookupTransition(kTriggerGameOver, resultTarget_, resultTransition_);
+          }
         }
         requested_ = !resultTarget_.empty() && RequestSceneChange(resultTarget_, resultTransition_);
         if (!requested_ && t_ > 1.5f) {
@@ -205,7 +229,9 @@ private:
   RC::Vector3 startPos_{};
   RC::Vector3 startRot_{};
   bool requested_ = false;
-  std::string resultTarget_;     ///< 遷移表で引いた行き先（Done に入ってから 1 回だけ引く）
+  bool demo_ = false;        ///< 遷移の見せ用デモで沈んでいる（TransitionDemo）
+  float demoTimer_ = 0.0f;   ///< 開始演出が終わってからの経過（デモ用）
+  std::string resultTarget_;    ///< 遷移表で引いた行き先（Done に入ってから 1 回だけ引く）
   std::string resultTransition_; ///< 遷移表で引いた演出
   static constexpr const char *kTriggerGameOver = "gameover"; ///< 遷移表のきっかけ名
   WaterCameraFx::Bubbles bubbles_;
