@@ -207,6 +207,7 @@ class Stage:
         # [0] DeepRiseIntroScript
         lst[0]["riseDepth"] = rise_depth
         lst[0]["startText"] = start_text
+        lst[0]["showStartText"] = False  # ステージ名の帯演出は出さない
         # [1] RailShooterController（水中の見た目）
         if underwater_look:
             lst[1]["underwater"].update(underwater_look)

@@ -193,6 +193,60 @@
       ]
     },
     {
+      "id": "a3d8e1c4-7b25-4f69-9e0d-5c2b8f1a6d37",
+      "name": "SelectMouseRipple",
+      "tag": "",
+      "active": true,
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "type": "NativeScriptComponent",
+          "data": {
+            "scriptTypeNames": [
+              "TitleMouseRippleScript"
+            ],
+            "scriptDataList": [
+              {
+                "enabled": true,
+                "radius": 0.018,
+                "strength": 0.07,
+                "pushDown": true,
+                "speedRef": 10.0,
+                "minStrengthRatio": 0.3,
+                "spacing": 0.5,
+                "maxPerFrame": 10,
+                "clickEnabled": true,
+                "clickRadius": 0.035,
+                "clickStrength": 0.3,
+                "playingOnly": false
+              }
+            ],
+            "scriptTypeName": "TitleMouseRippleScript"
+          }
+        }
+      ]
+    },
+    {
       "id": "65e2a38f-ccb6-45a2-b504-f46f2efa80e7",
       "name": "StageSelectUI",
       "tag": "",

@@ -10155,7 +10155,7 @@
                 "riseDuration": 3.200000047683716,
                 "riseEase": 2.200000047683716,
                 "risePitchStart": -0.3499999940395355,
-                "showStartText": true,
+                "showStartText": false,
                 "startBandAlpha": 0.7200000286102295,
                 "startFontPath": "Resources/fonts/Kiwi_Maru/KiwiMaru-Medium.ttf",
                 "startFontSize": 72.0,
