@@ -223,8 +223,6 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClCompile Include="..\Application\Game\Scripts\TreasureChestScript.cpp" />
     <ClCompile Include="..\Application\Game\Scripts\WaveManagerScript.cpp" />
     <ClCompile Include="..\Application\Game\Scripts\WaveSpawnerScript.cpp" />
-    <ClCompile Include="..\Application\Game\Scripts\FarmerController.cpp" />
-    <ClCompile Include="..\Application\Game\Scripts\HoeItem.cpp" />
     <ClCompile Include="..\Chaso\Game\Scene\Fade\Fade.cpp" />
     <ClCompile Include="..\Chaso\Game\Scene\Scene.cpp" />
     <ClCompile Include="..\Chaso\Game\Scene\SceneManager.cpp" />
@@ -258,7 +256,6 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClInclude Include="..\Chaso\Game\Scene\SceneManager.h" />
     <ClInclude Include="..\Chaso\Game\Scene\DataDrivenScene\DataDrivenScene.h" />
     <ClInclude Include="..\Application\Game\Scripts\EnemyBaseScript.h" />
-    <ClInclude Include="..\Application\Game\Scripts\CharacterTags.h" />
     <ClInclude Include="..\Application\Game\Framework\PartPose.h" />
   </ItemGroup>
   <ItemGroup>

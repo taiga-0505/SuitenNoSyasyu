@@ -24,7 +24,7 @@ bool RailShooterGameMode::EvaluateOutcome(Scene& scene, SceneContext& ctx,
     const std::string sceneName = scene.Name();
 
     // スペースキーで次へ進むのはセレクト〜リザルトの導線シーンだけに限定する。
-    // CG4 など導線外のシーンでは Space をゲーム操作（ジャンプ）に使うため、
+    // 導線外のシーン（Sample など）では Space をゲーム操作に使う可能性があるため、
     // 名前が一致しないシーンをまとめて Title へ送らないこと。
     // Title は TitleScreenScript がメニュー（スタート／ゲーム終了）で、
     // Result は ResultScreenScript が「もう一度／タイトルへ」で
