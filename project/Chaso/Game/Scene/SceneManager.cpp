@@ -34,10 +34,32 @@ RC::Vector4 &DiveScreenColorStorage() {
   return color;
 }
 
+/// @brief Ascend 遷移（空へ抜ける）で抜ける画面色。飛び出す側はこの白まで飛ばしてから要求する
+constexpr RC::Vector4 kAscendScreenColor = {0.97f, 0.98f, 1.0f, 1.0f};
+
 /// @brief 遷移演出ごとのフェード時間（秒）
 float FadeTimeFor(SceneTransition transition) {
-  return (transition == SceneTransition::Dive) ? Scene::SceneManager::kDiveFadeTime
-                                               : Scene::SceneManager::kFadeTime;
+  switch (transition) {
+  case SceneTransition::Dive: return Scene::SceneManager::kDiveFadeTime;
+  case SceneTransition::Ascend: return Scene::SceneManager::kAscendFadeTime;
+  default: return Scene::SceneManager::kFadeTime;
+  }
+}
+
+/// @brief 切り替え後に GrayscaleIntro（白黒から色が戻る・その間ゲーム停止）を挟まない遷移か
+/// @details Dive / Ascend は次のシーン側の演出（深海からの浮上・空からの降下）が
+///          そのままオープニングになるので、色を抜かずにすぐシーンを動かす。
+bool SkipsGrayscaleIntro(SceneTransition transition) {
+  return transition == SceneTransition::Dive || transition == SceneTransition::Ascend;
+}
+
+const char *TransitionLogName(SceneTransition transition) {
+  switch (transition) {
+  case SceneTransition::Dive: return "dive";
+  case SceneTransition::Ascend: return "ascend";
+  case SceneTransition::Dissolve: return "dissolve";
+  default: return "none";
+  }
 }
 
 /// @brief Dissolve の「抜けた部分の色」と縁の色を遷移演出に合わせる
@@ -48,6 +70,11 @@ void ApplyDissolveLook(SceneTransition transition) {
     // 飛び込み側は画面をこの色まで暗くしてから要求してくるので、
     // 同じ色へ抜けると継ぎ目が見えない。縁も光らせない（暗い水の中で橙は浮く）。
     const RC::Vector4 c = DiveScreenColorStorage();
+    RC::SetDissolveBaseColor(c.x, c.y, c.z, 1.0f);
+    RC::SetDissolveEdgeColor(c.x, c.y, c.z);
+  } else if (transition == SceneTransition::Ascend) {
+    // 飛び出す側は画面を白く飛ばしてから要求してくるので、同じ白へ抜ける
+    const RC::Vector4 &c = kAscendScreenColor;
     RC::SetDissolveBaseColor(c.x, c.y, c.z, 1.0f);
     RC::SetDissolveEdgeColor(c.x, c.y, c.z);
   } else {
@@ -136,8 +163,8 @@ void NormalState::Update(Scene::SceneManager &sm, SceneContext &ctx) {
   }
 
   if (!sm.requested_.empty()) {
-    Log::Print("[SceneState] NormalState -> FadeOutState (requested: " + sm.requested_ +
-               (sm.transition_ == SceneTransition::Dive ? ", dive)" : ")"));
+    Log::Print("[SceneState] NormalState -> FadeOutState (requested: " + sm.requested_ + ", " +
+               TransitionLogName(sm.transition_) + ")");
 
     // Dissolveエフェクトを開始
     RC::AddPostEffect(PostEffectType::Dissolve);
@@ -206,8 +233,8 @@ void LoadingState::Update(Scene::SceneManager &sm, SceneContext &ctx) {
     ApplyDissolveLook(sm.transition_);
 
     // シークエンシャルなオープニング演出準備：初期を白黒状態にセットして静止させる。
-    // Dive 遷移は Game 側の「深海から浮上」がそのままオープニングになるので挟まない。
-    if (ctx.postProcess && sm.transition_ != SceneTransition::Dive) {
+    // Dive / Ascend 遷移は次のシーン側の演出がそのままオープニングになるので挟まない。
+    if (ctx.postProcess && !SkipsGrayscaleIntro(sm.transition_)) {
       ctx.postProcess->AddEffect(PostEffectType::Grayscale);
       ctx.postProcess->SetGrayscaleLerpFactor(1.0f);
     }
@@ -252,10 +279,11 @@ void FadeInState::Update(Scene::SceneManager &sm, SceneContext &ctx) {
 
   if (counter_ >= fadeTime) {
     RC::RemovePostEffect(PostEffectType::Dissolve);
-    if (sm.transition_ == SceneTransition::Dive) {
-      // 飛び込み遷移はここで終わり。深海に置かれたカメラを Game 側のスクリプト
-      // （DeepRiseIntroScript）が浮上させるので、すぐにシーンを動かし始める。
-      Log::Print("[SceneState] FadeInState -> NormalState (dive)");
+    if (SkipsGrayscaleIntro(sm.transition_)) {
+      // 飛び込み・空へ抜ける遷移はここで終わり。深海／空に置かれたカメラを次のシーンの
+      // スクリプト（DeepRiseIntroScript / ResultScreenScript など）が動かすので、すぐにシーンを動かし始める。
+      Log::Print(std::string("[SceneState] FadeInState -> NormalState (") +
+                 TransitionLogName(sm.transition_) + ")");
       sm.transition_ = SceneTransition::None;
       sm.ChangeState(std::make_unique<NormalState>());
       return;

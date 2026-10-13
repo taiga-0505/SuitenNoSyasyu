@@ -317,7 +317,7 @@ void PostProcess::Initialize(Dx12Core *dxCore,
 
     if (mappedColorGrade_) {
       memcpy(mappedColorGrade_->colorFilter, gradeColorFilter_, sizeof(float) * 4);
-      mappedColorGrade_->exposure = gradeExposure_;
+      mappedColorGrade_->exposure = gradeExposure_ + gradeExposureOffset_;
       mappedColorGrade_->contrast = gradeContrast_;
       mappedColorGrade_->saturation = gradeSaturation_;
       mappedColorGrade_->temperature = gradeTemperature_;
@@ -777,7 +777,12 @@ void PostProcess::SetSsaoPower(float power) {
 
 void PostProcess::SetGradeExposure(float ev) {
   gradeExposure_ = ev;
-  if (mappedColorGrade_) mappedColorGrade_->exposure = ev;
+  if (mappedColorGrade_) mappedColorGrade_->exposure = gradeExposure_ + gradeExposureOffset_;
+}
+
+void PostProcess::SetGradeExposureOffset(float ev) {
+  gradeExposureOffset_ = ev;
+  if (mappedColorGrade_) mappedColorGrade_->exposure = gradeExposure_ + gradeExposureOffset_;
 }
 
 void PostProcess::SetGradeContrast(float contrast) {
@@ -1282,6 +1287,9 @@ void PostProcess::RemoveEffect(PostEffectType type) {
 }
 
 void PostProcess::ClearEffects() {
+  // 一時的な露出オフセット（出入水のフラッシュ）は持ち主のスクリプトと一緒に消えるべきもの。
+  // シーン切り替えで持ち主が破棄されたあとに残ると、次のシーンの露出がずれたままになる。
+  SetGradeExposureOffset(0.0f);
   if (!activeEffects_.empty()) {
     activeEffects_.clear();
     Log::Print(std::format("[PostProcess] ClearEffects (Active: {})", ActiveEffectsToString(activeEffects_)));

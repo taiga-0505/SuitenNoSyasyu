@@ -3,5 +3,5 @@
     "showParticleEditor": false,
     "showPerfWindow": true,
     "showRenderQueue": true,
-    "showSceneFlow": false
+    "showSceneFlow": true
 }

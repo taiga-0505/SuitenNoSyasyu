@@ -11,6 +11,7 @@
 #include "Engine/Render/RenderContext.h"
 #include "Framework/App.h"
 #include "Game/Framework/GameModeBase.h"
+#include "Game/Framework/StageProgress.h"
 #include "Scene.h"
 
 #if RC_ENABLE_IMGUI
@@ -67,6 +68,10 @@
 ///     "startTextDuration": 表示時間（秒。既定 1.4）
 ///     "startBandAlpha"  : 文字の後ろに敷く画面幅の暗い帯の濃さ（既定 0.72。0 で帯なし）
 ///     "startFontPath" / "startFontSize" : フォントとサイズ（px）
+///     "showStageCard"   : 浮上の序盤、暗い深海にステージ名を浮かび上がらせるか（既定 true）。
+///                         ステージ 1〜5（StageProgress に載っているシーン）のときだけ出る。
+///     "cardDelay" / "cardFadeIn" / "cardHold" / "cardFadeOut" : ステージ名の出方（秒）。
+///                         既定の合計 2.15 秒は、水面を抜ける（浮上全体の 7 割 ≒ 2.2 秒）前に消えきる長さ。
 class DeepRiseIntroScript : public ScriptableEntity {
 public:
   bool alwaysPlay = false;
@@ -81,6 +86,11 @@ public:
   float startBandAlpha = 0.72f; ///< 文字の後ろに敷く画面幅の暗い帯の濃さ（0 で無し）
   std::string startFontPath = "Resources/fonts/Kiwi_Maru/KiwiMaru-Medium.ttf";
   float startFontSize = 72.0f;
+  bool showStageCard = true;
+  float cardDelay = 0.2f;   ///< 浮上が始まってから出始めるまで
+  float cardFadeIn = 0.6f;  ///< 下から浮かび上がりながら現れる時間
+  float cardHold = 0.9f;    ///< 出きったまま見せる時間
+  float cardFadeOut = 0.45f;///< 上へ抜けながら消える時間
 
   nlohmann::json Serialize() override {
     return {
@@ -96,6 +106,11 @@ public:
         {"startBandAlpha", startBandAlpha},
         {"startFontPath", startFontPath},
         {"startFontSize", startFontSize},
+        {"showStageCard", showStageCard},
+        {"cardDelay", cardDelay},
+        {"cardFadeIn", cardFadeIn},
+        {"cardHold", cardHold},
+        {"cardFadeOut", cardFadeOut},
     };
   }
 
@@ -121,6 +136,11 @@ public:
     readF("startBandAlpha", startBandAlpha);
     readS("startFontPath", startFontPath);
     readF("startFontSize", startFontSize);
+    readB("showStageCard", showStageCard);
+    readF("cardDelay", cardDelay);
+    readF("cardFadeIn", cardFadeIn);
+    readF("cardHold", cardHold);
+    readF("cardFadeOut", cardFadeOut);
   }
 
 #if RC_ENABLE_IMGUI
@@ -136,6 +156,13 @@ public:
     ImGui::Checkbox("Show Start Text", &showStartText);
     ImGui::DragFloat("Start Text Duration", &startTextDuration, 0.05f, 0.2f, 5.0f);
     ImGui::SliderFloat("Start Band Alpha", &startBandAlpha, 0.0f, 1.0f);
+    ImGui::SeparatorText("Stage Card");
+    ImGui::Text("stage index: %d  t=%.2f", cardStage_, cardTime_);
+    ImGui::Checkbox("Show Stage Card", &showStageCard);
+    ImGui::DragFloat("Card Delay (s)", &cardDelay, 0.01f, 0.0f, 3.0f);
+    ImGui::DragFloat("Card Fade In (s)", &cardFadeIn, 0.01f, 0.05f, 3.0f);
+    ImGui::DragFloat("Card Hold (s)", &cardHold, 0.01f, 0.0f, 5.0f);
+    ImGui::DragFloat("Card Fade Out (s)", &cardFadeOut, 0.01f, 0.05f, 3.0f);
     if (ImGui::Button("Replay")) {
       // 元の位置に戻してからやり直す（レールが動いたあとなら現在地からの浮上になる）
       if (playing_) RestoreCamera();
@@ -152,6 +179,11 @@ protected:
         Log::Print("[DeepRiseIntroScript] failed to load font: " + startFontPath);
       }
     }
+
+    // ステージ名カード：ステージ 1〜5 のときだけフォントを用意する（テスト用 Game では出さない）
+    cardStage_ = -1;
+    if (Scene *scene = GetScene()) cardStage_ = StageProgress::IndexOf(scene->Name());
+    if (showStageCard && cardStage_ >= 0) LoadCardFonts();
 
     bool play = alwaysPlay;
     if (SceneContext *ctx = GetSceneContext()) {
@@ -170,10 +202,16 @@ protected:
   }
 
   void OnUpdate(float deltaTime) override {
+    // ポーズ中はカードを隠す（オーバーレイはポーズメニューより手前に出てしまうため）
+    paused_ = (deltaTime <= 0.0f);
     if (deltaTime <= 0.0f) return;
 
     if (playing_) {
       UpdateRise(deltaTime);
+    }
+    if (cardActive_) {
+      cardTime_ += deltaTime;
+      if (cardTime_ >= CardTotal()) cardActive_ = false;
     }
     if (startTextTimer_ > 0.0f) {
       startTextTimer_ -= deltaTime;
@@ -189,6 +227,84 @@ protected:
     if (startFont_ >= 0) {
       RC::UnloadFont(startFont_);
       startFont_ = -1;
+    }
+    if (cardTitleFont_ >= 0) {
+      RC::UnloadFont(cardTitleFont_);
+      cardTitleFont_ = -1;
+    }
+    if (cardLabelFont_ >= 0) {
+      RC::UnloadFont(cardLabelFont_);
+      cardLabelFont_ = -1;
+    }
+    cardActive_ = false;
+  }
+
+  /// @brief ステージ名カード（ポストプロセスの後に描く）
+  /// @details 深海では Underwater のフォグが距離で画面を塗り潰すので、OnRender（ポストプロセス前）
+  ///          に描くと文字までフォグ色に沈む。オーバーレイなら輪郭線も乗らない。
+  ///          レイアウトは RailShooterController の HUD と同じ 1280x720 基準（レターボックス分をずらす）。
+  void OnOverlayRender() override {
+    if (!cardActive_ || paused_ || cardStage_ < 0) return;
+    if (cardTitleFont_ < 0 || cardLabelFont_ < 0) return;
+
+    // ---- 時間 → 不透明度・縦の動き ----
+    const float t = cardTime_ - cardDelay;
+    if (t <= 0.0f) return;
+    const float inEnd = cardFadeIn;
+    const float outStart = cardFadeIn + cardHold;
+    const float fadeIn = Smooth01(t / (std::max)(cardFadeIn, 1e-3f));
+    const float fadeOut = Smooth01((t - outStart) / (std::max)(cardFadeOut, 1e-3f));
+    const float alpha = fadeIn * (1.0f - fadeOut);
+    if (alpha <= 0.001f) return;
+    // 下から浮かび上がって止まり（泡のように）、消えるときはそのまま上へ抜ける
+    const float rise = (1.0f - EaseOutPow(t / (std::max)(inEnd, 1e-3f), 3.0f)) * 18.0f - fadeOut * 10.0f;
+
+    // ---- 1280x720 基準 → 実解像度 ----
+    float screenW = kDesignW, screenH = kDesignH;
+    auto &rc = RC::GetRenderContext();
+    if (rc.Ctx() && rc.Ctx()->app) {
+      screenW = static_cast<float>(rc.Ctx()->app->width);
+      screenH = static_cast<float>(rc.Ctx()->app->height);
+    }
+    float s = (std::min)(screenW / kDesignW, screenH / kDesignH);
+    if (s <= 0.0f) s = 1.0f;
+    const float ox = (screenW - kDesignW * s) * 0.5f;
+    const float oy = (screenH - kDesignH * s) * 0.5f;
+    const float fs = (cardFontScale_ > 0.0f) ? (s / cardFontScale_) : 1.0f;
+    auto P = [&](float x, float y) { return RC::Vector2{ox + x * s, oy + y * s}; };
+
+    const StageProgress::StageInfo &info = StageProgress::Info(cardStage_);
+    const std::string label = "STAGE " + std::to_string(cardStage_ + 1) + "  /  " + info.subtitle;
+    const std::string title = info.title;
+
+    const float labelH = RC::GetFontLineHeight(cardLabelFont_, fs) / s;
+    const float titleH = RC::GetFontLineHeight(cardTitleFont_, fs) / s;
+    const float gap = 6.0f;
+    const float cx = kDesignW * 0.5f;
+    const float top = kDesignH * 0.44f - (labelH + gap + titleH) * 0.5f + rise;
+
+    // 添え書き（STAGE n / 欧文名）：淡い水色
+    RC::DrawString(cardLabelFont_, label, P(cx, top), {0.62f, 0.86f, 1.0f, 0.85f * alpha}, fs,
+                   TextAlign::Center);
+
+    // ステージ名：周りに水色のにじみを 4 方向に敷いてから本体を重ねる（暗い水中で光って見える）
+    const float titleY = top + labelH + gap;
+    const float glow = 2.5f;
+    const RC::Vector4 glowColor = {0.35f, 0.75f, 1.0f, 0.22f * alpha};
+    RC::DrawString(cardTitleFont_, title, P(cx - glow, titleY), glowColor, fs, TextAlign::Center);
+    RC::DrawString(cardTitleFont_, title, P(cx + glow, titleY), glowColor, fs, TextAlign::Center);
+    RC::DrawString(cardTitleFont_, title, P(cx, titleY - glow), glowColor, fs, TextAlign::Center);
+    RC::DrawString(cardTitleFont_, title, P(cx, titleY + glow), glowColor, fs, TextAlign::Center);
+    RC::DrawString(cardTitleFont_, title, P(cx, titleY), {0.96f, 0.99f, 1.0f, alpha}, fs,
+                   TextAlign::Center);
+
+    // 下線：中央から左右へ伸びる細い光の線
+    const float lineY = titleY + titleH + 8.0f;
+    const float halfW = 190.0f * EaseOutPow(t / (std::max)(inEnd + 0.25f, 1e-3f), 3.0f);
+    if (halfW > 0.5f) {
+      const RC::Vector2 a = P(cx - halfW, lineY);
+      const RC::Vector2 b = P(cx + halfW, lineY + 1.5f);
+      RC::DrawBox(a, b, {0.55f, 0.85f, 1.0f, 0.7f * alpha});
     }
   }
 
@@ -247,6 +363,32 @@ private:
   ///          深さで止める（最長寿命 2.4s × 2.4m/s ≒ 6m ＋ 余裕）。
   static constexpr float kBubbleStopDepth = 8.0f;
 
+  // ---- ステージ名カード（1280x720 基準）----
+  static constexpr float kDesignW = 1280.0f;
+  static constexpr float kDesignH = 720.0f;
+  static constexpr float kCardTitlePx = 64.0f; ///< ステージ名の文字サイズ
+  static constexpr float kCardLabelPx = 22.0f; ///< 「STAGE n / 欧文名」の文字サイズ
+
+  float CardTotal() const { return cardDelay + cardFadeIn + cardHold + cardFadeOut; }
+
+  /// @brief カード用のフォントを実解像度に合わせた大きさでロードする（拡大でぼやけないように）
+  void LoadCardFonts() {
+    float w = kDesignW, h = kDesignH;
+    auto &rc = RC::GetRenderContext();
+    if (rc.Ctx() && rc.Ctx()->app && rc.Ctx()->app->width > 0 && rc.Ctx()->app->height > 0) {
+      w = static_cast<float>(rc.Ctx()->app->width);
+      h = static_cast<float>(rc.Ctx()->app->height);
+    }
+    cardFontScale_ = (std::min)(w / kDesignW, h / kDesignH);
+    if (cardFontScale_ <= 0.0f) cardFontScale_ = 1.0f;
+    // ステージ名は日本語（漢字）を含むので、アトラスは広めに取る
+    cardTitleFont_ = RC::LoadFont(startFontPath, std::round(kCardTitlePx * cardFontScale_), 2048);
+    cardLabelFont_ = RC::LoadFont(startFontPath, std::round(kCardLabelPx * cardFontScale_), 1024);
+    if (cardTitleFont_ < 0 || cardLabelFont_ < 0) {
+      Log::Print("[DeepRiseIntroScript] failed to load stage card font: " + startFontPath);
+    }
+  }
+
   static float Smooth01(float t) {
     t = std::clamp(t, 0.0f, 1.0f);
     return t * t * (3.0f - 2.0f * t);
@@ -287,6 +429,10 @@ private:
         break;
       }
     }
+
+    // ステージ名カード（フォントが用意できていて、ステージ 1〜5 のときだけ）
+    cardTime_ = 0.0f;
+    cardActive_ = showStageCard && cardStage_ >= 0 && cardTitleFont_ >= 0 && cardLabelFont_ >= 0;
 
     bubbleEmitting_ = false;
     if (bubbles && (waterY_ - startPos_.y) >= kBubbleStopDepth) {
@@ -434,6 +580,15 @@ private:
   int startFont_ = -1;
   float startTextTimer_ = 0.0f;
   bool outlineExcluded_ = false;
+
+  // ステージ名カード
+  int cardStage_ = -1;        ///< ステージ番号（0 始まり。ステージでなければ -1）
+  bool cardActive_ = false;
+  float cardTime_ = 0.0f;     ///< 浮上開始からの経過（ポーズ・遷移の幕の間は進まない）
+  bool paused_ = false;
+  int cardTitleFont_ = -1;
+  int cardLabelFont_ = -1;
+  float cardFontScale_ = 1.0f;
 };
 
 REGISTER_SCRIPT(DeepRiseIntroScript)

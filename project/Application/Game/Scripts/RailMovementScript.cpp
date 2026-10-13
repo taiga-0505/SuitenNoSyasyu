@@ -532,6 +532,8 @@ protected:
         // タグは同じエンティティに立つ。演出が終わると外れるので、そこからレールが動く。
         if (Entity* self = GetEntity()) {
             if (self->GetTagInt("intro_playing", 0) == 1) return;
+            // 決着後の演出（ClearAscendScript / DeathSinkScript）がカメラを動かしている間は進まない
+            if (self->GetTagInt("result_transition_owner", 0) == 1) return;
         }
 
         // ゲームオーバー判定

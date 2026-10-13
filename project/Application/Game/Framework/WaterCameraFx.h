@@ -12,6 +12,7 @@
 #include "RenderCommon.h"
 #include "Scene.h"
 #include "Game/Framework/UnderwaterLook.h"
+#include "Game/Framework/ExposureFlash.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cmath>
@@ -87,15 +88,20 @@ inline constexpr float kDropletDuration = 2.2f;
 inline constexpr float kDropletDistortion = 0.06f;
 inline constexpr float kDropletScale = 1.5f;
 
-/// @brief ラジアルブラーとレンズ水滴の減衰を管理する
+/// @brief ラジアルブラー・レンズ水滴・露出フラッシュの減衰を管理する
 struct LensFx {
   float radialTimer = 0.0f;
   float radialMax = kRadialBlurMaxWidth;
   float dropletTimer = 0.0f;
+  ExposureFlash flash;
 
   /// @param dropletSpeed 負で上へ昇る（着水）、正で下へ垂れる（出水）
-  void Trigger(PostProcess *pp, float radialScale, float dropletSpeed) {
+  /// @param flashEv      露出フラッシュのピーク（EV。負で暗く、正で白く。0 で無し）
+  /// @param flashDuration 露出フラッシュの長さ（秒）
+  void Trigger(PostProcess *pp, float radialScale, float dropletSpeed,
+               float flashEv = 0.0f, float flashDuration = 0.0f) {
     if (!pp) return;
+    flash.Trigger(pp, flashEv, flashDuration);
     radialMax = kRadialBlurMaxWidth * radialScale;
     radialTimer = kRadialBlurDuration * radialScale;
     pp->AddEffect(PostEffectType::RadialBlur);
@@ -112,6 +118,7 @@ struct LensFx {
 
   void Update(PostProcess *pp, float dt) {
     if (!pp) return;
+    flash.Update(pp, dt);
     if (radialTimer > 0.0f) {
       radialTimer -= dt;
       if (radialTimer <= 0.0f) {
@@ -134,9 +141,10 @@ struct LensFx {
     }
   }
 
-  bool Active() const { return radialTimer > 0.0f || dropletTimer > 0.0f; }
+  bool Active() const { return radialTimer > 0.0f || dropletTimer > 0.0f || flash.Active(); }
 
   void Clear(PostProcess *pp) {
+    flash.Clear(pp);
     if (pp) {
       pp->RemoveEffect(PostEffectType::RadialBlur);
       pp->RemoveEffect(PostEffectType::ScreenDroplets);
@@ -426,7 +434,8 @@ private:
       UnderwaterLook::AddStack(pp);
       UnderwaterLook::SetLerp(pp, 0.0f);
       UnderwaterLook::ApplyFogByDepth(pp, *look_, 0.0f);
-      lens_.Trigger(pp, 1.0f, -1.3f); // 着水：泡が上へ昇る
+      // 着水：泡が上へ昇る＋一瞬暗く沈む
+      lens_.Trigger(pp, 1.0f, -1.3f, ExposureFlashDefaults::kDiveEv, ExposureFlashDefaults::kDiveDuration);
       effectsOn_ = true;
     }
     if (bubbles_ && p_->bubbles) bubbles_->SetEmission(Bubbles::kEmitPerFrame);
@@ -605,7 +614,8 @@ public:
     if (effectsOn_ && !surfaced_ && depth <= 0.0f) {
       surfaced_ = true;
       surfacedTime_ = 0.0f;
-      lens_.Trigger(pp, 0.7f, 1.3f); // 出水：水滴が下へ垂れる
+      // 出水：水滴が下へ垂れる＋一瞬白く飛ぶ
+      lens_.Trigger(pp, 0.7f, 1.3f, ExposureFlashDefaults::kEmergeEv, ExposureFlashDefaults::kEmergeDuration);
     }
     if (effectsOn_) {
       if (!surfaced_) {
@@ -650,6 +660,234 @@ private:
   float surfacedTime_ = 0.0f;
   bool emitting_ = false;
   LensFx lens_;
+};
+
+// ------------------------------------------------------------------
+// 空からの降下（Ascend 遷移で入ってきたとき：白 → 空 → 真上視点へ降りる）
+// ------------------------------------------------------------------
+
+/// @brief 降下の調整値（JSON キーは "descend*"）
+struct DescendParams {
+  bool enabled = true;
+  float height = 24.0f;      ///< 最終位置からどれだけ上から降りてくるか（m）
+  float pitchStart = 0.08f;  ///< 降下開始時の向き（rad。0 で水平線、正で見下ろし）
+  float duration = 2.2f;     ///< 最終位置まで降りる時間（秒）
+  float flashEv = 2.5f;      ///< 白く飛んだ状態の露出（EV）。これが duration の前半で 0 へ戻る
+  float flashDuration = 1.1f;///< 露出が戻りきるまで（秒）
+
+  void WriteJson(nlohmann::json &j) const {
+    j["descendEnabled"] = enabled;
+    j["descendHeight"] = height;
+    j["descendPitchStart"] = pitchStart;
+    j["descendDuration"] = duration;
+    j["descendFlashEv"] = flashEv;
+    j["descendFlashDuration"] = flashDuration;
+  }
+  void ReadJson(const nlohmann::json &j) {
+    auto f = [&](const char *k, float &o) { if (j.contains(k) && j[k].is_number()) o = j[k].get<float>(); };
+    if (j.contains("descendEnabled") && j["descendEnabled"].is_boolean()) enabled = j["descendEnabled"].get<bool>();
+    f("descendHeight", height);
+    f("descendPitchStart", pitchStart);
+    f("descendDuration", duration);
+    f("descendFlashEv", flashEv);
+    f("descendFlashDuration", flashDuration);
+  }
+};
+
+/// @brief カメラを最終位置の上空へ置き、水平線を見た状態から最終位置・向きへ降ろす
+/// @details Begin の時点でカメラが置かれている位置・向きが「最終位置」になる（RiseSequence と同じ）。
+///          画面は白く飛んだ露出（flashEv）から始まり、降りながら元の明るさへ戻る。
+///          ステージクリアの「空へ抜ける」（ClearAscendScript → Ascend 遷移）の受け側。
+class DescendSequence {
+public:
+  bool Begin(std::shared_ptr<Entity> cam, const DescendParams &p) {
+    if (!cam) return false;
+    auto *tr = cam->GetComponent<TransformComponent>();
+    if (!tr) return false;
+    *this = DescendSequence{};
+    p_ = &p;
+    camera_ = cam;
+    goalPos_ = tr->position;
+    goalRot_ = tr->rotation;
+    startPos_ = {goalPos_.x, goalPos_.y + p.height, goalPos_.z};
+    startRot_ = {p.pitchStart, goalRot_.y, goalRot_.z};
+    tr->position = startPos_;
+    tr->rotation = startRot_;
+    flash_.TriggerFromPeak(RC::GetRenderContext().GetPostProcess(), p.flashEv, p.flashDuration);
+    moving_ = true;
+    Log::Print("[WaterCameraFx] descend begin");
+    return true;
+  }
+
+  void Update(float dt) {
+    if (!p_) return;
+    PostProcess *pp = RC::GetRenderContext().GetPostProcess();
+    flash_.Update(pp, dt);
+    if (!moving_) return;
+    auto cam = camera_.lock();
+    auto *tr = cam ? cam->GetComponent<TransformComponent>() : nullptr;
+    if (!tr) { End(); return; }
+    t_ += dt;
+    const float u = t_ / (std::max)(p_->duration, 1e-3f);
+    // 位置は最初に速く、最後にふわりと止まる。向きは少し遅れて真下（最終の向き）へ傾く
+    tr->position = RC::Lerp(startPos_, goalPos_, EaseOutCubic(u));
+    tr->rotation = RC::Lerp(startRot_, goalRot_, Smooth01((u - 0.15f) / 0.85f));
+    if (u >= 1.0f) {
+      tr->position = goalPos_;
+      tr->rotation = goalRot_;
+      moving_ = false;
+      Log::Print("[WaterCameraFx] descend finished");
+    }
+  }
+
+  /// @brief 途中で止める。カメラは最終位置へ置き、露出は戻す
+  void End() {
+    if (auto cam = camera_.lock()) {
+      if (auto *tr = cam->GetComponent<TransformComponent>()) {
+        tr->position = goalPos_;
+        tr->rotation = goalRot_;
+      }
+    }
+    flash_.Clear(RC::GetRenderContext().GetPostProcess());
+    *this = DescendSequence{};
+  }
+
+  /// @brief カメラがまだ動いているか（入力・UI を止める判定に使う）
+  bool IsMoving() const { return moving_; }
+  /// @brief 露出の後始末まで含めてまだ動いているか
+  bool IsActive() const { return moving_ || flash_.Active(); }
+
+private:
+  const DescendParams *p_ = nullptr;
+  std::weak_ptr<Entity> camera_;
+  float t_ = 0.0f;
+  bool moving_ = false;
+  RC::Vector3 startPos_{}, goalPos_{};
+  RC::Vector3 startRot_{}, goalRot_{};
+  ExposureFlash flash_;
+};
+
+// ------------------------------------------------------------------
+// 空へ抜ける（ステージクリア：その場から空へ跳ね上がり、白く飛ぶ）
+// ------------------------------------------------------------------
+
+/// @brief 跳ね上がりの調整値（JSON キーは ClearAscendScript 側で持つ）
+struct AscendParams {
+  float anticipation = 0.25f; ///< 沈み込む「ため」（秒）
+  float dip = 0.6f;           ///< ための沈み込み（m）
+  float launch = 1.3f;        ///< 跳ね上がる時間（秒）
+  float height = 30.0f;       ///< 跳ね上がる高さ（m。水中から始まったときは水面までの深さを足す）
+  float lookUpPitch = -0.8f;  ///< 跳ね上がりながら向く角度（rad。負で見上げ）
+  float fovBoost = 1.25f;     ///< 跳ね上がり中の画角の広がり（倍率）
+  float whiteStart = 0.45f;   ///< launch のこの割合から白へ飛ばし始める（0〜1）
+  float whiteEv = 3.0f;       ///< 白く飛ばすときの露出の上限（EV）
+};
+
+/// @brief その場から空へ跳ね上がり、露出と白い幕で画面を白く飛ばす
+/// @details ため → 跳ね上がり（加速しながら上へ、見上げながら、画角が広がる）。
+///          跳ね上がりの後半で露出を上げ、白い幕（WhiteAlpha）を重ねていき、
+///          幕が 1 に届いたら IsDone()。呼び出し側はそこで Ascend 遷移を要求する
+///          （SceneManager は同じ白へ抜けるので継ぎ目が見えない）。
+///          白い幕はポストプロセスの後に描く必要があるので、呼び出し側の OnOverlayRender で描く。
+class AscendSequence {
+public:
+  enum class Phase { None, Anticipate, Launch, Done };
+
+  bool Begin(std::shared_ptr<Entity> cam, float waterY, const AscendParams &p) {
+    if (!cam) return false;
+    auto *tr = cam->GetComponent<TransformComponent>();
+    auto *cc = cam->GetComponent<CameraComponent>();
+    if (!tr || !cc) return false;
+    *this = AscendSequence{};
+    p_ = &p;
+    camera_ = cam;
+    basePos_ = tr->position;
+    baseRot_ = tr->rotation;
+    baseFov_ = cc->fovY;
+    // 水中で終わったステージ（沈み洞など）でも、水面を抜けて空まで上がるように深さを足す
+    const float below = (std::max)(0.0f, waterY - basePos_.y);
+    rise_ = p.height + below;
+    phase_ = (p.anticipation > 0.0f) ? Phase::Anticipate : Phase::Launch;
+    Log::Print("[WaterCameraFx] ascend begin");
+    return true;
+  }
+
+  /// @return カメラが消えていたら false
+  bool Update(float dt) {
+    if (phase_ == Phase::None || !p_) return true;
+    auto cam = camera_.lock();
+    if (!cam) return false;
+    auto *tr = cam->GetComponent<TransformComponent>();
+    auto *cc = cam->GetComponent<CameraComponent>();
+    if (!tr || !cc) return false;
+    const AscendParams &p = *p_;
+    PostProcess *pp = RC::GetRenderContext().GetPostProcess();
+
+    t_ += dt;
+    switch (phase_) {
+    case Phase::Anticipate: {
+      const float u = t_ / (std::max)(p.anticipation, 1e-3f);
+      tr->position.y = basePos_.y - p.dip * EaseOutCubic(u);
+      if (u >= 1.0f) { phase_ = Phase::Launch; t_ = 0.0f; }
+      break;
+    }
+    case Phase::Launch: {
+      const float u = (std::min)(t_ / (std::max)(p.launch, 1e-3f), 1.0f);
+      const float startY = basePos_.y - ((p.anticipation > 0.0f) ? p.dip : 0.0f);
+      // 最初は速く飛び出し（EaseOutQuad）、そのまま空へ抜けていく
+      tr->position.y = startY + (rise_ + p.dip) * EaseOutQuad(u);
+      tr->rotation.x = baseRot_.x + (p.lookUpPitch - baseRot_.x) * Smooth01(u / 0.8f);
+      const float fovK = std::sin(3.14159265f * (std::min)(u * 1.2f, 1.0f)); // 途中で広がって戻る
+      cc->fovY = baseFov_ * (1.0f + (p.fovBoost - 1.0f) * fovK);
+      // 後半で白へ：露出を上げ、白い幕を重ねる
+      const float w = Smooth01((u - p.whiteStart) / (std::max)(1.0f - p.whiteStart, 1e-3f));
+      white_ = w;
+      flash_.Hold(pp, p.whiteEv * w);
+      if (u >= 1.0f) { phase_ = Phase::Done; t_ = 0.0f; white_ = 1.0f; }
+      break;
+    }
+    case Phase::Done:
+      tr->position.y += 6.0f * dt; // 遷移が始まるまで止まって見えないように
+      break;
+    case Phase::None:
+      break;
+    }
+    return true;
+  }
+
+  /// @brief 途中で止める（露出を戻し、自分で積んだ ColorGrade を外す）
+  /// @param restoreCamera カメラの位置・向き・画角を開始時へ戻すか
+  void End(bool restoreCamera) {
+    flash_.Clear(RC::GetRenderContext().GetPostProcess());
+    if (restoreCamera) {
+      if (auto cam = camera_.lock()) {
+        if (auto *tr = cam->GetComponent<TransformComponent>()) {
+          tr->position = basePos_;
+          tr->rotation = baseRot_;
+        }
+        if (auto *cc = cam->GetComponent<CameraComponent>()) cc->fovY = baseFov_;
+      }
+    }
+    *this = AscendSequence{};
+  }
+
+  bool IsActive() const { return phase_ != Phase::None; }
+  bool IsDone() const { return phase_ == Phase::Done; }
+  float DoneTime() const { return phase_ == Phase::Done ? t_ : 0.0f; }
+  /// @brief 白い幕の不透明度（0〜1）。呼び出し側が OnOverlayRender で画面全体に敷く
+  float WhiteAlpha() const { return white_; }
+
+private:
+  const AscendParams *p_ = nullptr;
+  std::weak_ptr<Entity> camera_;
+  Phase phase_ = Phase::None;
+  float t_ = 0.0f;
+  RC::Vector3 basePos_{};
+  RC::Vector3 baseRot_{};
+  float baseFov_ = 0.45f;
+  float rise_ = 0.0f;
+  float white_ = 0.0f;
+  ExposureFlash flash_;
 };
 
 } // namespace WaterCameraFx

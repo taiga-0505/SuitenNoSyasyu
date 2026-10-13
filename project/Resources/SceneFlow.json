@@ -12,8 +12,8 @@
       "from": "Select",
       "trigger": "back",
       "to": "Title",
-      "transition": "dissolve",
-      "note": "ステージセレクトで ESC"
+      "transition": "dive",
+      "note": "ステージセレクトで ESC（飛び込んで戻り、Title は深海から浮上）"
     },
     {
       "from": "Select",
@@ -26,8 +26,8 @@
       "from": "Stage*",
       "trigger": "cleared",
       "to": "Result",
-      "transition": "dissolve",
-      "note": "ステージクリア（GameMode の決着）"
+      "transition": "ascend",
+      "note": "ステージクリア（ClearAscendScript が空へ跳ね上がって白く飛んでから遷移）"
     },
     {
       "from": "Stage*",
@@ -40,43 +40,15 @@
       "from": "Stage*",
       "trigger": "pause_retry",
       "to": "$current",
-      "transition": "dissolve",
-      "note": "ポーズ「はじめから」"
+      "transition": "dive",
+      "note": "ポーズ「はじめから」（画面を深海色へ沈めてから遷移し、深海から浮上してやり直す）"
     },
     {
       "from": "Stage*",
       "trigger": "pause_exit",
       "to": "Select",
-      "transition": "dissolve",
-      "note": "ポーズ「セレクトへ」"
-    },
-    {
-      "from": "Game",
-      "trigger": "cleared",
-      "to": "Result",
-      "transition": "dissolve",
-      "note": "テスト用 Game のクリア"
-    },
-    {
-      "from": "Game",
-      "trigger": "gameover",
-      "to": "Result",
       "transition": "dive",
-      "note": "テスト用 Game で力尽きた"
-    },
-    {
-      "from": "Game",
-      "trigger": "pause_retry",
-      "to": "$current",
-      "transition": "dissolve",
-      "note": "ポーズ「はじめから」"
-    },
-    {
-      "from": "Game",
-      "trigger": "pause_exit",
-      "to": "Title",
-      "transition": "dissolve",
-      "note": "ポーズ「タイトルへ」"
+      "note": "ポーズ「セレクトへ」（画面を深海色へ沈めてから遷移し、セレクトは深海から浮上）"
     },
     {
       "from": "Result",
@@ -104,7 +76,7 @@
       "trigger": "title",
       "to": "Title",
       "transition": "dive",
-      "note": "リザルト「タイトルへ」（テスト用 Game から来たとき）"
+      "note": "リザルト「タイトルへ」（ステージ以外から来たとき。エディタで直接開いた場合など）"
     }
   ]
 }

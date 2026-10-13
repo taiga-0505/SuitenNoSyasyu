@@ -621,6 +621,20 @@ private:
     if (ctx && !ctx->isPlaying()) return; // 編集モードでは遷移しない
 
     if (back) {
+      // 遷移表の演出が "dive" なら、出航と同じく UI を消して水へ飛び込んでから戻る
+      // （Title 側は Dive 遷移で入ってくると深海から浮上して始まる）
+      std::string backTarget;
+      std::string backTransition;
+      if (dive.enabled && LookupTransition(kTriggerBack, backTarget, backTransition) &&
+          !backTarget.empty() && backTransition == SceneTransitions::kDive) {
+        decided_ = true;
+        leaving_ = true;
+        leaveTarget_ = backTarget;
+        leaveTime_ = 0.0f;
+        leaveRequested_ = false;
+        Log::Print("[StageSelectScript] back -> dive -> " + backTarget);
+        return;
+      }
       if (RequestTransition(kTriggerBack)) {
         decided_ = true;
         Log::Print("[StageSelectScript] back");

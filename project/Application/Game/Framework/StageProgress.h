@@ -61,10 +61,10 @@ public:
     return -1;
   }
 
-  /// @brief プレイ対象のシーンか（ステージ 1〜5、または従来のテスト用 Game シーン）
+  /// @brief プレイ対象のシーンか（ステージ 1〜5）
   /// @details DataDrivenScene のクリア・死亡判定や GameSession::BeginRun をかける対象。
   static bool IsPlayScene(const std::string &sceneName) {
-    return sceneName == "Game" || IndexOf(sceneName) >= 0;
+    return IndexOf(sceneName) >= 0;
   }
 
   /// @brief 唯一のインスタンスを取得する

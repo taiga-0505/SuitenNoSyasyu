@@ -6,6 +6,7 @@
 #include "Engine/Render/RenderContext.h"
 #include "Framework/App.h"
 #include "Game/Framework/GameSettings.h"
+#include "Game/Framework/UnderwaterLook.h"
 #include "Scene.h"
 #include "SceneFlow.h"
 
@@ -44,7 +45,9 @@
 ///
 ///   遷移は遷移表（Resources/SceneFlow.json）で決まる:
 ///     きっかけ "pause_retry" : 「はじめから」（遷移先を $current にするといまのシーンをやり直す）
-///     きっかけ "pause_exit"  : 4 番目の項目（ステージは Select、テスト用 Game は Title など、シーンごとに行を分ける）
+///     きっかけ "pause_exit"  : 4 番目の項目（ステージは Select。シーンごとに行を分けられる）
+///     演出が "dive" のときは、ポーズを掛けたままメニューを消し、画面を深海色へ沈めてから遷移する
+///     （遷移先は深海から浮上して始まる。SceneManager の Dive 遷移は同じ深海色へ抜ける）
 ///     "panelColor" / "accentColor" / "dimAlpha"
 class PauseMenuScript : public ScriptableEntity {
 public:
@@ -164,6 +167,10 @@ protected:
     Input *in = ctx->input;
     const float dt = (std::max)(ctx->deltaTime, 0.0f);
 
+    if (sinking_) {
+      UpdateSink(dt);
+      return;
+    }
     if (decided_) return; // シーン遷移を要求済み（フェード中）。二重に受け付けない
 
     if (!open_) {
@@ -181,6 +188,10 @@ protected:
 
   /// @brief ポストプロセスの後に描く（輪郭・水中・ビネットが UI に乗らないように）
   void OnOverlayRender() override {
+    if (sinking_) {
+      DrawSink();
+      return;
+    }
     if (!open_) return;
 
     float screenW = 1280.0f, screenH = 720.0f;
@@ -568,6 +579,22 @@ private:
   void RequestChange(const char *trigger) {
     // ポーズは掛けたまま抜ける（フェード中に敵が動かないように）。
     // gamePaused は OnExit → OnDestroy で必ず下ろされる。
+
+    // 演出が "dive" なら、メニューを消して画面を深海色へ沈めてから遷移する（UpdateSink）
+    std::string target;
+    std::string transition;
+    if (LookupTransition(trigger, target, transition) && !target.empty() &&
+        transition == SceneTransitions::kDive) {
+      decided_ = true;
+      open_ = false;
+      sinking_ = true;
+      sinkTime_ = 0.0f;
+      sinkRequested_ = false;
+      sinkTarget_ = target;
+      Log::Print(std::string("[PauseMenuScript] ") + trigger + " -> sink -> " + target);
+      return;
+    }
+
     if (RequestTransition(trigger)) {
       decided_ = true;
       // メニューはポストプロセスの後に描いているのでディゾルブに巻き込まれない。
@@ -576,6 +603,71 @@ private:
       Log::Print(std::string("[PauseMenuScript] ") + trigger);
     } else {
       Log::Print(std::string("[PauseMenuScript] scene change refused: ") + trigger);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // 「はじめから」「セレクトへ」：画面を深海色へ沈めてから Dive 遷移
+  // ------------------------------------------------------------------
+
+  static constexpr float kSinkTime = 0.7f;          ///< 深海色に沈みきるまで（秒。実時間）
+  static constexpr float kSinkRetrySeconds = 1.5f;  ///< 遷移が通らないときに素の遷移へ倒すまで
+  static constexpr int kSinkBubbles = 18;            ///< 沈むあいだに昇る泡の数
+
+  /// @brief 沈みきったら Dive 遷移を要求する（ポーズ中なので ctx.deltaTime の実時間で進める）
+  void UpdateSink(float dt) {
+    sinkTime_ += dt;
+    if (sinkTime_ < kSinkTime || sinkRequested_) return;
+    // SceneManager の Dive 遷移は同じ深海色へ抜けるので、継ぎ目なく切り替わる。
+    // 遷移先は深海から浮上して始まる（ステージ: DeepRiseIntroScript ／ セレクト: StageSelectScript）
+    sinkRequested_ = RequestSceneChange(sinkTarget_, SceneTransitions::kDive);
+    if (!sinkRequested_ && sinkTime_ > kSinkTime + kSinkRetrySeconds) {
+      Log::Print("[PauseMenuScript] dive transition refused, falling back: " + sinkTarget_);
+      sinkRequested_ = RequestSceneChange(sinkTarget_);
+      if (!sinkRequested_) {
+        // 諦めてメニューへ戻す（画面が沈んだまま操作できなくなるのを避ける）
+        sinking_ = false;
+        decided_ = false;
+        open_ = true;
+        anim_ = 1.0f;
+      }
+    }
+  }
+
+  /// @brief 深海色の幕と、下から昇って消えていく泡
+  void DrawSink() const {
+    float screenW = 1280.0f, screenH = 720.0f;
+    auto &rc = RC::GetRenderContext();
+    if (rc.Ctx() && rc.Ctx()->app) {
+      screenW = static_cast<float>(rc.Ctx()->app->width);
+      screenH = static_cast<float>(rc.Ctx()->app->height);
+    }
+    const float u = std::clamp(sinkTime_ / kSinkTime, 0.0f, 1.0f);
+    const float a = u * u * (3.0f - 2.0f * u);
+
+    // 先に水の青を薄く掛けてから深海色へ（いきなり黒くならず「水に沈む」色の流れにする）
+    const RC::Vector4 &abyss = UnderwaterLook::kAbyssScreenColor;
+    const RC::Vector4 &shallow = UnderwaterLook::kDefaultShallowFog;
+    const float blueA = 0.55f * std::sin(3.14159265f * (std::min)(u * 1.4f, 1.0f));
+    RC::DrawBox({0.0f, 0.0f}, {screenW, screenH}, {shallow.x, shallow.y, shallow.z, blueA * (1.0f - a)});
+    RC::DrawBox({0.0f, 0.0f}, {screenW, screenH}, {abyss.x, abyss.y, abyss.z, a});
+
+    // 泡：位置と速さは番号から決める（毎回同じ並び）。幕が濃くなるにつれて薄れる
+    const float s = (std::min)(screenW / kDesignW, screenH / kDesignH);
+    const float bubbleA = 0.7f * (1.0f - a * a);
+    if (bubbleA <= 0.01f) return;
+    for (int i = 0; i < kSinkBubbles; ++i) {
+      const float h1 = std::fmod(std::sin(i * 12.9898f) * 43758.5453f, 1.0f);
+      const float h2 = std::fmod(std::sin(i * 78.233f) * 12345.678f, 1.0f);
+      const float fx = std::fabs(h1);
+      const float fs = std::fabs(h2);
+      const float speed = 0.9f + fs * 0.9f;                 // 画面の高さ / 秒
+      const float r = (3.0f + fs * 7.0f) * s;
+      const float y = screenH * (1.05f + fx * 0.25f) - screenH * speed * sinkTime_;
+      const float x = screenW * (0.08f + fx * 0.84f) + std::sin(sinkTime_ * 6.0f + i) * 6.0f * s;
+      if (y < -r) continue;
+      RC::DrawCircle({x, y}, r, {0.85f, 0.95f, 1.0f, bubbleA * 0.35f});
+      RC::DrawCircle({x, y}, r, {0.9f, 0.97f, 1.0f, bubbleA}, kWire);
     }
   }
 
@@ -768,6 +860,11 @@ private:
 
   bool open_ = false;
   bool decided_ = false;
+  // 深海色へ沈めてから Dive 遷移（UpdateSink / DrawSink）
+  bool sinking_ = false;
+  bool sinkRequested_ = false;
+  float sinkTime_ = 0.0f;
+  std::string sinkTarget_;
   bool settingsDirty_ = false;
   bool draggingSlider_ = false;
   Page page_ = Page::Main;

@@ -28,6 +28,7 @@
 #include "Game/Framework/StageProgress.h"
 #include "Game/Framework/UnderwaterLook.h"
 #include "Game/Framework/InkScreenFx.h"
+#include "Game/Framework/ExposureFlash.h"
 #include <algorithm>
 #include <utility>
 #include <cmath>
@@ -173,6 +174,15 @@ public:
     float transitionTimer = 0.0f;
     float transitionSpeed = 2.0f; // 0.5秒で完全に切り替わる
 
+    /// @brief 水面を出入りした瞬間の露出フラッシュ（着水で一瞬暗く、浮上で一瞬白く）
+    /// @details 既定値は WaterCameraFx（Title / Select / Result の飛び込み・浮上）と同じ。
+    ///          JSON の "waterFlash" キーで上書きできる。EV を 0 にすると出ない。
+    float diveFlashEv = ExposureFlashDefaults::kDiveEv;
+    float diveFlashDuration = ExposureFlashDefaults::kDiveDuration;
+    float emergeFlashEv = ExposureFlashDefaults::kEmergeEv;
+    float emergeFlashDuration = ExposureFlashDefaults::kEmergeDuration;
+    ExposureFlash waterFlash_;
+
     /// @brief 水中の見た目（フォグ・光）。深さに応じて浅い色 → 深海色へ変わる。
     /// @details Title の飛び込み・Game 開始時の浮上（DeepRiseIntroScript）と同じ定義。
     ///          JSON の "underwater" キーで上書きできる。
@@ -201,6 +211,12 @@ public:
         return {
             {"underwater", look.ToJson()},
             {"ink", ink.ToJson()},
+            {"waterFlash", {
+                {"diveEv", diveFlashEv},
+                {"diveDuration", diveFlashDuration},
+                {"emergeEv", emergeFlashEv},
+                {"emergeDuration", emergeFlashDuration},
+            }},
             {"look", {
                 {"lookSensitivity", lookSensitivity},
                 {"controllerLookSpeed", controllerLookSpeed},
@@ -215,6 +231,16 @@ public:
     void Deserialize(const nlohmann::json& j) override {
         if (j.contains("underwater")) look.FromJson(j["underwater"]);
         if (j.contains("ink")) ink.FromJson(j["ink"]);
+        if (j.contains("waterFlash") && j["waterFlash"].is_object()) {
+            const auto& f = j["waterFlash"];
+            auto readF = [&](const char* key, float& out) {
+                if (f.contains(key) && f[key].is_number()) out = f[key].get<float>();
+            };
+            readF("diveEv", diveFlashEv);
+            readF("diveDuration", diveFlashDuration);
+            readF("emergeEv", emergeFlashEv);
+            readF("emergeDuration", emergeFlashDuration);
+        }
         if (j.contains("look")) {
             const auto& l = j["look"];
             if (l.contains("lookSensitivity"))     lookSensitivity     = l["lookSensitivity"].get<float>();
@@ -456,6 +482,9 @@ protected:
                         dropletTimer = dropletDuration;
                         dropletSpeed = -1.3f; // 負のスピード値で上方向に昇るようにスクロール
                         postProcess->SetScreenDropletsSpeed(dropletSpeed);
+
+                        // 着水の衝撃：一瞬だけ暗く沈む
+                        waterFlash_.Trigger(postProcess, diveFlashEv, diveFlashDuration);
                     }
                 } else {
                     Log::Print("[Event] Transition to Surface (Emerge)");
@@ -470,6 +499,9 @@ protected:
                         dropletTimer = dropletDuration;
                         dropletSpeed = 1.3f; // 正のスピード値で下方向に滴る
                         postProcess->SetScreenDropletsSpeed(dropletSpeed);
+
+                        // 水面を抜けた解放感：一瞬だけ白く飛ぶ
+                        waterFlash_.Trigger(postProcess, emergeFlashEv, emergeFlashDuration);
                     }
                 }
             }
@@ -504,6 +536,9 @@ protected:
                 UnderwaterLook::ApplyFogByDepth(postProcess, look, depth);
             }
         }
+
+        // === 露出フラッシュの減衰更新 ===
+        waterFlash_.Update(RC::GetRenderContext().GetPostProcess(), deltaTime);
 
         // === RadialBlur タイマーの減衰更新 ===
         if (radialBlurTimer > 0.0f) {
@@ -652,7 +687,10 @@ protected:
         float deltaMouseY = mouseForGame ? static_cast<float>(input->GetMouseY()) : 0.0f;
 
         // 4. 視点オフセットの更新
-        if (!isDead) {
+        // 決着後に演出スクリプト（ClearAscendScript / DeathSinkScript）がカメラを動かしている間は
+        // 向きを書かない（"result_transition_owner" タグが目印）
+        const bool cameraOwnedByOutro = (GetEntity() && GetEntity()->GetTagInt("result_transition_owner", 0) == 1);
+        if (!isDead && !cameraOwnedByOutro) {
             // プレイヤーが設定画面で変えた倍率・反転（シーンをまたいで保持される）
             const GameSettings& settings = GameSettings::Get();
             const float mouseGain = lookSensitivity * settings.mouseSensitivity;
@@ -856,6 +894,8 @@ protected:
         }
         // 墨はポストエフェクトに残るので、シーンを抜けるときに必ず剥がす
         ink.Clear(RC::GetRenderContext().GetPostProcess());
+        // 露出のオフセットも PostProcess に残るので戻す（自分で積んだ ColorGrade も外れる）
+        waterFlash_.Clear(RC::GetRenderContext().GetPostProcess());
         if (scoreFont_ >= 0) { RC::UnloadFont(scoreFont_); scoreFont_ = -1; }
         if (gameOverFont_ >= 0) { RC::UnloadFont(gameOverFont_); gameOverFont_ = -1; }
     }
@@ -1126,6 +1166,17 @@ public:
         ImGui::Text("Underwater: %s  blend=%.2f  water Y=%.1f", isUnderwater ? "yes" : "no",
                     transitionTimer, waterHeight);
         ImGui::DragFloat("Transition Speed", &transitionSpeed, 0.1f, 0.1f, 10.0f);
+        ImGui::DragFloat("Dive Flash (EV)", &diveFlashEv, 0.05f, -4.0f, 4.0f);
+        ImGui::DragFloat("Dive Flash (s)", &diveFlashDuration, 0.01f, 0.07f, 2.0f);
+        ImGui::DragFloat("Emerge Flash (EV)", &emergeFlashEv, 0.05f, -4.0f, 4.0f);
+        ImGui::DragFloat("Emerge Flash (s)", &emergeFlashDuration, 0.01f, 0.07f, 2.0f);
+        if (ImGui::Button("Test Dive Flash")) {
+            waterFlash_.Trigger(RC::GetRenderContext().GetPostProcess(), diveFlashEv, diveFlashDuration);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Test Emerge Flash")) {
+            waterFlash_.Trigger(RC::GetRenderContext().GetPostProcess(), emergeFlashEv, emergeFlashDuration);
+        }
         if (UnderwaterLook::DrawImGui(look)) {
             // 光の設定は水中に入る瞬間にしか流し込まないので、いじった値をその場で反映する
             if (auto* postProcess = RC::GetRenderContext().GetPostProcess()) {

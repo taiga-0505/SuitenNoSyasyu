@@ -58,7 +58,7 @@
 ///   ステージ（Stage1〜5）から来たときのボタン:
 ///     クリア      : 次のステージへ ／ もう一度 ／ セレクトへ（"next" の行き先が無ければ 次へ を出さない）
 ///     ゲームオーバー: もう一度 ／ セレクトへ
-///   テスト用の Game シーンから来たときは もう一度 ／ タイトルへ の 2 つ。
+///   ステージ以外から来たとき（エディタで直接開いたときなど）は もう一度 ／ タイトルへ の 2 つ。
 ///     "fontPath"        : 画面全体で使うフォント（既定は Title の 3D 文字と同じ KiwiMaru-Medium）
 ///     "showScore"       : 得点の行を足すか
 ///     "showHint"        : 画面下の操作ヒントを出すか
@@ -74,6 +74,8 @@
 ///     飛び込みで暗くなりきったら "dive" 遷移でボタンの行き先へ。
 ///     "rise*"           : Dive 遷移（DeathSinkScript：力尽きて沈んだとき）で入ってきたときの浮上。
 ///                         浮上しきってから UI をフェードインし、成績の演出を始める
+///     "descend*"        : Ascend 遷移（ClearAscendScript：クリアして空へ抜けたとき）で入ってきたときの降下。
+///                         白く飛んだ空から真上視点へ降りきってから UI をフェードインする
 ///     Game は DeepRiseIntroScript、Title は TitleScreenScript が深海からの浮上で受け取る。
 class ResultScreenScript : public ScriptableEntity {
 public:
@@ -106,6 +108,7 @@ public:
   float uiFadeTime = 0.35f;
   WaterCameraFx::DiveParams dive;
   WaterCameraFx::RiseParams rise; ///< Dive 遷移（力尽きて沈んだとき）で入ってきたときの浮上
+  WaterCameraFx::DescendParams descend; ///< Ascend 遷移（ステージクリアで空へ抜けたとき）で入ってきたときの降下
   UnderwaterLook::Params look;
 
   nlohmann::json Serialize() override {
@@ -114,6 +117,7 @@ public:
     j["underwater"] = look.ToJson();
     dive.WriteJson(j);
     rise.WriteJson(j);
+    descend.WriteJson(j);
     return j;
   }
 
@@ -179,6 +183,7 @@ public:
     if (j.contains("underwater")) look.FromJson(j["underwater"]);
     dive.ReadJson(j);
     rise.ReadJson(j);
+    descend.ReadJson(j);
   }
 
 protected:
@@ -252,6 +257,14 @@ protected:
           uiFadeIn_ = 0.0f;
         }
       }
+      // ステージクリアで空へ抜けた（Ascend 遷移で入ってきた）ときは、白から開けて
+      // 空から真上視点へ降りてきてからパネルを出す
+      if (descend.enabled && ctx->isPlaying() && ctx->lastTransition == SceneTransition::Ascend) {
+        if (descend_.Begin(WaterCameraFx::FindMainCamera(GetScene()), descend)) {
+          uiAlpha_ = 0.0f;
+          uiFadeIn_ = 0.0f;
+        }
+      }
     }
   }
 
@@ -260,7 +273,8 @@ protected:
     pulse_ += deltaTime;
     // 浮上中は UI を出さず、演出の時間も進めない（水面の上に上がりきってから始める）
     if (rise_.IsActive()) rise_.Update(deltaTime);
-    if (rise_.IsMoving()) return;
+    if (descend_.IsActive()) descend_.Update(deltaTime);
+    if (rise_.IsMoving() || descend_.IsMoving()) return;
     if (uiFadeIn_ >= 0.0f) {
       uiFadeIn_ += deltaTime;
       uiAlpha_ = WaterCameraFx::Smooth01(uiFadeIn_ / (std::max)(uiFadeTime, 1e-3f));
@@ -282,6 +296,7 @@ protected:
     // 飛び込みの途中でエディタから停止された場合はカメラと画面を戻す
     if (dive_.IsActive()) dive_.End(/*restoreCamera=*/true);
     if (rise_.IsActive()) rise_.End();
+    if (descend_.IsActive()) descend_.End();
     bubbles_.Destroy();
     auto unload = [](int &handle) {
       if (handle >= 0) {
@@ -357,7 +372,7 @@ private:
       add(retryLabel, "retry");
       add(selectLabel, "select");
     } else {
-      // テスト用の Game シーンなど
+      // ステージ以外から来た（エディタで Result を直接開いたときなど）
       add(retryLabel, "retry");
       add(titleLabel, "title");
     }
@@ -994,6 +1009,7 @@ private:
   float uiAlpha_ = 1.0f;          ///< UI 全体の不透明度
   WaterCameraFx::DiveSequence dive_;
   WaterCameraFx::RiseSequence rise_;
+  WaterCameraFx::DescendSequence descend_;
   float uiFadeIn_ = -1.0f;        ///< 浮上後の UI フェードイン（負なら無効）
   WaterCameraFx::Bubbles bubbles_;
 };

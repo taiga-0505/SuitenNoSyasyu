@@ -211,6 +211,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClCompile Include="..\Application\Game\Scripts\ShipVisualScript.cpp" />
     <ClCompile Include="..\Application\Game\Scripts\DeepRiseIntroScript.cpp" />
     <ClCompile Include="..\Application\Game\Scripts\DeathSinkScript.cpp" />
+    <ClCompile Include="..\Application\Game\Scripts\ClearAscendScript.cpp" />
     <ClCompile Include="..\Application\Game\Scripts\ResultScreenScript.cpp" />
     <ClCompile Include="..\Application\Game\Scripts\StageSelectScript.cpp" />
     <ClCompile Include="..\Application\Game\Scripts\CaveLightZoneScript.cpp" />
@@ -250,6 +251,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClInclude Include="..\Application\Game\Framework\UnderwaterLook.h" />
     <ClInclude Include="..\Application\Game\Framework\InkScreenFx.h" />
     <ClInclude Include="..\Application\Game\Framework\WaterCameraFx.h" />
+    <ClInclude Include="..\Application\Game\Framework\ExposureFlash.h" />
     <ClInclude Include="..\Chaso\Game\Scene\Fade\Fade.h" />
     <ClInclude Include="..\Chaso\Game\Scene\Scene.h" />
     <ClInclude Include="..\Chaso\Game\Scene\SceneManager.h" />

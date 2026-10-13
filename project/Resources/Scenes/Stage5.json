@@ -4863,7 +4863,8 @@
               "DeepRiseIntroScript",
               "RailShooterController",
               "RailMovementScript",
-              "DeathSinkScript"
+              "DeathSinkScript",
+              "ClearAscendScript"
             ]
           },
           "enabled": true,

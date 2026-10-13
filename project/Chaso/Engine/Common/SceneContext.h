@@ -36,6 +36,8 @@ enum class SceneTransition {
   Dissolve, ///< 既定。黒へノイズディゾルブ → 切り替え → 白黒から色が戻る
   Dive,     ///< 水面へ飛び込む遷移。暗い深海色へ短く抜け、切り替え後は演出を挟まず
             ///< すぐにシーンを動かす（Game 側の「深海から浮上」がそのまま続く）
+  Ascend,   ///< 空へ抜ける遷移。白へ短く抜け、切り替え後は演出を挟まずすぐにシーンを動かす
+            ///< （ステージクリア：ClearAscendScript が白く飛ばしてから要求し、Result は白から開ける）
 };
 
 /// @brief スクリプトから文字列で遷移演出を指定するときの名前
@@ -45,11 +47,13 @@ enum class SceneTransition {
 namespace SceneTransitions {
 inline constexpr const char *kDissolve = "dissolve";
 inline constexpr const char *kDive = "dive";
+inline constexpr const char *kAscend = "ascend";
 } // namespace SceneTransitions
 
 /// @brief 遷移演出の名前を SceneTransition へ変換する（不明な名前は Dissolve）
 inline SceneTransition ParseSceneTransition(const std::string &name) {
   if (name == SceneTransitions::kDive) return SceneTransition::Dive;
+  if (name == SceneTransitions::kAscend) return SceneTransition::Ascend;
   return SceneTransition::Dissolve;
 }
 

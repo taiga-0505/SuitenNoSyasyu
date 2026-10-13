@@ -26,6 +26,9 @@ public:
   /// @details 飛び込み側（Title）が画面を深海色まで暗くしてから要求してくるので、
   ///          ここでは切り替えの継ぎ目を隠すぶんだけ短く抜ける。
   static inline const float kDiveFadeTime = 0.35f;
+  /// @brief Ascend 遷移（空へ抜ける）のフェード時間（秒）
+  /// @details 飛び出す側が画面を白く飛ばしてから要求してくるので、Dive と同じく短く抜ける。
+  static inline const float kAscendFadeTime = 0.4f;
 
   /// @brief Dive 遷移で抜ける画面色を設定する
   /// @details Dive はゲーム側が画面をこの色まで暗くしてから要求する前提の遷移。

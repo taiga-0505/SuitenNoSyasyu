@@ -193,6 +193,13 @@ public:
   /// @brief 露出（EV。0 で等倍、+1 で 2 倍）
   void SetGradeExposure(float ev);
 
+  /// @brief 露出に一時的に足すオフセット（EV）
+  /// @details シーンが決めた露出（SetGradeExposure）とは別に持ち、シェーダへは和を渡す。
+  ///          水面の出入りのフラッシュのように、持ち主の違う短い演出が
+  ///          シーン側の露出を上書きせずに重ねられるようにするためのもの。
+  ///          ClearEffects で 0 に戻る。
+  void SetGradeExposureOffset(float ev);
+
   /// @brief コントラスト (1.0 で素通し)
   void SetGradeContrast(float contrast);
 
@@ -631,6 +638,7 @@ private:
   RC::DynamicCB<ColorGradeData> dynColorGrade_; ///< mappedColorGrade_ の実体（CPU/GPU 並行のため毎フレームの領域へ送る）
   float gradeColorFilter_[4] = {1.0f, 1.0f, 1.0f, 1.0f};
   float gradeExposure_ = 0.0f;
+  float gradeExposureOffset_ = 0.0f; ///< 一時的な露出の上乗せ（SetGradeExposureOffset）
   float gradeContrast_ = 1.0f;
   float gradeSaturation_ = 1.0f;
   float gradeTemperature_ = 0.0f;
