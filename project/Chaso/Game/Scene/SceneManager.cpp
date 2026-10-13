@@ -11,6 +11,7 @@
 #include <chrono>
 #include <format>
 #include <cstdlib>
+#include <filesystem>
 #include "Render/RenderContext.h"
 
 namespace RC { class CameraController; }
@@ -547,8 +548,6 @@ void Scene::SceneManager::ChangeImmediately(const std::string &name,
   std::chrono::duration<double> elapsed = end - start;
   Log::Print(std::format("[Scene] Load time: {:.4f} sec", elapsed.count()));
 
-  requested_.clear();
-
   // 新しいシーンでのテクスチャログ出力を許可するためにリセット
   RC::ClearTextureLogHistory();
 
@@ -641,8 +640,6 @@ Scene *Scene::SceneManager::get_(const std::string &name) {
 // =================================================================
 // データ駆動シーン（JSON）の管理
 // =================================================================
-#include "DataDrivenScene/DataDrivenScene.h"
-#include <filesystem>
 
 void Scene::SceneManager::LoadScenesFromDirectory(const std::string& dirPath) {
   namespace fs = std::filesystem;
