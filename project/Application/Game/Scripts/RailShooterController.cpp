@@ -36,12 +36,19 @@
 #include <string>
 
 namespace {
+    /// @brief 線分と軸平行境界ボックス（AABB）が交差するか判定する（スラブ法）
+    /// @param p0 線分の始点
+    /// @param p1 線分の終点
+    /// @param min AABB の最小座標
+    /// @param max AABB の最大座標
+    /// @return 交差していれば true
     bool IntersectSegmentAABB(const RC::Vector3& p0, const RC::Vector3& p1, const RC::Vector3& min, const RC::Vector3& max) {
         RC::Vector3 d = { p1.x - p0.x, p1.y - p0.y, p1.z - p0.z };
+        // 線分を p0 + d*t (t = 0〜1) とし、各軸のスラブに入る/出る t の範囲を狭めていく
         float tmin = 0.0f;
         float tmax = 1.0f;
-        
-        // X axis
+
+        // X 軸（方向成分がほぼ 0 なら平行なので、始点がスラブ内かだけを見る）
         if (std::abs(d.x) < 0.00001f) {
             if (p0.x < min.x || p0.x > max.x) return false;
         } else {
@@ -53,7 +60,7 @@ namespace {
             if (t2 < tmax) tmax = t2;
             if (tmin > tmax) return false;
         }
-        // Y axis
+        // Y 軸
         if (std::abs(d.y) < 0.00001f) {
             if (p0.y < min.y || p0.y > max.y) return false;
         } else {
@@ -65,7 +72,7 @@ namespace {
             if (t2 < tmax) tmax = t2;
             if (tmin > tmax) return false;
         }
-        // Z axis
+        // Z 軸
         if (std::abs(d.z) < 0.00001f) {
             if (p0.z < min.z || p0.z > max.z) return false;
         } else {
@@ -80,6 +87,11 @@ namespace {
         return true;
     }
 
+    /// @brief start→end の線分が地形（is_terrain タグ付きの AABB コライダー）に遮られるか判定する
+    /// @param scene 地形を探すシーン
+    /// @param start 線分の始点
+    /// @param end 線分の終点
+    /// @return いずれかの地形と交差していれば true（scene が nullptr なら false）
     bool RaycastTerrain(Scene* scene, const RC::Vector3& start, const RC::Vector3& end) {
         if (!scene) return false;
         for (auto& e : scene->GetEntities()) {
@@ -87,6 +99,7 @@ namespace {
                 auto* col = e->GetComponent<ColliderComponent>();
                 auto* tr = e->GetComponent<TransformComponent>();
                 if (col && tr && col->IsEnabled() && col->shape == ColliderComponent::Shape::AABB) {
+                    // コライダーのサイズ・中心にスケールを反映してワールド空間の AABB を作る
                     RC::Vector3 scaledSize = {
                         std::abs(col->size.x * tr->scale.x),
                         std::abs(col->size.y * tr->scale.y),
@@ -138,7 +151,7 @@ public:
     RC::Vector4 reticleColor = { 1.0f, 0.0f, 0.0f, 1.0f };
     float reticleSize = 10.0f;
 
-    // 射撃パラメータ
+    // 射撃パラメータ（秒・速さ）
     float fireCooldown = 0.2f;
     float currentCooldown = 0.0f;
     float bulletSpeed = 40.0f;
@@ -161,6 +174,7 @@ public:
     bool isDead = false;
     int score = 0;
 
+    /// @brief 発射する弾の種類（通常 / 拡散 / 重い弾）
     enum class WeaponType { Normal, Spread, Heavy };
     WeaponType currentWeapon = WeaponType::Normal;
 
@@ -207,6 +221,8 @@ public:
     int gameOverFont_ = -1;
     float hudFontScale_ = 1.0f; ///< フォントをロードした時点の実解像度 / 基準解像度
 
+    /// @brief 水中の見た目・墨演出・水面フラッシュ・視点操作の設定を JSON に書き出す
+    /// @return シリアライズした JSON
     nlohmann::json Serialize() override {
         return {
             {"underwater", look.ToJson()},
@@ -228,6 +244,8 @@ public:
         };
     }
 
+    /// @brief JSON から水中の見た目・墨演出・水面フラッシュ・視点操作の設定を読み込む
+    /// @param j 読み込む JSON（無いキーは現在値のまま）
     void Deserialize(const nlohmann::json& j) override {
         if (j.contains("underwater")) look.FromJson(j["underwater"]);
         if (j.contains("ink")) ink.FromJson(j["ink"]);
@@ -287,6 +305,8 @@ private:
     /// @details ロック中はカーソルが Viewport 中央に固定されるので常に true。
     ///          ロックを使わない設定のときは、エディタの Viewport 上にあるときだけ受け付ける
     ///          （インスペクタをドラッグして視点が回るのを防ぐ）。
+    /// @param input 入力管理（nullptr なら false）
+    /// @return ゲーム操作として扱ってよければ true
     static bool IsMouseForGame(Input* input) {
         if (!input) return false;
         if (input->IsCursorLocked()) return true;
@@ -298,6 +318,7 @@ private:
     }
 
     /// @brief カーソルロックの ON/OFF を今のゲーム状態から決めて Input へ反映する
+    /// @param input 反映先の入力管理（nullptr なら何もしない）
     /// @param active 操作を受け付けている（再生中でポーズも一時停止もしていない）か
     void UpdateCursorLock(Input* input, bool active) {
         if (!input) return;
@@ -320,6 +341,9 @@ private:
         };
     }
 
+    /// @brief 自機の弾をまとめる "PlayerBullets" フォルダエンティティを取得する（無ければ作成）
+    /// @param scene 検索・作成先のシーン
+    /// @return フォルダエンティティの GUID（一度見つけたらキャッシュを返す）
     uint64_t GetBulletsFolder(Scene* scene) {
         if (bulletsFolderGuid_ != 0) return bulletsFolderGuid_;
         for (auto& e : scene->GetEntities()) {
@@ -335,7 +359,9 @@ private:
     }
 
 protected:
+    /// @brief プレイヤータグ付け、設定・HUD フォントの読み込み、ポストエフェクト設定、水面高さ・光の向きの取得、開始時の水中状態の初期化を行う
     void OnCreate() override {
+        // 敵弾などがタグで自機を識別できるようにする
         if (Entity* self = GetEntity()) {
             self->SetTag("is_player", 1);
         }
@@ -360,7 +386,7 @@ protected:
         }
 
         if (auto* postProcess = RC::GetRenderContext().GetPostProcess()) {
-            // 推奨3: 全体的な視認性向上のための深度ベースアウトラインを常時有効化
+            // 全体的な視認性向上のため、深度ベースのアウトラインを常時有効化する
             postProcess->AddEffect(PostEffectType::DepthBasedOutline);
             float outlineColor[4] = {0.04f, 0.08f, 0.16f, 0.85f};
             postProcess->SetOutlineColor(outlineColor);
@@ -404,6 +430,8 @@ protected:
         }
     }
 
+    /// @brief 視点操作・射撃・被ダメージ・水中／水上の切り替え演出・HUD 用の状態更新を毎フレーム行う
+    /// @param deltaTime 前フレームからの経過時間（秒）。0 のフレームはポーズ中として扱う
     void OnUpdate(float deltaTime) override {
         auto* input = Input::GetInstance();
 
@@ -472,7 +500,7 @@ protected:
                         UnderwaterLook::SetupLight(postProcess, look, waterHeight, hasSunDir_ ? &sunDir_ : nullptr);
                         UnderwaterLook::AddStack(postProcess);
 
-                        // 推奨1: 水中突入（ダイブ）時の強烈な勢い・スピード感演出としての RadialBlur スタック
+                        // 水中突入（ダイブ）時の勢い・スピード感の演出として RadialBlur を積む
                         postProcess->AddEffect(PostEffectType::RadialBlur);
                         radialBlurTimer = radialBlurDuration;
                         postProcess->SetRadialBlurWidth(radialBlurMaxWidth);
@@ -507,7 +535,7 @@ protected:
             }
         }
 
-        // トランジションの更新
+        // トランジションの更新（0=水上〜1=水中 へ transitionSpeed で近づける）
         float targetTransition = isUnderwater ? 1.0f : 0.0f;
         if (transitionTimer != targetTransition) {
             if (transitionTimer < targetTransition) {
@@ -540,7 +568,7 @@ protected:
         // === 露出フラッシュの減衰更新 ===
         waterFlash_.Update(RC::GetRenderContext().GetPostProcess(), deltaTime);
 
-        // === RadialBlur タイマーの減衰更新 ===
+        // === RadialBlur タイマーの減衰更新（残り割合の 2 乗で幅を絞り、切れたら除去） ===
         if (radialBlurTimer > 0.0f) {
             radialBlurTimer -= deltaTime;
             if (auto* postProcess = RC::GetRenderContext().GetPostProcess()) {
@@ -573,7 +601,7 @@ protected:
             }
         }
 
-        // === ダメージ・スコア処理 ===
+        // === ダメージ・スコア処理（他スクリプトがタグで積んだ値を取り出して反映し、タグを消す） ===
         Entity* self = GetEntity();
         if (self) {
             int dmg = self->GetTagInt("pending_damage", 0);
@@ -587,6 +615,7 @@ protected:
                 score += scoreAdd;
             }
             // タコの墨（強さ×100 の整数。1 フレームに複数当たったら 1 発ずつ貼る）
+            // 合算値を 100（=強さ 1.0）ずつに分けて AddHit し、墨を受けたらカメラも揺らす
             int inkHit = self->GetTagInt("pending_ink", 0);
             if (inkHit > 0) {
                 self->ClearTag("pending_ink");
@@ -607,13 +636,13 @@ protected:
         GameSession::Get().SetScore(score);
         GameSession::Get().SetPlayerHp(hp, maxHp);
 
-        // 敵の合計HPの集計、ダメージ処理、およびクリア判定
+        // 敵の合計HPの集計、およびクリア判定
         totalEnemyHp = 0;
         totalEnemyMaxHp = 0;
         if (Scene* scene = GetScene()) {
             for (auto& e : scene->GetEntities()) {
                 if (e->GetTagInt("is_enemy", 0) == 1) {
-                    // タグが未設定なら初期化
+                    // HP タグが未設定の敵は既定値 30 で初期化する
                     int ehp = e->GetTagInt("current_hp", -1);
                     int eMaxHp = e->GetTagInt("max_hp", -1);
                     if (ehp == -1) { ehp = 30; e->SetTag("current_hp", 30); }
@@ -636,7 +665,7 @@ protected:
         // 開始演出中は操作を受け付けない（浮上が終わって GAME START が出てから）
         if (introPlaying) return;
 
-        // Weapon Switching
+        // 武器切り替え（ホイール上 / LB で前の武器、ホイール下 / RB で次の武器。3 種を循環）
         long wheel = input->GetMouseZ();
         if (wheel > 0) {
             int w = static_cast<int>(currentWeapon) - 1;
@@ -736,10 +765,12 @@ protected:
                 isFirePressed = input->IsMousePressed(0);
 #endif
             }
+            // 右トリガーは半分程度（0〜255 の 128 超）押し込んだら射撃
             if (input->GetXInputRightTrigger() > 128) {
                 isFirePressed = true;
             }
 
+            // Heavy は連射間隔を 2 倍にする
             if (isFirePressed && currentCooldown <= 0.0f) {
                 if (currentWeapon == WeaponType::Heavy) currentCooldown = fireCooldown * 2.0f;
                 else currentCooldown = fireCooldown;
@@ -758,7 +789,7 @@ protected:
             if (currentCameraShake < 0.0f) currentCameraShake = 0.0f;
         }
 
-        // シーン内のカメラを探してShakeOffsetを適用
+        // シーン内の最初のカメラに、シェイク強度の範囲（±強度）のランダムなオフセットを適用
         if (Scene* scene = GetScene()) {
             for (auto& e : scene->GetEntities()) {
                 if (auto* cam = e->GetComponent<CameraComponent>()) {
@@ -776,6 +807,9 @@ protected:
         }
     }
     
+    /// @brief 現在の武器で弾を発射する（画面中央のレティクルからのレイ方向へ）
+    /// @details 非アクティブな "PlayerBullet" を再利用し、足りなければ新規作成する。
+    ///          弾の種類・速度・寿命・方向はタグで WaterBullet に渡す。発射時に反動・カメラシェイクも加える。
     void FireBullet() {
         auto& ctx = RC::GetRenderContext();
         float screenW = 1280.0f;
@@ -787,6 +821,7 @@ protected:
 
         int numBullets = (currentWeapon == WeaponType::Spread) ? 3 : 1;
 
+        // プール：使い終わって非アクティブになっている自機弾を必要数だけ集める
         std::vector<std::shared_ptr<Entity>> inactiveBullets;
         if (Scene* scene = GetScene()) {
             for (auto& e : scene->GetEntities()) {
@@ -800,10 +835,10 @@ protected:
         for (int i = 0; i < numBullets; ++i) {
             RC::Vector2 targetPos = cursorPosition;
             if (currentWeapon == WeaponType::Spread) {
-                targetPos.x += (i - 1) * 80.0f; // -80, 0, 80 pixels offset
+                targetPos.x += (i - 1) * 80.0f; // -80, 0, 80 ピクセルずらす
             }
 
-            // Raycast計算
+            // 狙うスクリーン座標からカメラのレイを求める
             RC::Ray ray = RC::CameraMath::ScreenPointToRay(
                 targetPos, 
                 {screenW, screenH}, 
@@ -814,7 +849,7 @@ protected:
             Scene* scene = GetScene();
             if (!scene) continue;
 
-            // Create bullet entity (Pooling)
+            // 弾エンティティを用意する（プールにあれば reused タグを立てて再利用、無ければ新規作成）
             std::shared_ptr<Entity> bullet = nullptr;
             bool isNew = false;
             if (i < inactiveBullets.size()) {
@@ -830,6 +865,7 @@ protected:
             if (!tr) tr = &bullet->AddComponent<TransformComponent>();
             tr->position = ray.origin;
             bullet->SetParentGuid(GetBulletsFolder(scene));
+            // 武器ごとの弾の大きさ
             float scale = 0.3f;
             if (currentWeapon == WeaponType::Heavy) scale = 0.6f;
             else if (currentWeapon == WeaponType::Spread) scale = 0.2f;
@@ -850,7 +886,7 @@ protected:
                 }
             }
             
-            // パラメータをTagとして渡す
+            // 弾のパラメータをタグで WaterBullet に渡す（タグは int のみなので方向は 1000 倍、速度・寿命は 10 倍）
             bullet->SetTag("dir_x", static_cast<int>(ray.direction.x * 1000.0f));
             bullet->SetTag("dir_y", static_cast<int>(ray.direction.y * 1000.0f));
             bullet->SetTag("dir_z", static_cast<int>(ray.direction.z * 1000.0f));
@@ -861,7 +897,7 @@ protected:
             else if (currentWeapon == WeaponType::Spread) bullet->SetTag("bullet_type", 1);
             else if (currentWeapon == WeaponType::Heavy) bullet->SetTag("bullet_type", 2);
 
-            // Scriptのアタッチ
+            // WaterBullet スクリプトを付け（未付与時のみ）、シーン情報を渡す
             auto* nsc = bullet->GetComponent<NativeScriptComponent>();
             if (!nsc) {
                 nsc = &bullet->AddComponent<NativeScriptComponent>();
@@ -870,6 +906,7 @@ protected:
             nsc->SetScene(scene);
             if (GetSceneContext()) nsc->SetSceneContext(GetSceneContext());
 
+            // 新規作成した弾はランタイム初期化、再利用した弾はメッシュ位置だけ即時同期する
             if (isNew) {
                 scene->InitDynamicEntityRuntime(*bullet);
             } else {
@@ -882,11 +919,12 @@ protected:
             }
         }
 
-        // 演出のトリガー
+        // 発射の演出（レティクルの反動とカメラシェイク）を最大値から始める
         currentRecoil = recoilMax;
         currentCameraShake = shakeMax;
     }
 
+    /// @brief カーソルロック・墨・露出オフセットを元に戻し、HUD フォントを解放する
     void OnDestroy() override {
         // Result などカーソルで操作するシーンへ移るので、ロックと非表示を必ず戻す
         if (auto* input = Input::GetInstance()) {
@@ -917,6 +955,7 @@ protected:
         const float oy = (screenH - kDesignH * s) * 0.5f;
         const float fs = (hudFontScale_ > 0.0f) ? (s / hudFontScale_) : 1.0f;
 
+        // 基準座標で指定した位置に、影（2px ずらした暗色）付きで文字を描く
         auto drawText = [&](int font, const std::string& text, float dx, float dy,
                             const RC::Vector4& color, TextAlign align) {
             if (font < 0 || text.empty()) return;
@@ -927,6 +966,7 @@ protected:
             RC::DrawString(font, text, {x, y}, color, fs, align);
         };
 
+        // 死亡時は画面中央に GAME OVER だけを出す
         if (isDead) {
             const float lh = (gameOverFont_ >= 0) ? RC::GetFontLineHeight(gameOverFont_, fs) / s : kGameOverPx;
             drawText(gameOverFont_, "GAME OVER", kDesignW * 0.5f, kDesignH * 0.5f - lh * 0.5f,
@@ -934,6 +974,7 @@ protected:
             return;
         }
 
+        // 通常時は左上にスコア
         if (!isGameCleared) {
             char buf[32];
             std::snprintf(buf, sizeof(buf), "SCORE  %06d", score);
@@ -968,6 +1009,7 @@ protected:
 
     }
 
+    /// @brief レティクル・武器表示・HP ゲージ・敵の頭上 HP バー・ゲームオーバー／クリア／被弾のオーバーレイを 2D 描画する
     void OnRender() override {
         // 開始演出（深海からの浮上）中は HUD を出さない
         if (GetEntity() && GetEntity()->GetTagInt("intro_playing", 0) == 1) return;
@@ -988,7 +1030,7 @@ protected:
             screenH = static_cast<float>(ctx.Ctx()->app->height);
         }
 
-        // Weapon Indicator（元の表示）
+        // 武器表示（左下に Normal / Spread / Heavy の 3 マス。選択中だけ濃く表示）
         float wX = 20.0f; float wY = screenH - 80.0f;
         float alphaN = (currentWeapon == WeaponType::Normal) ? 0.9f : 0.3f;
         RC::DrawBox({wX, wY}, {wX+20.0f, wY+20.0f}, {0.2f, 0.6f, 1.0f, alphaN});
@@ -997,13 +1039,14 @@ protected:
         float alphaH = (currentWeapon == WeaponType::Heavy) ? 0.9f : 0.3f;
         RC::DrawBox({wX+50.0f, wY}, {wX+70.0f, wY+20.0f}, {0.8f, 0.3f, 0.1f, alphaH});
 
-        // === Player HP Gauge ===
+        // === プレイヤーの HP ゲージ ===
         // 武器表示の下。元のゲージより長く・太くして読みやすくする
         const float barX = 20.0f;
         const float barW = 300.0f;
         const float barH = 16.0f;
         const float barY = screenH - 20.0f - barH - 14.0f; // 下端から 34px（武器表示と 10px 空ける）
 
+        // 無敵中は 0.1 秒ごとに表示／非表示を切り替えて点滅させる
         bool drawPlayerUI = true;
         if (invincibleTimer > 0.0f) {
             if (static_cast<int>(invincibleTimer * 10.0f) % 2 == 0) {
@@ -1012,15 +1055,15 @@ protected:
         }
 
         if (drawPlayerUI) {
-            // Background
+            // 背景
             RC::DrawBox({ barX, barY }, { barX + barW, barY + barH }, { 0.3f, 0.05f, 0.05f, 0.8f });
 
-            // Foreground
+            // 残り HP（HP 割合で緑→赤に変化し、幅も割合に比例）
             float hpRatio = (maxHp > 0) ? static_cast<float>((std::max)(hp, 0)) / static_cast<float>(maxHp) : 0.0f;
             RC::Vector4 hpColor = { 1.0f - hpRatio, hpRatio, 0.1f, 0.9f };
             RC::DrawBox({ barX, barY }, { barX + barW * hpRatio, barY + barH }, hpColor);
 
-            // Border
+            // 枠線
             RC::DrawBox({ barX, barY }, { barX + barW, barY + barH }, { 1.0f, 1.0f, 1.0f, 0.6f }, kWire);
         }
 
@@ -1040,7 +1083,7 @@ protected:
                     RC::Vector3 headPos = tr->position;
                     headPos.y += 1.2f; 
                     
-                    // w(深度)計算による背後判定
+                    // クリップ空間の w（視点からの奥行き）を求め、カメラの背後（ほぼ 0 以下）なら描かない
                     float w = headPos.x * viewProj.m[0][3] + headPos.y * viewProj.m[1][3] +
                               headPos.z * viewProj.m[2][3] + 1.0f * viewProj.m[3][3];
                     if (w < 0.1f) continue; 
@@ -1062,7 +1105,7 @@ protected:
                     screenPos.x = RC::Clamp(screenPos.x, 50.0f, screenW - 50.0f);
                     screenPos.y = RC::Clamp(screenPos.y, 50.0f, screenH - 50.0f);
                     
-                    // 描画
+                    // 頭上の HP バー（背景・残量・枠線）を描画
                     float eBarW = 100.0f;
                     float eBarH = 10.0f;
                     float eBarX = screenPos.x - eBarW * 0.5f;
@@ -1078,7 +1121,7 @@ protected:
             }
         }
 
-        // === Game Over / Game Clear / Damage overlay ===
+        // === ゲームオーバー（赤帯）／クリア（緑帯）／被弾直後（無敵残り時間に比例した赤い全画面フラッシュ）のオーバーレイ ===
         if (isDead) {
             RC::DrawBox({ 0.0f, screenH * 0.4f }, { screenW, screenH * 0.6f },
                         { 0.8f, 0.1f, 0.1f, 0.7f });
@@ -1093,6 +1136,9 @@ protected:
     }
 
 public:
+    /// @brief ダメージを受けて HP を減らし、無敵時間とカメラシェイクを開始する
+    /// @param damage 減らす HP 量
+    /// @note 無敵時間中または死亡済みなら何もしない。HP が 0 以下になると死亡し "game_over" タグを立てる
     void TakeDamage(int damage) {
         if (invincibleTimer > 0.0f || isDead) return;
         // リザルトの「被ダメージ」。無敵中に弾いたぶんは上の早期 return で除外され、
@@ -1101,7 +1147,7 @@ public:
         hp -= damage;
         invincibleTimer = invincibleDuration;
         
-        // 演出
+        // 被弾の演出（射撃時の 2 倍の強さでカメラを揺らす）
         currentCameraShake = shakeMax * 2.0f;
 
         if (hp <= 0) {
@@ -1113,6 +1159,7 @@ public:
         }
     }
 
+    /// @brief 状態表示と、視点・レティクル・武器・HP・水中演出・墨・画面水滴の調整／テスト UI を Inspector に出す
     void OnImGui() override {
 #if RC_ENABLE_IMGUI
         // スコア / GAME OVER は OnOverlayRender でゲーム画面内に描く（ここは Inspector 専用）

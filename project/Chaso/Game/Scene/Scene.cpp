@@ -206,6 +206,7 @@ void Scene::DrawLightGizmos(uint32_t selectedEntityId) {
 void Scene::DrawCameraGizmos(uint32_t selectedEntityId, float aspect) {
 #if RC_ENABLE_IMGUI
   if (selectedEntityId == 0 && !showAllGizmos_) return;
+  // 全デバッグ描画（showAllGizmos_）中は選択に関係なく全カメラの視錐台を描く
   for (auto& e : entities_) {
     if (!showAllGizmos_ && e->Id() != selectedEntityId) continue;
     if (!e->IsVisible()) continue;
@@ -232,6 +233,7 @@ void Scene::DrawColliderGizmos(uint32_t selectedEntityId) {
     if (!tr || !col || !col->IsEnabled()) continue;
 
     RC::Vector4 colColor = {0.2f, 1.0f, 0.2f, 1.0f}; // 黄緑色
+    // スケールを反映したコライダー中心のワールド座標を求める（回転は考慮しない）
     RC::Vector3 scaledCenter = {
       col->center.x * tr->scale.x,
       col->center.y * tr->scale.y,
@@ -243,6 +245,8 @@ void Scene::DrawColliderGizmos(uint32_t selectedEntityId) {
       tr->position.z + scaledCenter.z
     };
 
+    // 球はスケールの最大成分で半径を拡大し、AABB は各軸のスケールを掛けた箱で描く
+    // （Capsule はどちらの分岐にも入らず描画されない）
     if (col->shape == ColliderComponent::Shape::Sphere) {
         float maxScale = (std::max)((std::max)(std::abs(tr->scale.x), std::abs(tr->scale.y)), std::abs(tr->scale.z));
         RC::DrawSphereRings3D(worldCenter, col->radius * maxScale, colColor, 16, true);
@@ -275,9 +279,11 @@ struct ColliderVolume {
 };
 
 /// @brief エンティティのコライダーをワールド空間の形状に変換する
+/// @param e 対象のエンティティ（nullptr なら false）
 /// @param overridePos TransformComponent::position の代わりに使う位置
-/// @param shrink 形状を内側に縮める量（m）。0以下にはならないようクランプする
-/// @return コライダーが無い / 無効なら false
+/// @param shrink 形状を内側に縮める量（m）。各寸法は 0.001 未満にならないようクランプする
+/// @param out 変換結果の形状を受け取る
+/// @return 変換できたら true。エンティティ・Transform・コライダーが無い / 無効なら false
 bool BuildColliderVolume(Entity* e, const RC::Vector3& overridePos, float shrink,
                          ColliderVolume& out) {
     if (!e) return false;
@@ -298,7 +304,8 @@ bool BuildColliderVolume(Entity* e, const RC::Vector3& overridePos, float shrink
                                           std::abs(tr->scale.z));
         out.radius = (std::max)(0.001f, col->radius * maxScale - shrink);
     } else {
-        // Capsule は未実装のため AABB として扱う（ResolveCollisions と同じ扱い）
+        // Capsule は未実装のため AABB として扱う
+        // （ResolveCollisions の詳細判定では Capsule は判定対象外で、扱いが一致していない点に注意）
         out.isSphere = false;
         out.half = {
             (std::max)(0.001f, std::abs(col->size.x * tr->scale.x * 0.5f) - shrink),
@@ -310,6 +317,9 @@ bool BuildColliderVolume(Entity* e, const RC::Vector3& overridePos, float shrink
 }
 
 /// @brief 2つの形状が重なっているか判定する
+/// @param a 判定する形状1
+/// @param b 判定する形状2
+/// @return 重なっていれば true
 bool VolumesOverlap(const ColliderVolume& a, const ColliderVolume& b) {
     if (!a.isSphere && !b.isSphere) {
         const RC::Vector3 minA = RC::Sub(a.center, a.half), maxA = RC::Add(a.center, a.half);
@@ -326,8 +336,8 @@ bool VolumesOverlap(const ColliderVolume& a, const ColliderVolume& b) {
     return RC::CheckCollisionSphereAabb(s.center, s.radius, minB, maxB).hit;
 }
 
-// 衝突判定の粗い除外（Broad-phase）に用いる安全距離マージン定数
-inline constexpr float kBroadPhaseDistanceMargin = 3.0f; // 余裕を持たせた近接判定マージン（m）
+/// @brief ResolveCollisions の距離による粗い除外に足す安全マージン（m）
+inline constexpr float kBroadPhaseDistanceMargin = 3.0f;
 
 } // namespace
 
@@ -628,7 +638,7 @@ void Scene::ResolveCollisions() {
             continue;
         }
 
-        // e1 の情報計算
+        // 両者のスケールを反映したコライダー中心のワールド座標を求める
         RC::Vector3 scaledCenter1 = {
             col1->center.x * tr1->scale.x,
             col1->center.y * tr1->scale.y,
@@ -636,7 +646,6 @@ void Scene::ResolveCollisions() {
         };
         RC::Vector3 center1 = RC::Add(tr1->position, scaledCenter1);
 
-        // e2 の情報計算
         RC::Vector3 scaledCenter2 = {
             col2->center.x * tr2->scale.x,
             col2->center.y * tr2->scale.y,
@@ -658,6 +667,8 @@ void Scene::ResolveCollisions() {
         const float dz = center1.z - center2.z;
         if (dx * dx + dy * dy + dz * dz > broadDistanceSq) continue;
 
+        // 形状の組み合わせごとに詳細判定（Narrow-phase）を行う。
+        // Capsule を含む組み合わせはどの分岐にも入らず、result.hit は false のまま。
         RC::CollisionResult result;
         bool reverseNormal = false;
 
@@ -681,7 +692,7 @@ void Scene::ResolveCollisions() {
             RC::Vector3 h1 = { std::abs(col1->size.x * tr1->scale.x * 0.5f), std::abs(col1->size.y * tr1->scale.y * 0.5f), std::abs(col1->size.z * tr1->scale.z * 0.5f) };
             RC::Vector3 min1 = RC::Sub(center1, h1); RC::Vector3 max1 = RC::Add(center1, h1);
             result = RC::CheckCollisionSphereAabb(center2, r2, min1, max1);
-            reverseNormal = true; // normal is from sphere to AABB, so from 2 to 1.
+            reverseNormal = true; // 球→AABB の法線＝ 2→1 向きなので、後で 1→2 向きに反転する
         }
 
         if (result.hit) {
@@ -708,10 +719,11 @@ void Scene::ResolveCollisions() {
             // 両方とも動かない場合は物理解決をスキップ
             if (!isDynamic1 && !isDynamic2) continue;
 
-            // result.normal direction is from 1 to 2
+            // 法線を e1 → e2 向きにそろえる
             RC::Vector3 normal = reverseNormal ? RC::Mul(result.normal, -1.0f) : result.normal;
 
-            // Calculate push ratios
+            // めり込み量の押し出し配分を求める。
+            // 両方動的なら相手の質量比で分け（軽い方が多く動く）、片方だけ動的ならその側が全量を負う。
             float m1 = rb1 ? rb1->mass : 1.0f;
             float m2 = rb2 ? rb2->mass : 1.0f;
             float ratio1 = 0.0f;
@@ -733,20 +745,19 @@ void Scene::ResolveCollisions() {
             RC::Vector3 push1 = RC::Mul(normal, -result.depth * ratio1);
             RC::Vector3 push2 = RC::Mul(normal, result.depth * ratio2);
 
+            // 押し出したうえで、相手に向かう法線方向の速度成分を打ち消す（反発はさせない）
             if (isDynamic1) {
                 tr1->position = RC::Add(tr1->position, push1);
-                // Cancel velocity along normal
                 float vDotN = RC::Dot(rb1->velocity, normal);
-                if (vDotN > 0.0f) { // e1 is moving towards e2
+                if (vDotN > 0.0f) { // e1 が e2 に向かって動いている
                     RC::Vector3 vNormal = RC::Mul(normal, vDotN);
                     rb1->velocity = RC::Sub(rb1->velocity, vNormal);
                 }
             }
             if (isDynamic2) {
                 tr2->position = RC::Add(tr2->position, push2);
-                // Cancel velocity along normal
                 float vDotN = RC::Dot(rb2->velocity, normal);
-                if (vDotN < 0.0f) { // e2 is moving towards e1 (normal is from 1 to 2)
+                if (vDotN < 0.0f) { // e2 が e1 に向かって動いている（法線は 1→2 向き）
                     RC::Vector3 vNormal = RC::Mul(normal, vDotN);
                     rb2->velocity = RC::Sub(rb2->velocity, vNormal);
                 }

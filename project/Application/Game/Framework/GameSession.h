@@ -23,6 +23,7 @@ public:
   };
 
   /// @brief 唯一のインスタンスを取得する
+  /// @return GameSession のシングルトンインスタンス
   static GameSession &Get() {
     static GameSession instance;
     return instance;
@@ -46,14 +47,22 @@ public:
   }
 
   /// @brief プレイの決着を記録する
+  /// @param outcome 決着の種類（Cleared / GameOver）
   void Finish(Outcome outcome) { outcome_ = outcome; }
 
   // --- プレイ中に書き込む値 ---
+  /// @brief 現在のスコアを書き込む
+  /// @param score スコア
   void SetScore(int score) { score_ = score; }
+  /// @brief プレイヤーの HP を書き込む
+  /// @param hp    現在の HP
+  /// @param maxHp 最大 HP
   void SetPlayerHp(int hp, int maxHp) {
     playerHp_ = hp;
     playerMaxHp_ = maxHp;
   }
+  /// @brief プレイ開始からの経過時間を書き込む
+  /// @param seconds 経過時間（秒）
   void SetElapsedTime(float seconds) { elapsedTime_ = seconds; }
 
   /// @brief ウェイポイントの進捗を書き込む（RailMovementScript が毎フレーム呼ぶ）
@@ -68,6 +77,7 @@ public:
   }
 
   /// @brief 敵を撃破した（EnemyBaseScript が HP 0 になった瞬間に呼ぶ）
+  /// @param count 加算する撃破数（既定 1）
   void AddEnemyDefeated(int count = 1) { enemiesDefeated_ += count; }
 
   /// @brief プレイヤーが被弾した（RailShooterController::TakeDamage が呼ぶ）
@@ -78,27 +88,37 @@ public:
 
   /// @brief 宝箱を開けた（TreasureChestScript が HP 0 になった瞬間に呼ぶ）
   /// @details 得点そのものは score_add 経由でスコアに合算されるので、ここでは個数だけ数える。
+  /// @param count 加算する個数（既定 1）
   void AddChestCollected(int count = 1) { chestsCollected_ += count; }
 
   /// @brief 撃破数・被ダメージ・宝箱取得数を直接書く（撮影モードの仕込み用。プレイ中は Add 系を使うこと）
+  /// @param count  撃破数 / 宝箱取得数（負なら 0 に丸める）
+  /// @param amount 被ダメージ合計（負なら 0 に丸める）
   void SetEnemiesDefeated(int count) { enemiesDefeated_ = (count < 0) ? 0 : count; }
   void SetDamageTaken(int amount) { damageTaken_ = (amount < 0) ? 0 : amount; }
   void SetChestsCollected(int count) { chestsCollected_ = (count < 0) ? 0 : count; }
 
   // --- Result から読む値 ---
+  /// @brief 記録したプレイ結果の基本値を取得する（スコア / HP / 最大 HP / 経過時間 / 決着）
+  /// @return それぞれの記録値（経過時間は秒）
   int Score() const { return score_; }
   int PlayerHp() const { return playerHp_; }
   int PlayerMaxHp() const { return playerMaxHp_; }
   float ElapsedTime() const { return elapsedTime_; }
   Outcome GetOutcome() const { return outcome_; }
+  /// @brief クリアで決着したかどうか
+  /// @return Outcome::Cleared なら true
   bool IsCleared() const { return outcome_ == Outcome::Cleared; }
 
   /// @brief 到達したウェイポイントの数
+  /// @return 到達数
   int WaypointsReached() const { return waypointsReached_; }
   /// @brief このルートで通る予定だったウェイポイントの総数（0 ならレールが無いシーン）
+  /// @return 総数
   int WaypointsTotal() const { return waypointsTotal_; }
   /// @brief ウェイポイント達成率（0.0〜1.0）
   /// @details レールの無いシーンやデータが無い場合はクリアなら 1.0、それ以外 0.0 を返す。
+  /// @return 到達数 / 総数 を 0.0〜1.0 に丸めた値
   float WaypointRate() const {
     if (waypointsTotal_ <= 0) return IsCleared() ? 1.0f : 0.0f;
     float rate = static_cast<float>(waypointsReached_) / static_cast<float>(waypointsTotal_);
@@ -107,22 +127,28 @@ public:
     return rate;
   }
   /// @brief 撃破した敵の数
+  /// @return 撃破数
   int EnemiesDefeated() const { return enemiesDefeated_; }
   /// @brief 被弾した合計ダメージ
+  /// @return 被ダメージ合計
   int DamageTaken() const { return damageTaken_; }
   /// @brief 開けた宝箱の数
+  /// @return 宝箱取得数
   int ChestsCollected() const { return chestsCollected_; }
 
   /// @brief 何回プレイしたか（1 周目なら 1）
+  /// @return BeginRun が呼ばれた回数
   int PlayCount() const { return playCount_; }
 
   /// @brief クリア時の評価ランク（'S' / 'A' / 'B' / 'C'）
-  /// @details スコアと残 HP から算出する簡易評価。
+  /// @details 残 HP の割合から算出する簡易評価（現状スコアは見ていない）。
   ///          ゲームオーバー時は常に 'C' を返す。
+  /// @return 評価ランクの文字
   char Rank() const {
     if (outcome_ != Outcome::Cleared) return 'C';
     const float hpRate =
         (playerMaxHp_ > 0) ? static_cast<float>(playerHp_) / playerMaxHp_ : 0.0f;
+    // 残 HP 率で段階分け（99% 以上 S / 60% 以上 A / 30% 以上 B / それ未満 C）
     if (hpRate >= 0.99f) return 'S';
     if (hpRate >= 0.6f) return 'A';
     if (hpRate >= 0.3f) return 'B';

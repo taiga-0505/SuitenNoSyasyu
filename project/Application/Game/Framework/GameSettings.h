@@ -19,6 +19,7 @@
 class GameSettings {
 public:
   /// @brief 唯一のインスタンスを取得する
+  /// @return GameSettings のシングルトンインスタンス
   static GameSettings &Get() {
     static GameSettings instance;
     return instance;
@@ -36,9 +37,9 @@ public:
   float fovDeg = 26.0f;
 
   // --- 音量（0.0〜1.0） ---
-  float masterVolume = 1.0f;
-  float bgmVolume = 1.0f;
-  float seVolume = 1.0f;
+  float masterVolume = 1.0f; ///< 全体音量
+  float bgmVolume = 1.0f;    ///< BGM バスの音量
+  float seVolume = 1.0f;     ///< SE バスの音量
 
   static constexpr float kSensitivityMin = 0.1f;
   static constexpr float kSensitivityMax = 3.0f;
@@ -49,6 +50,7 @@ public:
   static constexpr float kFovStep = 1.0f;         ///< 設定画面で左右キー 1 回ぶん（度）
 
   /// @brief 視野角をラジアンで返す（CameraComponent::fovY に入れる値）
+  /// @return fovDeg をラジアンに変換した値
   float FovRadians() const { return fovDeg * (3.14159265358979f / 180.0f); }
 
   /// @brief 値を有効範囲へ丸める
@@ -84,13 +86,15 @@ public:
   }
 
   /// @brief ファイルから読み込む（無ければ既定値のまま）。起動時に一度呼べばよい
-  /// @return 読めたら true
+  /// @return ファイルを開けたら true（パースに失敗して既定値へ戻した場合も true）
   bool Load() {
     std::ifstream ifs(Chaso::PrepareSettingPath(kPath));
+    // ファイルが無いのは初回起動の正常ケース。既定値のまま読み込み済み扱いにする
     if (!ifs.is_open()) {
       loaded_ = true;
       return false;
     }
+    // 壊れた JSON でも起動を止めないよう、パース失敗時は既定値へ戻す
     try {
       nlohmann::json j;
       ifs >> j;
@@ -125,6 +129,8 @@ public:
     return true;
   }
 
+  /// @brief 設定値を JSON に変換する
+  /// @return 全設定項目を持つ JSON オブジェクト
   nlohmann::json ToJson() const {
     return {
         {"mouseSensitivity", mouseSensitivity},
@@ -137,6 +143,9 @@ public:
     };
   }
 
+  /// @brief JSON から設定値を読み込む
+  /// @param j 読み込む JSON（含まれていないキーは現在の値のまま）
+  /// @note 範囲チェックはしないので、呼んだ後に Clamp() すること。
   void FromJson(const nlohmann::json &j) {
     if (j.contains("mouseSensitivity")) mouseSensitivity = j["mouseSensitivity"].get<float>();
     if (j.contains("controllerSensitivity")) controllerSensitivity = j["controllerSensitivity"].get<float>();

@@ -34,9 +34,11 @@ public:
   /// @details Dive はゲーム側が画面をこの色まで暗くしてから要求する前提の遷移。
   ///          色はゲームごとに違うので、エンジンは既定の黒だけを持ち、
   ///          Application 側が起動時（静的初期化でも可）に設定する。
+  /// @param color 抜ける画面色（RGBA）
   static void SetDiveScreenColor(const RC::Vector4 &color);
 
-  /// @brief Dive 遷移で抜ける画面色を取得する（未設定なら黒）
+  /// @brief Dive 遷移で抜ける画面色を取得する
+  /// @return 設定済みの画面色（未設定なら黒）
   static const RC::Vector4 &DiveScreenColor();
 
 public:
@@ -45,10 +47,11 @@ public:
   void Init(SceneContext &ctx);
 
   /// @brief 終了処理
+  /// @details SceneFlow に渡した this 捕捉のコールバックを外し、登録シーンと状態を破棄する。
   void Term();
 
   /// @brief 新しいシーンを登録する
-  /// @param scene 登録するシーンの unique_ptr
+  /// @param scene 登録するシーンの unique_ptr（Name() をキーにする。同名は上書き）
   void Register(std::unique_ptr<Scene> scene);
 
   /// @brief 次のフレームでのシーン切り替えをリクエストする（フェード演出を伴う）
@@ -61,7 +64,8 @@ public:
   bool RequestChange(const std::string &name,
                      SceneTransition transition = SceneTransition::Dissolve);
 
-  /// @brief 処理中（要求済み〜フェードイン完了まで）の遷移演出
+  /// @brief 処理中（要求済み〜フェードイン完了まで）の遷移演出を取得する
+  /// @return 進行中の遷移演出。遷移していなければ SceneTransition::None
   SceneTransition ActiveTransition() const { return transition_; }
 
   /// @brief シーンを即座に切り替える（演出なし）
@@ -74,10 +78,12 @@ public:
   void ReloadCurrentScene(SceneContext &ctx);
 
   /// @brief 現在のシーンをバックアップする
+  /// @note DataDrivenScene のときだけ有効。それ以外のシーンでは何もしない
   void BackupCurrentScene();
   
   /// @brief バックアップから現在のシーンを復元する
   /// @param ctx シーンコンテキスト
+  /// @note DataDrivenScene のときだけ有効。それ以外のシーンでは何もしない
   void RestoreCurrentScene(SceneContext &ctx);
 
   /// @brief 更新処理（現在の状態に応じた Update を呼び出す）
@@ -108,7 +114,8 @@ public:
   /// @return シーンへのポインタ
   Scene* GetCurrentScene() const { return current_; }
 
-  /// @brief Get all registered scene names
+  /// @brief 登録済みの全シーン名を取得する
+  /// @return シーン名の一覧（順序は不定）
   std::vector<std::string> GetSceneNames() const {
     std::vector<std::string> names;
     for (auto& [key, _] : scenes_) {
@@ -117,16 +124,26 @@ public:
     return names;
   }
 
-  /// @brief Load scenes from JSON files in directory
+  /// @brief ディレクトリ内の JSON ファイルを DataDrivenScene として登録する
+  /// @param dirPath シーン JSON を置いたディレクトリ
+  /// @note シーン名はファイル名（拡張子なし）。同名のシーンが登録済みなら飛ばす
   void LoadScenesFromDirectory(const std::string& dirPath);
 
-  /// @brief Create a new empty scene and register it
+  /// @brief 新しいシーンを作成して JSON に保存し、登録する
+  /// @param name 新しいシーン名
+  /// @param dirPath シーン JSON を保存するディレクトリ
+  /// @return 作成できたら true。同名シーンが既にあれば false
+  /// @details テンプレート（SceneTemplate.json）があれば複製し、無ければ
+  ///          ディレクショナルライトとメインカメラだけの初期シーンを作る。
   bool CreateNewScene(const std::string& name, const std::string& dirPath);
 
-  /// @brief Delete a registered scene (and its JSON file)
+  /// @brief 登録済みシーンを削除する（DataDrivenScene なら JSON ファイルも削除）
+  /// @param name 削除するシーン名
+  /// @return 削除できたら true。未登録または現在アクティブなシーンなら false
   bool DeleteScene(const std::string& name);
 
-  /// @brief Save current scene to file
+  /// @brief 現在のシーンをファイルへ保存する
+  /// @return 保存できたら true。DataDrivenScene 以外のシーンは false
   bool SaveCurrentScene();
 
 private:
@@ -144,7 +161,7 @@ private:
   ///        戻るまで保持する。演出なしの直接切り替え（起動時など）は None
   SceneTransition transition_ = SceneTransition::None;
 
-  std::unique_ptr<ISceneState> state_; ///< 現在のマネージャー状態（Normal, FadeOut, etc.）
+  std::unique_ptr<ISceneState> state_; ///< 現在のマネージャー状態（NormalState / FadeOutState など）
   std::unique_ptr<RC::CameraController> camera_; ///< エディタカメラ（全シーン共有）
 
   // 状態クラスからのアクセスを許可

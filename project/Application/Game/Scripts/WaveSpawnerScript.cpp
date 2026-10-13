@@ -93,6 +93,8 @@ public:
   /// @details 同じ方向から縦一列に来ると連続で当たるので、左右に振り分ける。
   float aheadSideStep = 8.0f;
 
+  /// @brief スポナーの設定を JSON に書き出す
+  /// @return 設定項目を格納した JSON（enemyParams・scripts は指定がある場合のみ含める）
   nlohmann::json Serialize() override {
     nlohmann::json j;
     j["waveId"] = waveId;
@@ -117,6 +119,8 @@ public:
     return j;
   }
 
+  /// @brief JSON からスポナーの設定を読み込む
+  /// @param j 読み込み元の JSON（存在するキーだけ反映する）
   void Deserialize(const nlohmann::json &j) override {
     if (j.contains("waveId")) waveId = j["waveId"].get<int>();
     if (j.contains("waveManagerName")) waveManagerName = j["waveManagerName"].get<std::string>();
@@ -148,6 +152,7 @@ public:
   }
 
 protected:
+  /// @brief WaveManager に見つけてもらうための目印タグを立て、湧かせ状態を初期化する
   void OnCreate() override {
     if (Entity *self = GetEntity()) {
       // WaveManager は型を知らずにスポナーを探すので、目印をタグで出しておく
@@ -163,6 +168,8 @@ protected:
     elapsed_ = 0.0f;
   }
 
+  /// @brief WaveManager の wave_active を監視し、担当ウェーブが始まったら一定間隔で敵を生成する
+  /// @param deltaTime 前フレームからの経過時間（秒）
   void OnUpdate(float deltaTime) override {
     Entity *self = GetEntity();
     if (!self) return;
@@ -172,6 +179,7 @@ protected:
       self->SetTag("spawner_wave_id", waveId);
     }
 
+    // 進行状況を見る WaveManager を名前で探す
     Scene *scene = GetScene();
     if (!scene) return;
     Entity *manager = waveManagerName.empty() ? nullptr
@@ -208,6 +216,7 @@ protected:
       ++spawnedCount_;
     }
 
+    // 全員出し終えたら済み記録を立てて待機へ戻る（WaveManager はこのタグで湧き終わりを判定する）
     if (spawnedCount_ >= count) {
       self->SetTag("spawn_done", spawningWave_);
       spawningWave_ = 0;
@@ -215,6 +224,8 @@ protected:
   }
 
 public:
+  /// @brief 出現地点・散らばり範囲・各敵の出現座標をギズモで描く
+  /// @note spawnAheadOfPlayer 時の実際の出現位置（自機前方）は描かず、スポナー位置基準で描く
   void OnDebugRender() override {
     if (!drawGizmo) return;
     auto *tr = GetComponent<TransformComponent>();
@@ -232,6 +243,7 @@ public:
   }
 
 #if RC_ENABLE_IMGUI
+  /// @brief スポナーの設定編集 UI と、湧かせ状況・載せるスクリプトの一覧を表示する
   void OnImGui() override {
     ImGui::DragInt("Wave Id", &waveId, 1.0f, 1, 99);
     ImGui::DragInt("Count", &count, 1.0f, 1, 32);
@@ -256,6 +268,7 @@ public:
       ImGui::ColorEdit4("Primitive Color", &primitiveColor.x);
     }
 
+    // ここから下は現在の状態の表示
     ImGui::Separator();
     if (scripts.is_array() && !scripts.empty()) {
       ImGui::Text("Scripts (%zu):", scripts.size());
@@ -278,6 +291,10 @@ public:
 
 private:
 #if RC_ENABLE_IMGUI
+  /// @brief std::string を編集する ImGui のテキスト入力欄を出す
+  /// @param label 入力欄のラベル
+  /// @param value 編集対象の文字列（入力があれば書き換える）
+  /// @note バッファが 128 バイトなので、それを超える文字列は切り詰められる
   static void DrawTextField(const char *label, std::string &value) {
     char buf[128] = {};
     std::snprintf(buf, sizeof(buf), "%s", value.c_str());
@@ -290,6 +307,9 @@ private:
   ///          乱数だとプレイのたびに配置が変わって、難易度の調整結果が
   ///          自分の変更のせいなのか運のせいなのか切り分けられなくなるため。
   ///          円の内側と外側で密度が偏らないよう、半径は sqrt で取っている。
+  /// @param base 散らばりの中心座標
+  /// @param index 何体目か（0 始まり）
+  /// @return 出現座標（spreadRadius が 0 以下か count が 1 以下なら base そのもの）
   RC::Vector3 SpawnPosition(const RC::Vector3 &base, int index) const {
     if (spreadRadius <= 0.0f || count <= 1) return base;
 
@@ -309,6 +329,10 @@ private:
   ///          「いつも前方 aheadDistance 先」から湧く。左右は index で交互に振る
   ///          （0:左 1:右 2:さらに左 …）。カメラが見つからなければ fallback を返す。
   ///          前方ベクトルの取り方は SharkEnemyScript と揃えている。
+  /// @param scene カメラを探すシーン
+  /// @param fallback カメラが無いときに返す座標。高さ（y）は常にこの値を使う
+  /// @param index 何体目か（左右の振り分けに使う）
+  /// @return 出現中心の座標
   RC::Vector3 AheadOfPlayerPosition(Scene *scene, const RC::Vector3 &fallback, int index) const {
     const TransformComponent *camTr = nullptr;
     for (auto &e : scene->GetEntities()) {
@@ -324,6 +348,7 @@ private:
     const RC::Vector3 fwd = {sy, 0.0f, cy};
     const RC::Vector3 right = {cy, 0.0f, -sy};
 
+    // 偶数番は左、奇数番は右へ。2 体ごとに aheadSideStep ずつ外側へ広げる
     const float sign = (index % 2 == 0) ? -1.0f : 1.0f;
     const float side = sign * aheadSideStep * static_cast<float>(index / 2 + 1);
 
@@ -335,6 +360,8 @@ private:
   }
 
   /// @brief 敵を 1 体生成する
+  /// @param scene 生成先のシーン
+  /// @param index 何体目か（エンティティ名と出現位置に使う）
   void SpawnOne(Scene *scene, int index) {
     auto *selfTr = GetComponent<TransformComponent>();
     RC::Vector3 base = selfTr ? selfTr->position : RC::Vector3{0.0f, 0.0f, 0.0f};
@@ -347,6 +374,7 @@ private:
     auto entity = scene->CreateEntity(name);
     if (!entity) return;
 
+    // 位置は散らばりを加えた座標、向きはスポナーの向きを引き継ぐ
     auto &tr = entity->AddComponent<TransformComponent>();
     tr.position = SpawnPosition(base, index);
     tr.scale = enemyScale;
@@ -368,6 +396,7 @@ private:
       // Transform の同期だけ Init のあとで行う。
     }
 
+    // 弾との当たり判定用の球コライダー
     auto &col = entity->AddComponent<ColliderComponent>();
     col.shape = ColliderComponent::Shape::Sphere;
     col.radius = colliderRadius;
@@ -430,6 +459,8 @@ private:
   }
 
   /// @brief 形状名を PrimitiveType へ変換する（未知の名前は球にフォールバック）
+  /// @param s 形状名（box / cube / plane / cylinder / cone / torus / capsule）
+  /// @return 対応する PrimitiveType
   static PrimitiveType ShapeFromString(const std::string &s) {
     if (s == "box" || s == "cube") return PrimitiveType::Box;
     if (s == "plane")              return PrimitiveType::Plane;

@@ -164,6 +164,7 @@ public:
 
   // ---- タイトル画面だけのポストプロセス（Bloom / ColorGrade / Vignette）----
   // シーン遷移時は切り替え側が ClearPostEffects するので Game 側へは持ち越さない。
+  /// @brief タイトル画面だけに掛けるポストプロセスの設定値をまとめる
   struct TitlePost {
     bool enabled = true;
     // Bloom は 1 パス近似（2 リング 17 タップ）なので、明部が画面中に散らばる水面だと
@@ -211,6 +212,7 @@ public:
   float mouseMoveThreshold = 2.0f; ///< これ以上（px）動いたら「マウスを動かした」とみなす
 
   // ---- 選択中メニューの目印（左右で回る金のリング ＋ 波紋）----
+  /// @brief 選択中メニューの左右で回るリングとその波紋の設定値をまとめる
   struct RingParams {
     bool enabled = true;
     RC::Vector4 color = {1.0f, 0.80f, 0.32f, 1.0f};
@@ -226,6 +228,7 @@ public:
   } ring;
 
   // ---- 起動演出（文字が 1 文字ずつ水中から浮かび上がる → メニュー）----
+  /// @brief 起動演出（文字・メニューが水中から浮かび上がる）のタイミングと見た目の設定値をまとめる
   struct IntroParams {
     bool enabled = true;
     float delay = 1.0f;          ///< 最初の文字が動き出すまで（秒。シーン遷移のフェードが明けるのを待つ）
@@ -256,6 +259,8 @@ public:
   WaterCameraFx::RiseParams rise; ///< JSON キーは "rise*"
   UnderwaterLook::Params look;    ///< 水中の見た目（Game 側と共通）
 
+  /// @brief 全設定項目（飛び込み・浮上のパラメータを含む）を JSON に書き出す
+  /// @return 設定項目を格納した JSON
   nlohmann::json Serialize() override {
     nlohmann::json j = SerializeBase();
     dive.WriteJson(j);
@@ -263,6 +268,8 @@ public:
     return j;
   }
 
+  /// @brief 飛び込み・浮上以外の設定項目を JSON に書き出す
+  /// @return 設定項目を格納した JSON（色は [r, g, b, a] 配列）
   nlohmann::json SerializeBase() const {
     nlohmann::json positions = nlohmann::json::array();
     for (const auto &p : letterPositions) positions.push_back({p.x, p.y, p.z});
@@ -361,7 +368,10 @@ public:
     };
   }
 
+  /// @brief JSON から設定項目を読み込む
+  /// @param j 読み込み元の JSON（存在し型が合うキーだけ反映する）
   void Deserialize(const nlohmann::json &j) override {
+    // キーが存在し型が一致する場合だけ上書きするヘルパー
     auto readF = [&](const char *key, float &out) {
       if (j.contains(key) && j[key].is_number()) out = j[key].get<float>();
     };
@@ -387,6 +397,7 @@ public:
     readB("outlineEnabled", outlineEnabled);
     readF("outlineWidth", outlineWidth);
     readVec4("outlineColor", outlineColor);
+    // 文字配置は [x, z] または [x, z, yaw]。yaw 省略時は 0
     if (j.contains("letterPositions") && j["letterPositions"].is_array()) {
       letterPositions.clear();
       for (const auto &p : j["letterPositions"]) {
@@ -453,6 +464,7 @@ public:
     readF("menuUnselectedScale", menuUnselectedScale);
     readF("menuPulseWhite", menuPulseWhite);
     readB("mouseEnabled", mouseEnabled);
+    // マウスボタン番号は 0〜2（左・右・中）に丸める
     if (j.contains("mouseConfirmButton") && j["mouseConfirmButton"].is_number()) {
       mouseConfirmButton = std::clamp(j["mouseConfirmButton"].get<int>(), 0, 2);
     }
@@ -511,12 +523,15 @@ public:
     readVec4("hintBandColor", hintBandColor);
     readF("hintBandPadding", hintBandPadding);
 
+    // 飛び込み・浮上・水中の見た目は共通定義側の読み込みに任せる
     dive.ReadJson(j);
     rise.ReadJson(j);
     if (j.contains("underwater")) look.FromJson(j["underwater"]);
   }
 
 #if RC_ENABLE_IMGUI
+  /// @brief インスペクタに状態表示と各パラメータの編集 UI、演出のテスト用ボタンを表示する
+  /// @note ポストプロセスの値を変えたときは積み直して即時反映する
   void OnImGui() override {
     ImGui::Text("Letters: %d  Menu: %d  Selected: %s", static_cast<int>(letters_.size()),
                 static_cast<int>(menu_.size()), selected_ == kMenuStart ? "Start" : "Quit");
@@ -643,6 +658,7 @@ public:
 #endif
 
 protected:
+  /// @brief タイトル文字・メニュー・リング・ポストプロセスを生成し、起動演出や浮上演出を開始する
   void OnCreate() override {
     // 前のシーン（Game）の障害物が水面の定数バッファに残っていると、
     // タイトルの水面に岩の反射波が出てしまう。ここには障害物が無いので空にする。
@@ -655,6 +671,7 @@ protected:
       readbackOwned_ = true;
     }
 
+    // 操作ヒント用の 2D フォントを読み込み、文字・メニュー・リング・ポストプロセスを用意する
     if (showHint) {
       hintFont_ = RC::LoadFont(hintFontPath, hintFontSize);
       if (hintFont_ < 0) {
@@ -701,6 +718,9 @@ protected:
     if (willRise) BeginRise();
   }
 
+  /// @brief 起動演出・文字の浮遊・リング・飛び込み／浮上演出を進め、操作可能ならメニュー入力を処理する
+  /// @param deltaTime 前フレームからの経過時間（秒）
+  /// @note 処理の順序に意味がある（浮遊の更新 → カメラ演出 → 入力）。演出中は途中で return して入力を受け付けない
   void OnUpdate(float deltaTime) override {
     time_ += deltaTime;
     pulseTimer_ += deltaTime;
@@ -739,6 +759,7 @@ protected:
     }
   }
 
+  /// @brief 生成したエンティティ・読み戻し設定・カメラ演出・ポストプロセス・フォントを後始末する
   void OnDestroy() override {
     // エディタの停止 → 再生でスクリプトだけ作り直されると文字が二重に生えるため、
     // 自分が生成した文字エンティティは自分で片付ける。
@@ -778,12 +799,14 @@ protected:
     }
   }
 
+  /// @brief 画面下に操作ヒント（2D 文字）を描画する
   void OnRender() override {
     // 飛び込み中・浮上中は操作ヒントを出さない
     if (!showHint || hintFont_ < 0 || dive_.IsActive() || rise_.IsMoving()) return;
     // 起動演出中は、メニューが出そろうまで出さない
     if (introActive_) return;
 
+    // 画面サイズはウィンドウから取得し、取れなければ 1280x720 を仮定する
     float screenW = 1280.0f;
     float screenH = 720.0f;
     auto &rc = RC::GetRenderContext();
@@ -795,6 +818,7 @@ protected:
   }
 
 private:
+  /// @brief メニュー項目の番号（menu_ の添字と一致）
   enum MenuItem { kMenuStart = 0, kMenuQuit = 1, kMenuCount = 2 };
 
   /// @brief 水面に浮かせる 3D 文字 1 つぶんの状態（タイトル文字・メニュー項目で共通）
@@ -823,10 +847,13 @@ private:
   // ------------------------------------------------------------------
 
   /// @brief UTF-8 文字列を 1 文字ずつに分解する
+  /// @param s 分解する UTF-8 文字列
+  /// @return 1 文字ずつの文字列の配列（半角・全角の空白は除く）
   static std::vector<std::string> SplitUtf8(const std::string &s) {
     std::vector<std::string> out;
     size_t i = 0;
     while (i < s.size()) {
+      // 先頭バイトの上位ビットから 1 文字のバイト数（1〜4）を判定する
       const unsigned char c = static_cast<unsigned char>(s[i]);
       size_t len = 1;
       if ((c & 0xF8) == 0xF0) len = 4;
@@ -844,6 +871,9 @@ private:
   /// @brief 配置指定が無い文字の既定位置
   /// @details 左から右へ読み順に並べつつ、Z（画面の上下）をばらつかせて
   ///          「バラバラに浮いている」感じにする。画面上が +Z。
+  /// @param index 文字の番号（左から 0 始まり）
+  /// @param count 文字の総数
+  /// @return letterPositions と同じ並び（x, z, yaw）の Vector3。y に Z、z に yaw が入る
   RC::Vector3 DefaultLetterPosition(int index, int count) const {
     const float spacing = letterSize * 1.55f;
     const float x0 = -spacing * static_cast<float>(count - 1) * 0.5f;
@@ -859,12 +889,27 @@ private:
   }
 
   /// @brief 3D 文字エンティティを 1 つ生成して水面用の Floater として登録する
+  /// @param name エンティティ名
+  /// @param text 表示する文字列
+  /// @param font フォントファイルのパス
+  /// @param size 1em の高さ（m）
+  /// @param depth 押し出し厚さ（m）
+  /// @param color 文字色 RGBA
+  /// @param outline 縁取り色 RGBA
+  /// @param outlineW 縁取りの太さ
+  /// @param x 基準位置のワールド X 座標
+  /// @param z 基準位置（ベースライン）のワールド Z 座標
+  /// @param yaw 水面上での向き（rad）
+  /// @param shininess 光沢（大きいほど鋭いハイライト）
+  /// @param envCoeff 環境マップの映り込み（0〜1）
   /// @return 生成した Floater（エンティティが作れなければ entity が空）
+  /// @note 縁取りの有無はメニューも含めてメンバの outlineEnabled（タイトル文字の設定）に従う
   Floater CreateTextFloater(const std::string &name, const std::string &text,
                             const std::string &font, float size, float depth,
                             const RC::Vector4 &color, const RC::Vector4 &outline,
                             float outlineW, float x, float z, float yaw,
                             float shininess = 32.0f, float envCoeff = 0.0f) {
+    // 足元サンプル範囲の初期値を決める
     Floater f;
     f.basePos = {x, 0.0f, z};
     f.yaw = yaw;
@@ -914,6 +959,7 @@ private:
     return f;
   }
 
+  /// @brief タイトル文字列を 1 文字ずつ 3D 文字として生成し、letters_ に登録する
   void SpawnLetters() {
     const std::vector<std::string> chars = SplitUtf8(titleText);
     const int count = static_cast<int>(chars.size());
@@ -921,6 +967,7 @@ private:
     letters_.reserve(chars.size());
 
     for (int i = 0; i < count; ++i) {
+      // 配置指定があればそれを使い、足りない分は既定位置で補う
       RC::Vector3 placement{}; // x, z, yaw
       if (i < static_cast<int>(letterPositions.size())) {
         placement = letterPositions[i];
@@ -934,6 +981,7 @@ private:
                                     outlineWidth, placement.x, placement.y, placement.z,
                                     letterShininess, letterEnvCoeff);
       if (f.entity.expired()) continue;
+      // 位相を文字ごとにずらして、全文字がそろって上下しないようにする
       f.phase = static_cast<float>(i) * 1.37f;
       f.drift = driftRadius;
       f.bob = bobAmplitude;
@@ -945,6 +993,7 @@ private:
                " letters for \"" + titleText + "\"");
   }
 
+  /// @brief メニュー項目（スタート／ゲーム終了）を 3D 文字として生成し、menu_ に登録する
   void SpawnMenu() {
     static const char *kLabels[kMenuCount] = {"スタート", "ゲーム終了"};
     static const char *kNames[kMenuCount] = {"TitleMenu_Start", "TitleMenu_Quit"};
@@ -976,6 +1025,8 @@ private:
   // ------------------------------------------------------------------
 
   /// @brief シーン内の WaterComponent から波パラメータを組み立てる
+  /// @param out 組み立てた波パラメータの出力先
+  /// @return WaterComponent が見つかれば true
   bool BuildWaterParams(RC::WaterWaveParams &out) const {
     Scene *scene = GetScene();
     if (!scene) return false;
@@ -990,6 +1041,8 @@ private:
     return false;
   }
 
+  /// @brief タイトル文字とメニューを水面に追従させ、メニューは選択状態に応じた色・大きさ・浮き上がりにする
+  /// @param deltaTime 前フレームからの経過時間（秒）
   void UpdateFloaters(float deltaTime) {
     RC::WaterWaveParams params;
     const bool hasWater = BuildWaterParams(params);
@@ -1024,6 +1077,11 @@ private:
   // ------------------------------------------------------------------
 
   /// @brief メニュー項目の見た目の中心（x, z）と半幅を求める
+  /// @param index メニュー項目の番号
+  /// @param cx 中心のワールド X 座標の出力先
+  /// @param cz 中心のワールド Z 座標の出力先
+  /// @param halfW 拡大率を反映した半幅の出力先
+  /// @return index が範囲内なら true
   bool MenuItemExtent(int index, float &cx, float &cz, float &halfW) const {
     if (index < 0 || index >= static_cast<int>(menu_.size())) return false;
     const Floater &f = menu_[index];
@@ -1057,6 +1115,8 @@ private:
     ringAppear_ = 0.0f;
   }
 
+  /// @brief 選択中メニューの左右にリングを追従・回転させ、一定間隔で波紋を出す
+  /// @param deltaTime 前フレームからの経過時間（秒）
   void UpdateRings(float deltaTime) {
     if (rings_.empty()) return;
     const float dt = (std::max)(deltaTime, 0.0f);
@@ -1068,6 +1128,7 @@ private:
 
     float cx = 0.0f, cz = 0.0f, hw = 1.0f;
     if (!MenuItemExtent(selected_, cx, cz, hw)) return;
+    // 初回は選択中の項目へ即座に置き、以降は指数減衰（フレームレートに依存しない）で追いかける
     if (!ringInit_) {
       ringCx_ = cx;
       ringCz_ = cz;
@@ -1079,6 +1140,7 @@ private:
       ringCz_ += (cz - ringCz_) * k;
       ringHalfW_ += (hw - ringHalfW_) * k;
     }
+    // 回転を進め、選択切り替え時の弾み（ringPop_ > 1）を 1 へ戻していく
     ringSpin_ += ring.spinSpeed * dt;
     ringPop_ += (1.0f - ringPop_) * (std::min)(1.0f, dt * 8.0f);
 
@@ -1086,6 +1148,7 @@ private:
     const bool hasWater = BuildWaterParams(params);
     const float waterTime = RC::GetWaterTime();
 
+    // 左右のリングを水面の高さ（＋波紋）に乗せて配置する
     const float s = ring.size * ringAppear_ * ringPop_;
     const bool active = ringAppear_ > 0.001f;
     for (size_t i = 0; i < rings_.size(); ++i) {
@@ -1105,6 +1168,7 @@ private:
       // 左右で位相を 90 度ずらして、同じ向きにそろわないようにする
       tr->rotation = {ringSpin_ + (i == 0 ? 0.0f : kHalfPi), 0.0f, 0.0f};
       tr->scale = {s, s, s};
+      // 描画側の Transform へも直接反映する
       if (auto *pm = e->GetComponent<PrimitiveMeshComponent>()) {
         if (pm->meshHandle >= 0) {
           if (auto *p = RC::GetPrimitiveMeshTransformPtr(pm->meshHandle)) *p = tr->ToTransform();
@@ -1132,6 +1196,7 @@ private:
     float cx = 0.0f, cz = 0.0f, hw = 1.0f;
     if (!MenuItemExtent(selected_, cx, cz, hw)) return;
     if (ring.selectRipple == 0.0f) return;
+    // 項目の幅に沿って 5 か所に波紋を並べる
     for (int k = -2; k <= 2; ++k) {
       RC::AddWaveSourceAtWorld(cx + static_cast<float>(k) * hw * 0.45f, cz, 0.025f, ring.selectRipple);
     }
@@ -1142,6 +1207,9 @@ private:
   // ------------------------------------------------------------------
 
   /// @brief easeOutBack（c1 = 0 なら easeOutCubic）。1 を少し行き過ぎてから戻る
+  /// @param p 進行度（0〜1 に丸める）
+  /// @param c1 行き過ぎの係数
+  /// @return イージング後の値（p = 0 で 0、p = 1 で 1）
   static float EaseOutBack(float p, float c1) {
     p = std::clamp(p, 0.0f, 1.0f);
     const float c3 = c1 + 1.0f;
@@ -1149,19 +1217,27 @@ private:
     return 1.0f + c3 * q * q * q + c1 * q * q;
   }
 
+  /// @brief i 番目のタイトル文字が浮かび始める時刻を求める
+  /// @param i 文字の番号
+  /// @return 起動演出開始からの時刻（秒）
   float IntroLetterStart(int i) const { return intro.delay + intro.interval * static_cast<float>(i); }
 
   /// @brief メニューが出始める時刻：最後の文字が水面を抜けたころ ＋ menuDelay
+  /// @return 起動演出開始からの時刻（秒）
   float IntroMenuStart() const {
     const int n = (std::max)(static_cast<int>(letters_.size()), 1);
+    // riseTime の 6 割で水面を抜ける目安とする
     return IntroLetterStart(n - 1) + intro.riseTime * 0.6f + intro.menuDelay;
   }
 
+  /// @brief 起動演出が終わる時刻（最後のメニュー項目が浮かび終わる時刻）を求める
+  /// @return 起動演出開始からの時刻（秒）
   float IntroEnd() const {
     const int m = (std::max)(static_cast<int>(menu_.size()), 1);
     return IntroMenuStart() + intro.menuInterval * static_cast<float>(m - 1) + intro.menuRiseTime;
   }
 
+  /// @brief 起動演出を開始する。文字・メニューを水中の初期位置へ沈め、リングを隠す
   void StartIntro() {
     introActive_ = true;
     introTime_ = 0.0f;
@@ -1179,6 +1255,7 @@ private:
   }
 
   /// @brief タイトル文字とメニューの表示を切り替える（浮上中に隠す）
+  /// @param visible true で表示、false で非表示
   void SetFloatersVisible(bool visible) {
     for (auto &f : letters_) {
       if (auto e = f.entity.lock()) e->SetActive(visible);
@@ -1188,6 +1265,8 @@ private:
     }
   }
 
+  /// @brief 起動演出を進める。文字→メニューの順に水中から浮かび上がらせ、水面を抜けた瞬間に飛沫・波紋を出す
+  /// @param deltaTime 前フレームからの経過時間（秒）
   void UpdateIntro(float deltaTime) {
     // 浮上で入ってきたときは、カメラが上がりきるまで待つ（時間も進めない）
     if (introWaitRise_) {
@@ -1200,6 +1279,7 @@ private:
     if (deltaTime > 0.0f) introTime_ += deltaTime;
     const float t = introTime_;
 
+    // タイトル文字：開始時刻をずらしつつ easeOutBack で行き過ぎ気味に浮かせる
     for (size_t i = 0; i < letters_.size(); ++i) {
       Floater &f = letters_[i];
       const float p = (t - IntroLetterStart(static_cast<int>(i))) / (std::max)(intro.riseTime, 0.01f);
@@ -1212,6 +1292,7 @@ private:
       }
     }
 
+    // メニュー：行き過ぎなし（easeOutCubic）で、小さめから等倍へ拡大しながら浮かせる
     const float menuStart = IntroMenuStart();
     for (size_t i = 0; i < menu_.size(); ++i) {
       Floater &f = menu_[i];
@@ -1229,7 +1310,8 @@ private:
     if (t >= IntroEnd()) FinishIntro();
   }
 
-  /// @brief 水面を抜けた瞬間の飛沫と波紋
+  /// @brief 水面を抜けた瞬間の飛沫と波紋を出す
+  /// @param f 水面を抜けた文字・メニュー項目
   /// @param power 1 でタイトル文字の強さ。メニューは弱めにする
   void OnBreach(const Floater &f, float power) {
     auto e = f.entity.lock();
@@ -1248,6 +1330,7 @@ private:
     }
   }
 
+  /// @brief 起動演出を終了し、全ての文字・メニューを最終状態（水面上・等倍・表示）にそろえる
   void FinishIntro() {
     introActive_ = false;
     if (introWaitRise_) {
@@ -1281,6 +1364,7 @@ private:
   }
 
   /// @brief メニュー操作に使うキー・ボタンのどれかが押されたか（演出のスキップ判定）
+  /// @return キーボード・マウス・ゲームパッドのいずれかでメニュー操作の入力があれば true
   bool AnyMenuKeyTriggered() const {
     SceneContext *ctx = GetSceneContext();
     if (!ctx || !ctx->input) return false;
@@ -1307,6 +1391,9 @@ private:
   // 以前は白い丸を大きく撒いていたため、綿や煙のように見えていた。
 
   /// @brief 泡のエミッタを 1 つ作る（共通部分）
+  /// @param scene 生成先のシーン
+  /// @param name エンティティ名
+  /// @return 生成したエンティティ（射出数 0 で停止中）。作れなければ nullptr
   std::shared_ptr<Entity> CreateSplashEmitter(Scene *scene, const std::string &name) {
     auto e = scene->CreateEntity(name);
     if (!e) return nullptr;
@@ -1324,6 +1411,8 @@ private:
     return e;
   }
 
+  /// @brief 起動演出の飛沫用エミッタ（spray / foam）を生成する
+  /// @note 既に生成済みなら何もしない
   void SpawnSplashEmitter() {
     Scene *scene = GetScene();
     if (!scene || !splash_.expired()) return;
@@ -1374,6 +1463,9 @@ private:
   }
 
 
+  /// @brief エミッタ 1 つの射出数を設定する
+  /// @param w 対象のエミッタエンティティ（消えていれば何もしない）
+  /// @param count 1 フレームあたりの射出数（0 で止める）
   static void SetEmission(const std::weak_ptr<Entity> &w, uint32_t count) {
     auto e = w.lock();
     if (!e) return;
@@ -1383,6 +1475,9 @@ private:
   }
 
   /// @brief 両方のエミッタの射出数をまとめて設定する（0 で止める）
+  /// @param sprayCount spray（小さな泡）の 1 フレームあたりの射出数
+  /// @param foamCount foam（大きめの泡）の 1 フレームあたりの射出数
+  /// @param count 両方に同じ値を設定する場合の射出数（1 引数版）
   void SetSplashEmission(uint32_t sprayCount, uint32_t foamCount) {
     SetEmission(splash_, sprayCount);
     SetEmission(foam_, foamCount);
@@ -1390,6 +1485,13 @@ private:
   void SetSplashEmission(uint32_t count) { SetSplashEmission(count, count); }
 
   /// @brief エミッタを文字の位置へ動かし、文字の大きさに合わせて射出範囲を変える
+  /// @param w 対象のエミッタエンティティ
+  /// @param x 射出位置のワールド X 座標
+  /// @param y 射出位置のワールド Y 座標
+  /// @param z 射出位置のワールド Z 座標
+  /// @param width 文字の幅（m）
+  /// @param length 文字の高さ（真上から見た Z 方向の長さ, m）
+  /// @param cone true なら Cone 形状として半径を、false なら Box 形状として大きさを合わせる
   static void PlaceEmitter(const std::weak_ptr<Entity> &w, float x, float y, float z, float width, float length,
                            bool cone) {
     auto e = w.lock();
@@ -1409,8 +1511,13 @@ private:
     }
   }
 
-  /// @param count  水滴（spray）の数。泡（foam）はその半分
-  /// @param width / length 文字の幅と高さ（真上から見た XZ の大きさ）
+  /// @brief 指定位置で飛沫（spray と foam）を射出する
+  /// @param x 射出位置のワールド X 座標
+  /// @param y spray の射出位置のワールド Y 座標（foam は水面付近に固定）
+  /// @param z 射出位置のワールド Z 座標
+  /// @param count 水滴（spray）の数。泡（foam）はその半分
+  /// @param width 文字の幅（真上から見た X 方向の大きさ, m）
+  /// @param length 文字の高さ（真上から見た Z 方向の大きさ, m）
   void EmitSplash(float x, float y, float z, int count, float width = 2.0f, float length = 2.0f) {
     if (count <= 0 || splash_.expired()) return;
     PlaceEmitter(splash_, x, y, z, width, length, /*cone=*/true);
@@ -1470,6 +1577,8 @@ private:
   /// @brief TextMesh 本体の色を書き換える
   /// @details DataDrivenScene は本体色を再生成時にしか Material へ反映しないので、
   ///          tm.color と Material の両方へ書く（再生成が起きても同じ色に戻るように）。
+  /// @param f 対象の文字・メニュー項目
+  /// @param color 設定する色 RGBA
   static void ApplyMainColor(Floater &f, const RC::Vector4 &color) {
     auto e = f.entity.lock();
     if (!e) return;
@@ -1481,6 +1590,12 @@ private:
     }
   }
 
+  /// @brief 文字・メニュー項目 1 つを水面の高さと法線に追従させ、Transform を更新する
+  /// @param f 更新する文字・メニュー項目
+  /// @param params 水面の波パラメータ
+  /// @param hasWater params が有効か（false なら高さ 0 の平らな水面として扱う）
+  /// @param waterTime 水面アニメーションの時刻
+  /// @param deltaTime 前フレームからの経過時間（秒）。0 なら拡大率を目標値へ即座に合わせる
   void UpdateFloater(Floater &f, const RC::WaterWaveParams &params, bool hasWater,
                      float waterTime, float deltaTime) {
     auto e = f.entity.lock();
@@ -1593,6 +1708,7 @@ private:
   // ------------------------------------------------------------------
 
   /// @brief 選択を切り替える（跳ねる演出・リング・波紋込み）
+  /// @param index 新しく選択するメニュー項目の番号（範囲外・現在と同じなら何もしない）
   void SetSelected(int index) {
     if (index < 0 || index >= kMenuCount || index == selected_) return;
     selected_ = index;
@@ -1608,7 +1724,11 @@ private:
   /// @details カメラのレイを各項目の高さの水平面と交差させ、真上から見た文字の矩形
   ///          （幅 = halfW、上下 = zMin〜zMax、どちらも現在の拡大率込み）＋ mouseHitPadding で判定する。
   ///          メニューは yaw = 0・漂いなしなので、軸平行の矩形で足りる。
+  /// @param mx マウスの画面 X 座標（ピクセル）
+  /// @param my マウスの画面 Y 座標（ピクセル）
+  /// @return カーソル下のメニュー項目の番号。無ければ -1
   int PickMenuItem(float mx, float my) const {
+    // 画面サイズはウィンドウから取得し、取れなければ 1280x720 を仮定する。画面外なら判定しない
     float screenW = 1280.0f, screenH = 720.0f;
     auto &rc = RC::GetRenderContext();
     if (rc.Ctx() && rc.Ctx()->app && rc.Ctx()->app->width > 0 && rc.Ctx()->app->height > 0) {
@@ -1620,6 +1740,7 @@ private:
     const RC::Ray ray = RC::ScreenPointToRay({mx, my}, screenW, screenH, rc.View(), rc.Proj());
     if (std::fabs(ray.direction.y) < 1e-5f) return -1;
 
+    // 各項目について、その高さの水平面とレイの交点が文字の矩形（＋余白）内にあるかを調べる
     for (int i = 0; i < static_cast<int>(menu_.size()); ++i) {
       const Floater &f = menu_[i];
       auto e = f.entity.lock();
@@ -1639,6 +1760,8 @@ private:
     return -1;
   }
 
+  /// @brief キーボード・ゲームパッド・マウスでメニューの選択と決定を処理する
+  /// @note 「スタート」は遷移表の行き先へ（演出が dive なら飛び込み）、「ゲーム終了」はアプリを終了する
   void HandleInput() {
     SceneContext *ctx = GetSceneContext();
     if (!ctx || !ctx->input) return;
@@ -1682,7 +1805,7 @@ private:
       if (moved) mouseMode_ = true;
       if (moved && hovered_ >= 0 && hovered_ != selected_) SetSelected(hovered_);
 
-      // 決定ボタン（既定：右クリック）はカーソルが項目の上にあるときだけ。その項目を選んでから決定する
+      // 決定ボタン（既定：左クリック）はカーソルが項目の上にあるときだけ。その項目を選んでから決定する
       if (in->IsMouseTrigger(mouseConfirmButton) && hovered_ >= 0) {
         mouseMode_ = true;
         if (hovered_ != selected_) SetSelected(hovered_);
@@ -1695,6 +1818,7 @@ private:
     if (in->IsXInputConnected() && in->IsXInputButtonTrigger(XINPUT_GAMEPAD_A)) confirm = true;
     if (!confirm) return;
 
+    // 選択中の項目に応じて、シーン遷移（スタート）かアプリ終了（ゲーム終了）を行う
     if (selected_ == kMenuStart) {
       SceneContext *sc = GetSceneContext();
       if (sc && !sc->isPlaying()) return; // 編集モードでは飛ばない（RequestSceneChange と同じ）
@@ -1756,6 +1880,8 @@ private:
     decided_ = false;
   }
 
+  /// @brief 飛び込み演出を進め、沈みきったら Dive 遷移を要求する
+  /// @param dt 前フレームからの経過時間（秒）
   void UpdateDive(float dt) {
     if (!dive_.Update(dt)) {
       // カメラが消えた（エディタ操作など）。演出を諦めて素直に遷移する
@@ -1792,6 +1918,9 @@ private:
   // 操作ヒント（2D）
   // ------------------------------------------------------------------
 
+  /// @brief 画面下部に操作ヒントを帯・影付きで描画する
+  /// @param screenW 画面幅（ピクセル）
+  /// @param screenH 画面高さ（ピクセル）
   void DrawHint(float screenW, float screenH) {
     // マウスで操作しているときはマウス用の案内に切り替える
     const char *text = (mouseEnabled && mouseMode_)
@@ -1814,7 +1943,7 @@ private:
   static constexpr float kHalfPi = 1.57079632679f;
   static constexpr float kTwoPi = 6.28318530718f;
   static constexpr float kPulsePeriod = 1.4f; ///< 選択中メニューの明滅周期（秒）
-  static constexpr SHORT kStickThreshold = 16000;
+  static constexpr SHORT kStickThreshold = 16000; ///< 左スティックを上下に倒したとみなす閾値（最大 32767）
 
   std::vector<Floater> letters_;
   std::vector<Floater> menu_;

@@ -20,7 +20,10 @@
 
 namespace {
 
+/// @brief 静的初期化のタイミングでゲーム固有の設定をエンジンの登録口へ流し込む
+/// @details グローバル変数 g_gameSetup のコンストラクタとして main より前に一度だけ実行される。
 struct GameSetup {
+  /// @brief GameMode のファクトリ・Dive 遷移の画面色・遷移表の変数をエンジンへ登録する
   GameSetup() {
     // すべてのシーンを『水天の射手』のルールで動かす
     GameModeBase::SetFactory([](const std::string & /*sceneName*/) {

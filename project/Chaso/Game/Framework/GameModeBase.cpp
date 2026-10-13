@@ -27,6 +27,7 @@ void GameModeBase::SetFactory(Factory factory) {
 }
 
 std::unique_ptr<GameModeBase> GameModeBase::Create(const std::string& sceneName) {
+    // ファクトリ未登録、またはファクトリが null を返した場合は既定の GameModeBase で埋める
     if (auto& factory = FactoryStorage()) {
         if (auto mode = factory(sceneName)) {
             return mode;

@@ -62,6 +62,7 @@ bool RailShooterGameMode::EvaluateOutcome(Scene& scene, SceneContext& ctx,
     //
     // レールが無いシーン（単体テスト用など）は従来どおり全滅で判定する。
     if (!decided) {
+        // has_rail を持つエンティティがあればレールシーン。そのどれかに rail_finished が立てば終点到達
         bool hasRail = false;
         bool railFinished = false;
         for (const auto& e : entities) {
@@ -77,6 +78,7 @@ bool RailShooterGameMode::EvaluateOutcome(Scene& scene, SceneContext& ctx,
         if (hasRail) {
             cleared = railFinished;
         } else {
+            // 名前（Enemy / Shark）か is_enemy タグで敵を拾い、1 体以上いて全員 enemy_defeated なら全滅
             bool hasEnemy = false;
             bool allDefeated = true;
             for (const auto& e : entities) {

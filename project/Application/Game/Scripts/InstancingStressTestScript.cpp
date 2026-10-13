@@ -32,11 +32,15 @@ public:
   float spacing = 3.0f;       ///< 間隔 (m)
   float animatedRatio = 0.0f; ///< 毎フレーム動かす割合 (0〜1)
 
+  /// @brief 設定値（モデル・個数・間隔・動かす割合）を JSON に書き出す
+  /// @return 設定値を持つ JSON オブジェクト
   nlohmann::json Serialize() override {
     return {{"modelPath", modelPath}, {"count", count}, {"spacing", spacing},
             {"animatedRatio", animatedRatio}};
   }
 
+  /// @brief JSON から設定値を読み込む
+  /// @param j 読み込む JSON（無いキーは現在の値のまま）
   void Deserialize(const nlohmann::json &j) override {
     if (j.contains("modelPath")) modelPath = j["modelPath"].get<std::string>();
     if (j.contains("count")) count = j["count"].get<int>();
@@ -44,6 +48,7 @@ public:
     if (j.contains("animatedRatio")) animatedRatio = j["animatedRatio"].get<float>();
   }
 
+  /// @brief Inspector に前フレームの描画統計と設定値の編集 UI・再構築ボタンを表示する
   void OnImGui() override {
 #if RC_ENABLE_IMGUI
     ImGui::Text("Proxies: %u", RC::GetModelProxyCount());
@@ -67,12 +72,16 @@ public:
   }
 
 protected:
+  /// @brief 設定値に従ってプロキシを並べる
   void OnCreate() override { Rebuild(); }
 
+  /// @brief 先頭から animatedRatio の割合のプロキシを sin 波で上下に動かす（BVH 差分更新の負荷確認用）
+  /// @param deltaTime 前フレームからの経過時間（秒）
   void OnUpdate(float deltaTime) override {
     time_ += deltaTime;
     if (animatedRatio <= 0.0f || proxies_.empty()) return;
 
+    // 位相を index ごとに 0.1 ずつずらし、全部が同時に動かないようにする（振幅 0.5m）
     const size_t n = static_cast<size_t>(static_cast<float>(proxies_.size()) * animatedRatio);
     for (size_t i = 0; i < n && i < proxies_.size(); ++i) {
       Transform t = base_[i];
@@ -81,10 +90,12 @@ protected:
     }
   }
 
+  /// @brief 作ったプロキシとモデルを解放する
   void OnDestroy() override { Release(); }
 
 private:
   /// @brief 全プロキシを作り直す
+  /// @note count が 0 以下、またはモデルの読み込みに失敗したときは何も並べない。
   void Rebuild() {
     Release();
     if (count <= 0) return;
@@ -95,6 +106,8 @@ private:
     RC::Vector3 center = {0.0f, 0.0f, 0.0f};
     if (auto *tr = GetComponent<TransformComponent>()) center = tr->position;
 
+    // ceil(√count) 列の正方形の格子に、エンティティの位置を中心として並べる。
+    // 向きは index ごとに 0.37rad ずつ回して、全部が同じ向きにならないようにする
     const int side = static_cast<int>(std::ceil(std::sqrt(static_cast<float>(count))));
     const float half = static_cast<float>(side - 1) * spacing * 0.5f;
     proxies_.reserve(static_cast<size_t>(count));
@@ -117,7 +130,7 @@ private:
     }
   }
 
-  /// @brief 作ったプロキシとテンプレートを解放する
+  /// @brief 作ったプロキシと基準 Transform・読み込んだモデルを解放する
   void Release() {
     for (const auto &h : proxies_) RC::DestroyModelProxy(h);
     proxies_.clear();
@@ -128,10 +141,10 @@ private:
     }
   }
 
-  std::vector<RC::ModelProxyHandle> proxies_;
-  std::vector<Transform> base_;
-  int modelHandle_ = -1;
-  float time_ = 0.0f;
+  std::vector<RC::ModelProxyHandle> proxies_; ///< 作ったプロキシ
+  std::vector<Transform> base_;               ///< 各プロキシの基準 Transform（上下動の基準）
+  int modelHandle_ = -1;                      ///< 読み込んだモデル（未読込なら -1）
+  float time_ = 0.0f;                         ///< 経過時間（秒。上下動の位相に使う）
 };
 
 REGISTER_SCRIPT(InstancingStressTestScript)

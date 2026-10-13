@@ -13,14 +13,15 @@
 #include "imgui/imgui.h"
 #endif
 
+/// @brief サメ AI の行動状態
 enum class SharkState {
-    Wait,
-    Approach,
-    Attack,
-    Retreat
+    Wait,     ///< 水中で待機（その場で円を描いて巡回）
+    Approach, ///< 自機へ接近しながら浮上（背後にいるときは前方へ回り込む）
+    Attack,   ///< 向きを固定して直進で突進
+    Retreat   ///< 潜って自機前方の遠い地点まで引き返す
 };
 
-/// @brief Shark AI
+/// @brief サメ型の敵 AI（待機・接近・突進・引き返しの状態遷移で動く）
 /// @details 水中に潜んでいて、接近しながら水面へ浮き上がり、突進したあとは
 ///          潜って自機の前方遠くまで引き返す。引き返し先に着くまでは次の突進をしない。
 ///          （以前は自機前方 18m で折り返していたため、画面いっぱいのまま
@@ -55,6 +56,8 @@ public:
     RC::Vector3 modelRotationOffsetDeg = { 0.0f, -90.0f, 0.0f };
 
 protected:
+    /// @brief サメのパラメータを JSON に書き出す
+    /// @return 基底クラスの体力に加え、索敵・泳ぎ・突進・引き返し・潜行の各パラメータを格納した JSON
     nlohmann::json Serialize() override {
         nlohmann::json j = EnemyBaseScript::Serialize(); // 体力（hp / maxHp）はここで入る
         j["detectDistance"] = detectDistance;
@@ -77,6 +80,8 @@ protected:
         return j;
     }
 
+    /// @brief JSON からサメのパラメータを読み込む
+    /// @param j 読み込み元の JSON（存在するキーだけ反映する）
     void Deserialize(const nlohmann::json& j) override {
         EnemyBaseScript::Deserialize(j);
         if (j.contains("detectDistance")) detectDistance = j["detectDistance"].get<float>();
@@ -102,6 +107,8 @@ protected:
         }
     }
 
+    /// @brief 状態・既定 HP・初期の向きを設定し、生成時の高さを水面として記録する
+    /// @details コライダーが無ければ球コライダーを追加する。
     void OnCreate() override {
         EnemyBaseScript::OnCreate();
         Log::Print("[SharkEnemyScript] OnCreate");
@@ -112,6 +119,7 @@ protected:
             maxHp = 3;
         }
 
+        // モデルの向き補正（度数法）をラジアンに直して初期回転にする
         if (auto* tr = GetComponent<TransformComponent>()) {
             tr->rotation.x = modelRotationOffsetDeg.x * (3.14159265f / 180.0f);
             tr->rotation.y = modelRotationOffsetDeg.y * (3.14159265f / 180.0f);
@@ -135,6 +143,8 @@ protected:
         }
     }
 
+    /// @brief 自機（カメラ）との位置関係から状態を遷移させ、移動・突進・浮上／潜行を行う
+    /// @param deltaTime 前フレームからの経過時間（秒）
     void OnUpdate(float deltaTime) override {
         EnemyBaseScript::OnUpdate(deltaTime);
 
@@ -150,7 +160,7 @@ protected:
         Scene* scene = GetScene();
         if (!scene) return;
 
-        // Find Camera (cached)
+        // 自機（カメラ）を探す。前回見つけたものがまだ有効ならそれを使う
         std::shared_ptr<Entity> mainCamera = cachedTarget_.lock();
         if (!mainCamera || mainCamera->IsPendingDestroy() || !mainCamera->IsActive()) {
             mainCamera = nullptr;
@@ -167,6 +177,7 @@ protected:
         auto* camTr = mainCamera->GetComponent<TransformComponent>();
         if (!camTr) return;
 
+        // 自機までの距離は XZ 平面で測る（高さの差は潜行中でも無視する）
         RC::Vector3 toCam = {
             camTr->position.x - tr->position.x,
             camTr->position.y - tr->position.y,
@@ -205,7 +216,7 @@ protected:
         const float deepY = surfaceY_ - diveDepth;
         float targetY = tr->position.y;
 
-        // State Machine
+        // 状態ごとの行動と遷移
         switch (state_) {
             case SharkState::Wait:
                 // 水中で待機。プレイヤーが検知範囲内に入ったらApproachへ
@@ -219,6 +230,7 @@ protected:
                     swimTime_ += deltaTime;
                     float patrolSpeed = swimSpeed * 0.5f;
                     tr->rotation.y += patrolSpeed * 0.1f * deltaTime;
+                    // rotation.y にはモデルの向き補正が含まれるので、差し引いて実際の進行方向を求める
                     float realAngleY = tr->rotation.y - (modelRotationOffsetDeg.y * (3.14159265f / 180.0f));
                     tr->position.x += std::sin(realAngleY) * patrolSpeed * deltaTime;
                     tr->position.z += std::cos(realAngleY) * patrolSpeed * deltaTime;
@@ -238,6 +250,7 @@ protected:
                     float distToTarget = std::sqrt(toTarget.x * toTarget.x + toTarget.z * toTarget.z);
 
                     if (distToTarget > 0.01f) {
+                        // 目標の方向を向く（モデルの向き補正を足して見た目を合わせる）
                         float targetAngleY = std::atan2(toTarget.x, toTarget.z);
                         tr->rotation.y = targetAngleY + (modelRotationOffsetDeg.y * (3.14159265f / 180.0f));
 
@@ -254,7 +267,7 @@ protected:
                             forward.z * currentSpeed
                         };
 
-                        // Add lateral sine wave movement
+                        // 進行方向と直交する向きにサイン波の速度を足して左右に蛇行させる
                         float lateralVel = std::cos(swimTime_ * swimSineFrequency) * swimSineAmplitude * swimSineFrequency;
                         velocity.x += right.x * lateralVel;
                         velocity.z += right.z * lateralVel;
@@ -370,11 +383,13 @@ protected:
         }
     }
 
+    /// @brief 破棄されたことをログに出す
     void OnDestroy() override {
         Log::Print("[SharkEnemyScript] OnDestroy");
     }
 
 public:
+    /// @brief 基底クラスの表示に加え、サメの AI パラメータ編集と現在の状態をインスペクタに出す
     void OnImGui() override {
         EnemyBaseScript::OnImGui();
 #if RC_ENABLE_IMGUI
@@ -402,6 +417,9 @@ public:
     }
 
 private:
+    /// @brief 状態を表示用の文字列に変換する
+    /// @param s 変換する状態
+    /// @return 状態名（未知の値なら "?"）
     static const char* StateName(SharkState s) {
         switch (s) {
             case SharkState::Wait: return "Wait";
@@ -415,7 +433,7 @@ private:
     SharkState state_ = SharkState::Wait;
     std::weak_ptr<Entity> cachedTarget_;
 
-    // Swim parameters
+    // 泳ぎのパラメータと状態ごとのタイマー
     float swimSpeed = 6.0f;
     float swimSineAmplitude = 3.0f;
     float swimSineFrequency = 2.0f;

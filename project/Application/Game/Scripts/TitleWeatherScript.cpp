@@ -51,58 +51,130 @@
 
 namespace {
 
+/// @brief Vector3 を作る
+/// @param x X 成分
+/// @param y Y 成分
+/// @param z Z 成分
+/// @return 作ったベクトル
 RC::Vector3 V3(float x, float y, float z) { return RC::Vector3{x, y, z}; }
+/// @brief Vector4 を作る
+/// @param x X 成分
+/// @param y Y 成分
+/// @param z Z 成分
+/// @param w W 成分
+/// @return 作ったベクトル
 RC::Vector4 V4(float x, float y, float z, float w) { return RC::Vector4{x, y, z, w}; }
 
+/// @brief スカラーの線形補間
+/// @param a t = 0 のときの値
+/// @param b t = 1 のときの値
+/// @param t 補間係数
+/// @return 補間した値
 float Lerp(float a, float b, float t) { return a + (b - a) * t; }
+/// @brief Vector3 の成分ごとの線形補間
+/// @param a t = 0 のときの値
+/// @param b t = 1 のときの値
+/// @param t 補間係数
+/// @return 補間したベクトル
 RC::Vector3 Lerp3(const RC::Vector3 &a, const RC::Vector3 &b, float t) {
   return V3(Lerp(a.x, b.x, t), Lerp(a.y, b.y, t), Lerp(a.z, b.z, t));
 }
+/// @brief Vector4 の成分ごとの線形補間
+/// @param a t = 0 のときの値
+/// @param b t = 1 のときの値
+/// @param t 補間係数
+/// @return 補間したベクトル
 RC::Vector4 Lerp4(const RC::Vector4 &a, const RC::Vector4 &b, float t) {
   return V4(Lerp(a.x, b.x, t), Lerp(a.y, b.y, t), Lerp(a.z, b.z, t), Lerp(a.w, b.w, t));
 }
+/// @brief 0〜1 にクランプしてから smoothstep（3t² - 2t³）を掛ける
+/// @param t 入力値
+/// @return 0〜1 の滑らかな補間係数
 float Smooth01(float t) {
   t = std::clamp(t, 0.0f, 1.0f);
   return t * t * (3.0f - 2.0f * t);
 }
+/// @brief ベクトルを正規化する
+/// @param v 正規化するベクトル
+/// @param fallback 長さがほぼ 0 のときに返す値
+/// @return 正規化したベクトル（または fallback）
 RC::Vector3 Normalize3(const RC::Vector3 &v, const RC::Vector3 &fallback) {
   const float len = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
   if (len < 1e-6f) return fallback;
   return V3(v.x / len, v.y / len, v.z / len);
 }
 /// @brief 色を灰色（輝度）へ寄せる。amount = 1 で完全に灰色
+/// @param c 元の色（rgb）
+/// @param amount 灰色へ寄せる量（0〜1 にクランプ）
+/// @return 寄せた色
 RC::Vector3 Desaturate(const RC::Vector3 &c, float amount) {
   const float l = c.x * 0.299f + c.y * 0.587f + c.z * 0.114f;
   return Lerp3(c, V3(l, l, l), std::clamp(amount, 0.0f, 1.0f));
 }
 
+/// @brief Vector3 を JSON 配列 [x, y, z] にする
+/// @param v 変換するベクトル
+/// @return JSON 配列
 nlohmann::json J3(const RC::Vector3 &v) { return {v.x, v.y, v.z}; }
+/// @brief Vector4 を JSON 配列 [x, y, z, w] にする
+/// @param v 変換するベクトル
+/// @return JSON 配列
 nlohmann::json J4(const RC::Vector4 &v) { return {v.x, v.y, v.z, v.w}; }
 
+/// @brief j[key] が数値なら float として読み込む（無い・型違いなら out はそのまま）
+/// @param j 読み込み元の JSON
+/// @param key キー名
+/// @param out 読み込み先
 void ReadF(const nlohmann::json &j, const char *key, float &out) {
   if (j.contains(key) && j[key].is_number()) out = j[key].get<float>();
 }
+/// @brief j[key] が数値なら int として読み込む（無い・型違いなら out はそのまま）
+/// @param j 読み込み元の JSON
+/// @param key キー名
+/// @param out 読み込み先
 void ReadI(const nlohmann::json &j, const char *key, int &out) {
   if (j.contains(key) && j[key].is_number()) out = j[key].get<int>();
 }
+/// @brief j[key] が真偽値なら読み込む（無い・型違いなら out はそのまま）
+/// @param j 読み込み元の JSON
+/// @param key キー名
+/// @param out 読み込み先
 void ReadB(const nlohmann::json &j, const char *key, bool &out) {
   if (j.contains(key) && j[key].is_boolean()) out = j[key].get<bool>();
 }
+/// @brief j[key] が文字列なら読み込む（無い・型違いなら out はそのまま）
+/// @param j 読み込み元の JSON
+/// @param key キー名
+/// @param out 読み込み先
 void ReadS(const nlohmann::json &j, const char *key, std::string &out) {
   if (j.contains(key) && j[key].is_string()) out = j[key].get<std::string>();
 }
+/// @brief j[key] が要素 3 つ以上の配列なら Vector3 として読み込む（それ以外は out はそのまま）
+/// @param j 読み込み元の JSON
+/// @param key キー名
+/// @param out 読み込み先
 void ReadV3(const nlohmann::json &j, const char *key, RC::Vector3 &out) {
   if (!j.contains(key) || !j[key].is_array() || j[key].size() < 3) return;
   const auto &a = j[key];
   out = V3(a[0].get<float>(), a[1].get<float>(), a[2].get<float>());
 }
+/// @brief j[key] が要素 4 つ以上の配列なら Vector4 として読み込む（それ以外は out はそのまま）
+/// @param j 読み込み元の JSON
+/// @param key キー名
+/// @param out 読み込み先
 void ReadV4(const nlohmann::json &j, const char *key, RC::Vector4 &out) {
   if (!j.contains(key) || !j[key].is_array() || j[key].size() < 4) return;
   const auto &a = j[key];
   out = V4(a[0].get<float>(), a[1].get<float>(), a[2].get<float>(), a[3].get<float>());
 }
 
-/// @brief 行ベクトル × 行列（w も返す）
+/// @brief 行ベクトル × 行列で点を変換する（w も返す）
+/// @param p 変換する点（w = 1 として扱う）
+/// @param m 変換行列
+/// @param x 変換後の x
+/// @param y 変換後の y
+/// @param z 変換後の z
+/// @param w 変換後の w
 void TransformPoint(const RC::Vector3 &p, const RC::Matrix4x4 &m, float &x, float &y, float &z, float &w) {
   x = p.x * m.m[0][0] + p.y * m.m[1][0] + p.z * m.m[2][0] + m.m[3][0];
   y = p.x * m.m[0][1] + p.y * m.m[1][1] + p.z * m.m[2][1] + m.m[3][1];
@@ -139,6 +211,8 @@ public:
     float gradeTemperature = 0.0f;
     float gradeTint = 0.0f;
 
+    /// @brief 見た目を JSON にする
+    /// @return JSON オブジェクト
     nlohmann::json ToJson() const {
       return {{"lightColor", J4(lightColor)},
               {"lightDirection", J3(lightDirection)},
@@ -157,6 +231,8 @@ public:
               {"gradeTemperature", gradeTemperature},
               {"gradeTint", gradeTint}};
     }
+    /// @brief JSON から見た目を読み込む（無いキーは現在値のまま）
+    /// @param j 読み込み元の JSON
     void FromJson(const nlohmann::json &j) {
       if (!j.is_object()) return;
       ReadV4(j, "lightColor", lightColor);
@@ -176,6 +252,11 @@ public:
       ReadF(j, "gradeTemperature", gradeTemperature);
       ReadF(j, "gradeTint", gradeTint);
     }
+    /// @brief 2 つの見た目を補間する（光の向きは補間後に正規化する）
+    /// @param a t = 0 のときの見た目
+    /// @param b t = 1 のときの見た目
+    /// @param t 補間係数
+    /// @return 補間した見た目
     static Look Mix(const Look &a, const Look &b, float t) {
       Look r;
       r.lightColor = Lerp4(a.lightColor, b.lightColor, t);
@@ -213,6 +294,8 @@ public:
     float whitecapAdd = 0.0f;     ///< 白波の量に足す
     RC::Vector4 haze{1.0f, 1.0f, 1.0f, 0.0f}; ///< 画面全体に薄く掛ける空気の色（a = 濃さ）。雪の白い霞など
 
+    /// @brief 天候補正を JSON にする
+    /// @return JSON オブジェクト
     nlohmann::json ToJson() const {
       return {{"lightScale", lightScale},       {"lightDesaturate", lightDesaturate},
               {"ambientAdd", ambientAdd},       {"exposureAdd", exposureAdd},
@@ -221,6 +304,8 @@ public:
               {"skyScale", skyScale},           {"waveScale", waveScale},
               {"whitecapAdd", whitecapAdd}, {"haze", J4(haze)}};
     }
+    /// @brief JSON から天候補正を読み込む（無いキーは現在値のまま）
+    /// @param j 読み込み元の JSON
     void FromJson(const nlohmann::json &j) {
       if (!j.is_object()) return;
       ReadF(j, "lightScale", lightScale);
@@ -238,6 +323,7 @@ public:
     }
   };
 
+  /// @brief 雨（粒・水面の波紋・着水の輪）の設定
   struct RainParams {
     int maxDrops = 300;           ///< 雷雨（強さ 1）のときの粒数。普通の雨は amount 倍
     float amount = 0.6f;          ///< 普通の雨の粒数の割合（雷雨 = 1）
@@ -265,6 +351,8 @@ public:
     float ringLife = 0.35f;
     RC::Vector4 ringColor{0.85f, 0.92f, 1.0f, 0.45f};
 
+    /// @brief 雨の設定を JSON にする
+    /// @return JSON オブジェクト
     nlohmann::json ToJson() const {
       return {{"maxDrops", maxDrops},       {"amount", amount},
               {"speed", speed},             {"wind", J3(wind)},
@@ -277,6 +365,9 @@ public:
               {"ringSize", ringSize},       {"ringLife", ringLife},
               {"ringColor", J4(ringColor)}};
     }
+    /// @brief JSON から雨の設定を読み込む（無いキーは現在値のまま）
+    /// @param j 読み込み元の JSON
+    /// @note maxDrops / ringMax / rippleMaxPerFrame は上限付きでクランプする
     void FromJson(const nlohmann::json &j) {
       if (!j.is_object()) return;
       ReadI(j, "maxDrops", maxDrops);
@@ -304,6 +395,7 @@ public:
     }
   };
 
+  /// @brief 雪（雪片の落下・揺れ・見た目）の設定
   struct SnowParams {
     int maxFlakes = 200;
     float fallSpeedMin = 0.9f;    ///< m/s
@@ -324,6 +416,8 @@ public:
     float bokehAlpha = 0.18f;     ///< ぼけ玉の濃さ
     RC::Vector4 color{1.0f, 1.0f, 1.0f, 0.9f};
 
+    /// @brief 雪の設定を JSON にする
+    /// @return JSON オブジェクト
     nlohmann::json ToJson() const {
       return {{"maxFlakes", maxFlakes},       {"fallSpeedMin", fallSpeedMin},
               {"fallSpeedMax", fallSpeedMax}, {"wind", J3(wind)},
@@ -335,6 +429,9 @@ public:
               {"haloAlpha", haloAlpha},       {"bokehMaxPixel", bokehMaxPixel},
               {"bokehAlpha", bokehAlpha},     {"color", J4(color)}};
     }
+    /// @brief JSON から雪の設定を読み込む（無いキーは現在値のまま）
+    /// @param j 読み込み元の JSON
+    /// @note maxFlakes は 0〜1500 にクランプする
     void FromJson(const nlohmann::json &j) {
       if (!j.is_object()) return;
       ReadI(j, "maxFlakes", maxFlakes);
@@ -359,6 +456,7 @@ public:
     }
   };
 
+  /// @brief 雷（稲光の間隔・明るさ・雷鳴の遅れ）の設定
   struct LightningParams {
     bool enabled = true;
     float minLevel = 0.6f;        ///< 雷雨の強さがこれを超えているあいだだけ落ちる
@@ -371,6 +469,8 @@ public:
     float thunderDelayMin = 0.5f; ///< 光ってから雷鳴までの遅れ
     float thunderDelayMax = 1.8f;
 
+    /// @brief 雷の設定を JSON にする
+    /// @return JSON オブジェクト
     nlohmann::json ToJson() const {
       return {{"enabled", enabled},         {"minLevel", minLevel},
               {"intervalMin", intervalMin}, {"intervalMax", intervalMax},
@@ -378,6 +478,8 @@ public:
               {"lightBoost", lightBoost},   {"ambientBoost", ambientBoost},
               {"thunderDelayMin", thunderDelayMin}, {"thunderDelayMax", thunderDelayMax}};
     }
+    /// @brief JSON から雷の設定を読み込む（無いキーは現在値のまま）
+    /// @param j 読み込み元の JSON
     void FromJson(const nlohmann::json &j) {
       if (!j.is_object()) return;
       ReadB(j, "enabled", enabled);
@@ -393,9 +495,12 @@ public:
     }
   };
 
+  /// @brief 時間帯の見た目の種類（looks の添字）
   enum LookId { kDay = 0, kEvening, kNight, kDawn, kLookCount };
+  /// @brief 天候の種類
   enum class Weather { Clear = 0, Rain, Snow, Storm };
 
+  /// @brief 時間帯スケジュールのキー（1 周の中の位置と、そこでの見た目）
   struct ScheduleKey {
     float t = 0.0f; ///< 0〜1（1 周の中の位置）
     int look = kDay;
@@ -444,6 +549,8 @@ public:
   // Serialize / Deserialize
   // ------------------------------------------------------------------
 
+  /// @brief 全設定を JSON にする（schedule は [位置, look 名] の配列）
+  /// @return JSON オブジェクト
   nlohmann::json Serialize() override {
     nlohmann::json sched = nlohmann::json::array();
     for (const auto &k : schedule) sched.push_back({k.t, LookName(k.look)});
@@ -478,18 +585,23 @@ public:
             {"thunderVolume", thunderVolume}};
   }
 
+  /// @brief JSON から全設定を読み込む（無いキーは現在値のまま）
+  /// @param j 読み込み元の JSON
+  /// @note schedule は不正なキーを捨てて位置の昇順に並べ替える。有効なキーが 1 つも無ければ既定のまま
   void Deserialize(const nlohmann::json &j) override {
     ReadB(j, "enabled", enabled);
     ReadB(j, "timeEnabled", timeEnabled);
     ReadF(j, "cycleSeconds", cycleSeconds);
     cycleSeconds = (std::max)(cycleSeconds, 1.0f);
     ReadF(j, "startPhase", startPhase);
+    // 時間帯ごとの見た目（look 名をキーにしたオブジェクト）
     if (j.contains("looks") && j["looks"].is_object()) {
       for (int i = 0; i < kLookCount; ++i) {
         const char *name = LookName(i);
         if (j["looks"].contains(name)) looks[i].FromJson(j["looks"][name]);
       }
     }
+    // スケジュール：[位置, look 名] の配列。不正なキーは捨て、位置の昇順に並べ替える
     if (j.contains("schedule") && j["schedule"].is_array()) {
       std::vector<ScheduleKey> keys;
       for (const auto &k : j["schedule"]) {
@@ -503,6 +615,7 @@ public:
         schedule = std::move(keys);
       }
     }
+    // 天候の待ち時間・遷移時間・抽選の重み
     if (j.contains("weather") && j["weather"].is_object()) {
       const auto &w = j["weather"];
       ReadB(w, "enabled", weatherEnabled);
@@ -537,6 +650,7 @@ public:
   // ------------------------------------------------------------------
 
 #if RC_ENABLE_IMGUI
+  /// @brief 時間帯・天候・雨・雪・雷の設定を編集する UI と、時間帯／天候をその場で切り替えるプレビュー用ボタンを表示する
   void OnImGui() override {
     ImGui::Checkbox("Enabled", &enabled);
     ImGui::Text("phase %.3f (%s)  weather: %s  level %.2f  drops %d  flakes %d", phase_, PhaseLabel(phase_),
@@ -548,6 +662,7 @@ public:
     ImGui::SliderFloat("Phase", &phase_, 0.0f, 0.9999f);
     ImGui::SameLine();
     ImGui::TextDisabled("(drag to preview)");
+    // 各時間帯の区間の中ほど（DefaultSchedule 基準）へ位置を飛ばす
     if (ImGui::Button("Day")) phase_ = 0.10f;
     ImGui::SameLine();
     if (ImGui::Button("Evening")) phase_ = 0.46f;
@@ -557,6 +672,7 @@ public:
     if (ImGui::Button("Dawn")) phase_ = 0.905f;
     ImGui::DragFloat("Start Phase", &startPhase, 0.005f, 0.0f, 1.0f);
 
+    // 時間帯ごとの見た目
     for (int i = 0; i < kLookCount; ++i) {
       if (ImGui::TreeNode(LookName(i))) {
         Look &l = looks[i];
@@ -601,6 +717,7 @@ public:
     ImGui::DragFloat("Weight Snow", &weightSnow, 0.01f, 0.0f, 10.0f);
     ImGui::DragFloat("Weight Storm", &weightStorm, 0.01f, 0.0f, 10.0f);
 
+    // 天候補正の編集 UI（雨・雪・雷雨で共通）
     auto editMod = [](const char *label, WeatherMod &m) {
       if (!ImGui::TreeNode(label)) return;
       ImGui::DragFloat("Light Scale", &m.lightScale, 0.01f, 0.0f, 2.0f);
@@ -681,6 +798,7 @@ public:
 #endif
 
 protected:
+  /// @brief 乱数・時間帯の位置・天候の状態を初期化し、雨音と雷鳴のクリップを読み込む
   void OnCreate() override {
     rng_.seed(std::random_device{}());
     phase_ = startPhase - std::floor(startPhase);
@@ -693,6 +811,9 @@ protected:
     if (!thunderSoundPath.empty()) thunderClip_ = AudioEngine::Get().LoadClip(thunderSoundPath);
   }
 
+  /// @brief 再生中だけ、時間帯と天候を進めて雨・雪を動かし、平行光源／水面／空／カラーグレードへ反映する
+  /// @param deltaTime 前フレームからの経過秒
+  /// @note 再生していない・無効のときは書き換えた値を元に戻す
   void OnUpdate(float deltaTime) override {
     SceneContext *ctx = GetSceneContext();
     if (!ctx || !ctx->isPlaying() || !enabled) {
@@ -703,6 +824,7 @@ protected:
     }
     const float dt = (std::max)(deltaTime, 0.0f);
 
+    // 時間帯の位置を進める（0〜1 で一周）
     if (timeEnabled && dt > 0.0f) {
       phase_ += dt / (std::max)(cycleSeconds, 1.0f);
       phase_ -= std::floor(phase_);
@@ -710,6 +832,7 @@ protected:
     if (dt > 0.0f) UpdateWeatherState(dt);
     UpdateLightning(dt);
 
+    // 粒の生成・巡回は画面空間で行うので、先にカメラ情報を更新する
     UpdateView();
     if (dt > 0.0f) {
       UpdateRain(dt);
@@ -720,6 +843,7 @@ protected:
     UpdateSound();
   }
 
+  /// @brief 霞・雨・雪・稲光の順に画面へ描く（カメラが水中なら描かない）
   void OnRender() override {
     if (!enabled || !viewValid_ || camVisible_ <= 0.001f) return;
     const auto &rc = RC::GetRenderContext();
@@ -731,6 +855,7 @@ protected:
     DrawFlash();
   }
 
+  /// @brief 書き換えたシーンの値を戻し、雨音を止めてクリップを解放する
   void OnDestroy() override {
     RestoreScene();
     StopRainSound();
@@ -740,14 +865,17 @@ protected:
   }
 
 private:
+  /// @brief 天候の進行状態（晴れ → 強まる → 続く → 弱まる）
   enum class State { Clear, FadeIn, Hold, FadeOut };
 
+  /// @brief 雨粒 1 つ（ワールド座標で動かす）
   struct Drop {
     RC::Vector3 pos{};
     RC::Vector3 vel{};
     float age = 0.0f;
     bool alive = false;
   };
+  /// @brief 雪片 1 つ（ワールド座標で動かす）
   struct Flake {
     RC::Vector3 pos{};
     float fall = 1.0f;
@@ -761,6 +889,7 @@ private:
     float melt = -1.0f; ///< 着水後の経過（< 0 なら空中）
     bool alive = false;
   };
+  /// @brief 着水点に広がる 2D の輪 1 つ
   struct Ring {
     RC::Vector3 pos{};
     float age = 0.0f;
@@ -770,6 +899,9 @@ private:
   // 既定値
   // ------------------------------------------------------------------
 
+  /// @brief 時間帯の見た目 ID を JSON / UI 用の名前にする
+  /// @param i 見た目 ID（LookId）
+  /// @return 名前（範囲外なら "day"）
   static const char *LookName(int i) {
     switch (i) {
     case kDay: return "day";
@@ -779,12 +911,18 @@ private:
     default: return "day";
     }
   }
+  /// @brief 名前から時間帯の見た目 ID を引く
+  /// @param s 名前
+  /// @return 見た目 ID。該当が無ければ -1
   static int LookIdFromName(const std::string &s) {
     for (int i = 0; i < kLookCount; ++i) {
       if (s == LookName(i)) return i;
     }
     return -1;
   }
+  /// @brief 天候の表示名
+  /// @param w 天候
+  /// @return 名前
   static const char *WeatherName(Weather w) {
     switch (w) {
     case Weather::Rain: return "rain";
@@ -793,6 +931,9 @@ private:
     default: return "clear";
     }
   }
+  /// @brief 天候の進行状態の表示名
+  /// @param s 状態
+  /// @return 名前
   static const char *StateName(State s) {
     switch (s) {
     case State::FadeIn: return "fade-in";
@@ -801,6 +942,9 @@ private:
     default: return "clear";
     }
   }
+  /// @brief 位置 p の直前のスケジュールキーの look 名（デバッグ表示用）
+  /// @param p 1 周の中の位置（0〜1）
+  /// @return look 名
   const char *PhaseLabel(float p) const {
     // いちばん近い（直前の）キーの look 名
     int id = schedule.empty() ? kDay : schedule.back().look;
@@ -810,6 +954,8 @@ private:
     return LookName(id);
   }
 
+  /// @brief 昼・夕方・夜・明け方の既定の見た目
+  /// @return looks の既定値
   static std::array<Look, kLookCount> DefaultLooks() {
     std::array<Look, kLookCount> l{};
     // 昼：Title.json の初期値と同じ（昼のあいだは今までの見た目のまま）
@@ -888,6 +1034,8 @@ private:
     return l;
   }
 
+  /// @brief 既定の時間帯スケジュール
+  /// @return 位置の昇順に並んだキー列
   static std::vector<ScheduleKey> DefaultSchedule() {
     // 180 秒で：昼 54s → 夕方へ 22s → 夕方 14s → 夜へ 18s → 夜 36s → 明け方へ 14s → 明け方 9s → 昼へ 13s
     return {{0.00f, kDay},  {0.30f, kDay},   {0.42f, kEvening}, {0.50f, kEvening},
@@ -898,7 +1046,13 @@ private:
   // 乱数
   // ------------------------------------------------------------------
 
+  /// @brief [0, 1) の一様乱数
+  /// @return 乱数
   float Rand01() { return std::uniform_real_distribution<float>(0.0f, 1.0f)(rng_); }
+  /// @brief a〜b の一様乱数（a > b なら入れ替える）
+  /// @param a 下限
+  /// @param b 上限
+  /// @return 乱数
   float RandRange(float a, float b) {
     if (b < a) std::swap(a, b);
     return a + (b - a) * Rand01();
@@ -908,7 +1062,9 @@ private:
   // 時間帯
   // ------------------------------------------------------------------
 
-  /// @brief 現在の phase の見た目（schedule のキー間を smoothstep 補間。最後のキー → 最初のキーへ一周で戻る）
+  /// @brief 位置 p の見た目（schedule のキー間を smoothstep 補間。最後のキー → 最初のキーへ一周で戻る）
+  /// @param p 1 周の中の位置（0〜1）
+  /// @return 補間した見た目
   Look EvaluateTimeLook(float p) const {
     if (schedule.empty()) return looks[kDay];
     if (schedule.size() == 1) return looks[schedule[0].look];
@@ -933,11 +1089,14 @@ private:
   // 天候
   // ------------------------------------------------------------------
 
+  /// @brief 天候の状態遷移（晴れ → FadeIn → Hold → FadeOut → 晴れ）を進め、強さ level_ を更新する
+  /// @param dt 経過秒
   void UpdateWeatherState(float dt) {
     stateTimer_ -= dt;
     switch (state_) {
     case State::Clear:
       level_ = 0.0f;
+      // 強制切り替えの予約があればそれを始める。無ければ晴れの待ちが切れたところで抽選する
       if (pendingWeather_ != Weather::Clear) {
         BeginWeather(pendingWeather_);
         pendingWeather_ = Weather::Clear;
@@ -975,12 +1134,17 @@ private:
     }
   }
 
+  /// @brief 天候 w を強まり始めの状態にする
+  /// @param w 始める天候
+  /// @note 最初の稲光までの待ちは、通常の間隔の半分にする
   void BeginWeather(Weather w) {
     weather_ = w;
     state_ = State::FadeIn;
     lightningTimer_ = RandRange(lightning.intervalMin, lightning.intervalMax) * 0.5f;
   }
 
+  /// @brief weights の比率で雨・雪・雷雨を抽選する
+  /// @return 抽選した天候。重みの合計がほぼ 0 なら Clear
   Weather PickWeather() {
     const float wr = (std::max)(weightRain, 0.0f);
     const float ws = (std::max)(weightSnow, 0.0f);
@@ -994,6 +1158,7 @@ private:
   }
 
   /// @brief ImGui から天候を切り替える（今の天候が残っていれば先に素早く止める）
+  /// @param w 切り替え先の天候（Clear なら今の天候を止める）
   void ForceWeather(Weather w) {
     if (w == Weather::Clear) {
       pendingWeather_ = Weather::Clear;
@@ -1009,7 +1174,8 @@ private:
     state_ = State::FadeOut;
   }
 
-  /// @brief 天候の見た目補正（強さで無補正 → 満額へ）
+  /// @brief 現在の天候の見た目補正（強さに応じて無補正 → 満額へ補間）
+  /// @return 補正値（晴れなら無補正）
   WeatherMod CurrentMod() const {
     const WeatherMod *m = nullptr;
     switch (weather_) {
@@ -1036,17 +1202,22 @@ private:
     return r;
   }
 
+  /// @brief 雨粒の量の割合（雷雨は強さそのまま、普通の雨は rain.amount 倍）
+  /// @return 0〜1
   float RainLevel() const {
     if (weather_ == Weather::Storm) return Smooth01(level_);
     if (weather_ == Weather::Rain) return Smooth01(level_) * std::clamp(rain.amount, 0.0f, 1.0f);
     return 0.0f;
   }
+  /// @brief 雪片の量の割合
+  /// @return 0〜1（雪以外は 0）
   float SnowLevel() const { return (weather_ == Weather::Snow) ? Smooth01(level_) : 0.0f; }
 
   // ------------------------------------------------------------------
   // 雷
   // ------------------------------------------------------------------
 
+  /// @brief 稲光を 1 回起こす（2〜3 回の明滅を予約し、雷鳴までの遅れを決める）
   void StrikeLightning() {
     flashTime_ = 0.0f;
     flashActive_ = true;
@@ -1061,8 +1232,10 @@ private:
     thunderTimer_ = RandRange(lightning.thunderDelayMin, lightning.thunderDelayMax);
   }
 
+  /// @brief 稲光の明滅の強さ flash_ を計算し、遅れて雷鳴を鳴らし、雷雨中は次の稲光を起こす
+  /// @param dt 経過秒（0 以下なら明滅の計算だけ行う）
   void UpdateLightning(float dt) {
-    // 明滅の包絡線：各パルスの指数減衰の最大
+    // 明滅の包絡線：各パルスの指数減衰（時定数 0.07 秒）の最大。最後のパルスから 0.6 秒で終える
     flash_ = 0.0f;
     if (flashActive_) {
       flashTime_ += dt;
@@ -1072,6 +1245,7 @@ private:
       }
       if (flashTime_ > pulseT_[pulseCount_ - 1] + 0.6f) flashActive_ = false;
     }
+    // 光ってから遅れて雷鳴を鳴らす（カメラが水中なら小さく）
     if (thunderTimer_ > 0.0f && dt > 0.0f) {
       thunderTimer_ -= dt;
       if (thunderTimer_ <= 0.0f && thunderClip_ >= 0) {
@@ -1079,6 +1253,7 @@ private:
       }
     }
     if (dt <= 0.0f) return;
+    // 雷雨の強さが minLevel 以上のあいだだけ、ランダムな間隔で稲光を起こす
     if (!lightning.enabled || weather_ != Weather::Storm || level_ < lightning.minLevel) return;
     lightningTimer_ -= dt;
     if (lightningTimer_ <= 0.0f) {
@@ -1091,6 +1266,8 @@ private:
   // カメラ（画面 ⇔ ワールド）
   // ------------------------------------------------------------------
 
+  /// @brief メインカメラの位置・前方・行列、画面サイズ、水面の高さを取得する（粒の生成・投影に使う）
+  /// @note カメラが見つからない・前方が求まらなければ viewValid_ = false
   void UpdateView() {
     viewValid_ = false;
     Scene *scene = GetScene();
@@ -1101,6 +1278,7 @@ private:
     camPos_ = tr->position;
     waterY_ = WaterCameraFx::FindWaterY(scene);
 
+    // 画面サイズ（取れなければ 1280x720）
     screenW_ = 1280.0f;
     screenH_ = 720.0f;
     auto &rc = RC::GetRenderContext();
@@ -1110,6 +1288,7 @@ private:
     }
     view_ = rc.View();
     proj_ = rc.Proj();
+    // 画面中央を通るレイの向きをカメラの前方とする
     const RC::Ray center = RC::ScreenPointToRay({screenW_ * 0.5f, screenH_ * 0.5f}, screenW_, screenH_, view_, proj_);
     camFwd_ = Normalize3(center.direction, V3(0.0f, -1.0f, 0.0f));
     // カメラが水面の下（飛び込み演出）なら雨・雪は描かない。水面のすぐ上で徐々に消す
@@ -1118,6 +1297,10 @@ private:
   }
 
   /// @brief 画面上のランダムな点 × 奥行き（d² 分布 = 体積あたり一様）で、水面より上のワールド座標を作る
+  /// @param nearDepth カメラからこの奥行きより手前には作らない
+  /// @param margin 画面外へはみ出してよい量（px）
+  /// @param out 作ったワールド座標
+  /// @return 作れたら true（レイが前を向かない・奥行きの範囲が無い・非有限なら false）
   bool RandomPointInView(float nearDepth, float margin, RC::Vector3 &out) {
     const float sx = RandRange(-margin, screenW_ + margin);
     const float sy = RandRange(-margin, screenH_ + margin);
@@ -1143,7 +1326,14 @@ private:
     return std::isfinite(out.x) && std::isfinite(out.y) && std::isfinite(out.z);
   }
 
-  /// @brief ワールド → 画面。カメラの手前 nearDepth 未満なら false。outDepth はビュー空間の奥行き
+  /// @brief ワールド → 画面。カメラの手前 nearDepth 未満なら false
+  /// @param p ワールド座標
+  /// @param view ビュー行列
+  /// @param viewProj ビュー × 射影行列
+  /// @param nearDepth これより手前（ビュー空間の奥行き）は投影しない
+  /// @param outScreen 画面座標（px、左上原点）
+  /// @param outDepth ビュー空間の奥行き
+  /// @return 投影できたら true
   bool Project(const RC::Vector3 &p, const RC::Matrix4x4 &view, const RC::Matrix4x4 &viewProj, float nearDepth,
                RC::Vector2 &outScreen, float &outDepth) const {
     float vx, vy, vz, vw;
@@ -1159,12 +1349,15 @@ private:
   }
 
   /// @brief 粒を生む・巡回させる範囲の画面外へのはみ出し（px）
+  /// @return はみ出し量（px）
   float SpawnMargin() const { return 40.0f; }
 
   /// @brief 画面の外へ流れ出た粒を、同じ奥行きのまま反対側の端へ戻す（画面空間で巡回）
   /// @details 横風で粒は画面上を一方向へ流れる。出た粒を画面内のランダムな位置で生み直すと
   ///          風上側（流れの上流）へ流れ込む粒が無く、上流が薄く下流が濃い偏りになる。
   ///          出た粒を上流の端へ巡回させれば、どの奥行きでも画面全体の密度が一様に保たれる。
+  /// @param pos 粒のワールド座標（巡回したら書き換える）
+  /// @param viewProj ビュー × 射影行列
   /// @return 範囲内のまま／巡回できたら true。巡回先が水面の下などで置けなければ false（生み直す）
   bool WrapInView(RC::Vector3 &pos, const RC::Matrix4x4 &viewProj) const {
     RC::Vector2 s;
@@ -1183,6 +1376,11 @@ private:
   }
 
   /// @brief 画面座標 (sx, sy) を、ビュー空間の奥行き depth のワールド座標へ戻す
+  /// @param sx 画面 X（px）
+  /// @param sy 画面 Y（px）
+  /// @param depth ビュー空間の奥行き
+  /// @param out 求めたワールド座標
+  /// @return 求まったら true（レイが前を向かない・非有限なら false）
   bool ScreenToWorldAtDepth(float sx, float sy, float depth, RC::Vector3 &out) const {
     const RC::Ray ray = RC::ScreenPointToRay({sx, sy}, screenW_, screenH_, view_, proj_);
     const float dirFwd = ray.direction.x * camFwd_.x + ray.direction.y * camFwd_.y + ray.direction.z * camFwd_.z;
@@ -1195,6 +1393,10 @@ private:
     return std::isfinite(out.x) && std::isfinite(out.y) && std::isfinite(out.z);
   }
 
+  /// @brief 画面座標が画面（周囲 margin を含む）の内側か
+  /// @param s 画面座標（px）
+  /// @param margin 画面外へのはみ出しを許す量（px）
+  /// @return 内側なら true
   bool OnScreen(const RC::Vector2 &s, float margin) const {
     return s.x >= -margin && s.y >= -margin && s.x <= screenW_ + margin && s.y <= screenH_ + margin;
   }
@@ -1203,11 +1405,15 @@ private:
   // 雨
   // ------------------------------------------------------------------
 
+  /// @brief 雨の横風（雷雨では stormWindScale 倍）
+  /// @return 風速 m/s
   RC::Vector3 RainWind() const {
     const float s = (weather_ == Weather::Storm) ? rain.stormWindScale : 1.0f;
     return V3(rain.wind.x * s, rain.wind.y * s, rain.wind.z * s);
   }
 
+  /// @brief 画面内のランダムな位置に雨粒を生む（落下速度は ±15% ばらつかせる）
+  /// @param d 生成先の粒（生めなければ alive = false のまま）
   void SpawnDrop(Drop &d) {
     RC::Vector3 p;
     d.alive = false;
@@ -1220,10 +1426,14 @@ private:
     d.alive = true;
   }
 
+  /// @brief 雨の強さに応じた数の雨粒を動かし、着水したら波紋・輪を立てて生み直し、画面外へ出たら巡回させる
+  /// @param dt 経過秒
   void UpdateRain(float dt) {
     const float lv = RainLevel();
     const int target = static_cast<int>(static_cast<float>(rain.maxDrops) * lv + 0.5f);
+    // 配列は maxDrops まで確保し、先頭 target 個だけを新しく生む
     if (static_cast<int>(drops_.size()) < rain.maxDrops) drops_.resize(rain.maxDrops);
+    // 波紋は 1 フレームあたり rippleMaxPerFrame 個まで（カメラが水中なら立てない）
     int ripplesLeft = (rain.ripples && camVisible_ > 0.0f) ? rain.rippleMaxPerFrame : 0;
     activeDrops_ = 0;
     const RC::Matrix4x4 viewProj = ::Multiply(view_, proj_);
@@ -1260,6 +1470,8 @@ private:
     }
   }
 
+  /// @brief 着水の輪の経過を進め、寿命を過ぎたものを消す
+  /// @param dt 経過秒
   void UpdateRings(float dt) {
     for (auto &r : rings_) r.age += dt;
     rings_.erase(std::remove_if(rings_.begin(), rings_.end(),
@@ -1267,6 +1479,9 @@ private:
                  rings_.end());
   }
 
+  /// @brief 雨粒を「streakTime 秒前の位置 → 現在位置」の筋として描き、着水の輪も描く
+  /// @param view ビュー行列
+  /// @param viewProj ビュー × 射影行列
   void DrawRain(const RC::Matrix4x4 &view, const RC::Matrix4x4 &viewProj) {
     if (activeDrops_ <= 0 && rings_.empty()) return;
     const float vis = camVisible_;
@@ -1286,11 +1501,13 @@ private:
       if (c.w <= 0.003f) continue;
       RC::DrawLine(b, a, c, rain.thickness, 1.0f);
     }
+    // 着水の輪：半径（m）を奥行きで px に換算し、広がりながら薄れる
     for (const Ring &r : rings_) {
       const float t = std::clamp(r.age / (std::max)(rain.ringLife, 0.01f), 0.0f, 1.0f);
       RC::Vector2 s;
       float depth;
       if (!Project(r.pos, view, viewProj, 0.1f, s, depth)) continue;
+      // 焦点距離（px）= proj[1][1] × 画面の高さ / 2
       const float focal = proj_.m[1][1] * screenH_ * 0.5f;
       const float px = (std::max)(1.0f, rain.ringSize * t * focal / (std::max)(depth, 0.1f));
       RC::Vector4 c = rain.ringColor;
@@ -1304,6 +1521,8 @@ private:
   // 雪
   // ------------------------------------------------------------------
 
+  /// @brief 画面内のランダムな位置に雪片を生み、大きさ・落下速度・揺れ・明るさをばらつかせる
+  /// @param f 生成先の雪片（生めなければ alive = false のまま）
   void SpawnFlake(Flake &f) {
     RC::Vector3 p;
     f.alive = false;
@@ -1322,6 +1541,8 @@ private:
     f.alive = true;
   }
 
+  /// @brief 雪の強さに応じた数の雪片を揺らしながら落とし、着水したら溶かし、画面外へ出たら巡回させる
+  /// @param dt 経過秒
   void UpdateSnow(float dt) {
     const float lv = SnowLevel();
     const int target = static_cast<int>(static_cast<float>(snow.maxFlakes) * lv + 0.5f);
@@ -1330,6 +1551,7 @@ private:
     const RC::Matrix4x4 viewProj = ::Multiply(view_, proj_);
     for (int i = 0; i < static_cast<int>(flakes_.size()); ++i) {
       Flake &f = flakes_[i];
+      // target 以降の雪片は新しく生まず、残っているものは落とし切る（雨と同じ）
       if (i >= target) {
         if (!f.alive) continue;
       } else if (!f.alive) {
@@ -1348,15 +1570,18 @@ private:
         ++activeFlakes_;
         continue;
       }
+      // ゆっくりした大きな揺れ（z は周期 0.7 倍・振幅 0.6 倍でずらす）
       const float sway = std::sin(f.age * f.swayFreq + f.swayPhase) * snow.swayAmplitude;
       const float swayZ = std::cos(f.age * f.swayFreq * 0.7f + f.swayPhase) * snow.swayAmplitude * 0.6f;
       // ひらひら：大きな揺れ（sway）に、速く小さな揺れ（flutter）を重ねる
       const float fl = f.age * f.flutterFreq + f.flutterPhase;
       const float flX = std::sin(fl) * snow.flutter;
       const float flZ = std::cos(fl * 1.3f) * snow.flutter;
+      // 落下速度も flutter の半分の速さで ±25% 揺らす
       f.pos.x += (snow.wind.x + sway + flX) * dt;
       f.pos.y += (snow.wind.y - f.fall * (1.0f + 0.25f * std::sin(fl * 0.5f))) * dt;
       f.pos.z += (snow.wind.z + swayZ + flZ) * dt;
+      // 着水したら水面で止めて溶かし始める
       if (f.pos.y <= waterY_) {
         f.pos.y = waterY_;
         f.melt = 0.0f;
@@ -1370,8 +1595,12 @@ private:
     }
   }
 
+  /// @brief 雪片を奥行きに応じた大きさの丸で描く（カメラ直近の大きく映るものはぼけ玉にする）
+  /// @param view ビュー行列
+  /// @param viewProj ビュー × 射影行列
   void DrawSnow(const RC::Matrix4x4 &view, const RC::Matrix4x4 &viewProj) {
     if (activeFlakes_ <= 0) return;
+    // 焦点距離（px）。雪片の半径（m）を px に換算する。濃さの遠近はカメラ〜水面の高さを基準にする
     const float focal = proj_.m[1][1] * screenH_ * 0.5f;
     const float maxDepth = (std::max)(camPos_.y - waterY_, snow.nearDepth + 1.0f);
     for (const Flake &f : flakes_) {
@@ -1408,6 +1637,7 @@ private:
     }
   }
 
+  /// @brief 天候の霞（空気の色）を画面全体に薄く重ねる
   void DrawHaze() {
     if (haze_.w <= 0.002f) return;
     RC::Vector4 c = haze_;
@@ -1415,6 +1645,7 @@ private:
     RC::DrawBox({0.0f, 0.0f}, {screenW_, screenH_}, c, kFill, 0.0f);
   }
 
+  /// @brief 稲光の明滅を画面全体の矩形で描く
   void DrawFlash() {
     if (flash_ <= 0.002f || lightning.screenAlpha <= 0.0f) return;
     RC::Vector4 c = lightning.flashColor;
@@ -1426,6 +1657,7 @@ private:
   // シーンへの反映
   // ------------------------------------------------------------------
 
+  /// @brief 書き換える前のシーンの値（平行光源・水面・空）。再生停止・破棄時に戻すために保存する
   struct Saved {
     bool valid = false;
     std::weak_ptr<Entity> lightEntity, waterEntity, skyEntity;
@@ -1440,6 +1672,8 @@ private:
     RC::Vector4 skyColor{};
   };
 
+  /// @brief 書き換える前の平行光源・水面・空の値を保存する（保存済みなら何もしない）
+  /// @note それぞれシーン内で最初に見つかったエンティティを対象にする
   void CaptureScene() {
     if (saved_.valid) return;
     Scene *scene = GetScene();
@@ -1479,6 +1713,7 @@ private:
     saved_.valid = true;
   }
 
+  /// @brief CaptureScene で保存した値をシーンへ戻し、保存を破棄する
   void RestoreScene() {
     if (!saved_.valid) return;
     if (auto e = saved_.lightEntity.lock()) {
@@ -1508,6 +1743,7 @@ private:
     saved_ = Saved{};
   }
 
+  /// @brief 時間帯の見た目に天候補正と稲光を重ねて、平行光源・水面・空・カラーグレードへ書き込む
   void ApplyToScene() {
     CaptureScene();
     const Look look = EvaluateTimeLook(phase_);
@@ -1523,6 +1759,7 @@ private:
     }
     haze_ = mod.haze;
 
+    // 平行光源：天候で灰色へ寄せて減光し、稲光の色と強さを重ねる
     if (auto e = saved_.lightEntity.lock()) {
       if (auto *l = e->GetComponent<DirectionalLightComponent>()) {
         const RC::Vector3 lc = Desaturate(V3(look.lightColor.x, look.lightColor.y, look.lightColor.z), mod.lightDesaturate);
@@ -1536,6 +1773,7 @@ private:
         l->ambientIntensity = look.ambientIntensity + mod.ambientAdd + flash_ * lightning.ambientBoost;
       }
     }
+    // 水面：色は天候で暗くし、波の高さ・白波はシーン初期値を基準に補正する
     if (auto e = saved_.waterEntity.lock()) {
       if (auto *w = e->GetComponent<WaterComponent>()) {
         auto scaleRgb = [](const RC::Vector4 &c, float s) { return V4(c.x * s, c.y * s, c.z * s, c.w); };
@@ -1549,6 +1787,7 @@ private:
         w->whitecapCoverage = std::clamp(saved_.whitecapCoverage + mod.whitecapAdd, 0.0f, 1.0f);
       }
     }
+    // 空の乗算色
     if (auto e = saved_.skyEntity.lock()) {
       if (auto *s = e->GetComponent<SkyboxComponent>()) {
         s->color = V4(look.skyColor.x * mod.skyScale, look.skyColor.y * mod.skyScale, look.skyColor.z * mod.skyScale,
@@ -1572,6 +1811,7 @@ private:
   // 音
   // ------------------------------------------------------------------
 
+  /// @brief 雨の強さに応じて雨音のループを鳴らす／音量を変える／止める
   void UpdateSound() {
     if (rainClip_ < 0) return;
     const float vol = (std::max)(RainLevel(), 0.0f) * rainVolume * camVisible_;
@@ -1586,6 +1826,7 @@ private:
     }
   }
 
+  /// @brief 雨音のループを止める
   void StopRainSound() {
     if (rainVoice_ >= 0) AudioEngine::Get().StopVoice(rainVoice_);
     rainVoice_ = -1;

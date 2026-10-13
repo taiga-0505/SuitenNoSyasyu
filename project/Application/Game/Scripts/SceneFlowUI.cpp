@@ -37,6 +37,8 @@ public:
   bool showPrompt = true;                        ///< 続行プロンプトを点滅表示するか
   RC::Vector4 panelColor = {0.92f, 0.95f, 1.0f, 0.82f}; ///< バナー背後のパネル色
 
+  /// @brief 設定項目を JSON に書き出す
+  /// @return 設定項目を格納した JSON
   nlohmann::json Serialize() override {
     return {
         {"bannerPath", bannerPath},
@@ -46,6 +48,8 @@ public:
     };
   }
 
+  /// @brief JSON から設定項目を読み込む
+  /// @param j 読み込み元の JSON（存在するキーだけ反映する。panelColor は要素 4 つ以上の配列のときだけ）
   void Deserialize(const nlohmann::json &j) override {
     if (j.contains("bannerPath")) bannerPath = j["bannerPath"].get<std::string>();
     if (j.contains("showScore")) showScore = j["showScore"].get<bool>();
@@ -60,6 +64,7 @@ public:
   }
 
 #if RC_ENABLE_IMGUI
+  /// @brief インスペクタに表示設定と現在のセッションのスコア・評価を表示する
   void OnImGui() override {
     ImGui::Checkbox("Show Score", &showScore);
     ImGui::Checkbox("Show Prompt", &showPrompt);
@@ -72,6 +77,7 @@ public:
 #endif
 
 protected:
+  /// @brief 設定に応じてバナー・数字・スコアラベルのスプライトを読み込む
   void OnCreate() override {
     SceneContext *ctx = GetSceneContext();
     if (!ctx) return;
@@ -92,8 +98,11 @@ protected:
     }
   }
 
+  /// @brief プロンプト点滅用のタイマーを進める
+  /// @param deltaTime 前フレームからの経過時間（秒）
   void OnUpdate(float deltaTime) override { blinkTimer_ += deltaTime; }
 
+  /// @brief 読み込んだスプライトをすべて解放する
   void OnDestroy() override {
     if (bannerHandle_ >= 0) { RC::UnloadSprite(bannerHandle_); bannerHandle_ = -1; }
     for (int i = 0; i < kMaxDigits; ++i) {
@@ -102,7 +111,9 @@ protected:
     if (scoreLabelHandle_ >= 0) { RC::UnloadSprite(scoreLabelHandle_); scoreLabelHandle_ = -1; }
   }
 
+  /// @brief 画面サイズを取得し、バナー・スコア・プロンプトを設定に応じて描く
   void OnRender() override {
+    // 画面サイズはウィンドウから取得し、取れなければ 1280x720 を仮定する
     float screenW = 1280.0f;
     float screenH = 720.0f;
     auto &rc = RC::GetRenderContext();
@@ -122,6 +133,8 @@ protected:
 
 private:
   /// @brief 中央のバナー（Clear / GameOver など）とその下敷きパネルを描く
+  /// @param screenW 画面幅（ピクセル）
+  /// @param screenH 画面高さ（ピクセル）
   void DrawBanner(float screenW, float screenH) {
     if (bannerHandle_ < 0) return;
 
@@ -145,6 +158,8 @@ private:
   }
 
   /// @brief スコアラベルと数字、評価ランクを描く
+  /// @param screenW 画面幅（ピクセル）
+  /// @param screenH 画面高さ（ピクセル）
   void DrawScore(float screenW, float screenH) {
     const GameSession &session = GameSession::Get();
 
@@ -162,6 +177,7 @@ private:
       value /= 10;
     } while (value > 0 && digits.size() < static_cast<size_t>(kMaxDigits));
 
+    // ラベル + 余白 16px + 数字列の合計幅から、全体が中央に来る開始 X を求める
     const float labelW = 150.0f;
     const float labelH = 60.0f;
     const float totalW = labelW + 16.0f + digitW * static_cast<float>(digits.size());
@@ -172,6 +188,7 @@ private:
                 {x + totalW + 24.0f, baseY + digitH + 12.0f},
                 {0.92f, 0.95f, 1.0f, 0.82f});
 
+    // スコアラベルを数字の高さの中央にそろえて描く
     if (scoreLabelHandle_ >= 0) {
       Transform t{};
       t.scale = {1.0f, 1.0f, 1.0f};
@@ -212,6 +229,7 @@ private:
     else if (rank == 'A') { barCount = 3; rankColor = {0.95f, 0.45f, 0.30f, 0.95f}; }
     else if (rank == 'B') { barCount = 2; rankColor = {0.35f, 0.70f, 0.95f, 0.95f}; }
 
+    // バー列を数字の下に中央寄せで並べる
     const float barW = 46.0f;
     const float barH = 14.0f;
     const float gap = 10.0f;
@@ -226,8 +244,10 @@ private:
 
   /// @brief 「スペースキーで次へ」を点滅するバーで示す
   /// @details 文字素材が無いため、キーの形を模した枠と中央のバーで表現している。
+  /// @param screenW 画面幅（ピクセル）
+  /// @param screenH 画面高さ（ピクセル）
   void DrawPrompt(float screenW, float screenH) {
-    // 1.2 秒周期で明滅させる
+    // 1.2 秒周期で明滅させる（周期の前 60% を明るく、残りを暗く表示）
     const float cycle = 1.2f;
     float phase = blinkTimer_ - cycle * static_cast<float>(static_cast<int>(blinkTimer_ / cycle));
     const bool bright = (phase < cycle * 0.6f);

@@ -50,6 +50,8 @@
 //   「描画は平らなのに当たり判定だけ波打つ」ことになる。
 //   （リストの中身は水面に載せた WaterObstacleScript がシーンから集めている＝D-01 解消済み。
 //     取得口は変わっていないので、こちら側の書き方は当時のまま。）
+/// @brief 水面との交差判定と浮力・水の抵抗で物体を浮かせ、水面の傾きに合わせて姿勢を傾けるスクリプト
+/// @details 撃沈された船は `flooding` タグで実効密度を上げて沈める（T-15）。
 class BuoyancyScript : public ScriptableEntity {
 public:
     // --- C-01: 交差判定 ---
@@ -141,6 +143,9 @@ private:
     }
 
     /// @brief 指定 XZ の水面高さ（GPU と同じ時刻・同じ式・同じ障害物）
+    /// @param x 調べるワールド X 座標
+    /// @param z 調べるワールド Z 座標
+    /// @return その地点の水面の高さ（ワールド Y）
     float SampleWater(float x, float z) const {
         return RC::WaterSurface::SampleHeight(
             waveParams_, RC::GetWaterTime(), x, z,
@@ -148,6 +153,8 @@ private:
     }
 
 protected:
+    /// @brief 浮力の設定を JSON に書き出す
+    /// @return 交差判定・浮力・浸水・傾きの各パラメータを格納した JSON
     nlohmann::json Serialize() override {
         nlohmann::json j;
         j["halfHeight"] = halfHeight;
@@ -170,6 +177,8 @@ protected:
         return j;
     }
 
+    /// @brief JSON から浮力の設定を読み込む
+    /// @param j 読み込み元の JSON（存在するキーだけ反映する）
     void Deserialize(const nlohmann::json& j) override {
         if (j.contains("halfHeight")) halfHeight = j["halfHeight"].get<float>();
         if (j.contains("sampleRadius")) sampleRadius = j["sampleRadius"].get<float>();
@@ -191,6 +200,7 @@ protected:
         if (j.contains("debugDraw")) debugDraw = j["debugDraw"].get<bool>();
     }
 
+    /// @brief 水面の波パラメータを取り込み、ランタイム専用タグを消す
     void OnCreate() override {
         RefreshWaterParams();
         if (!hasWater_) {
@@ -212,6 +222,8 @@ protected:
         // こちらは掛けない」と毎フレーム判断する（OnUpdate 参照）。
     }
 
+    /// @brief 水面との交差判定・浮力と抵抗による速度更新・位置の積分・水面の傾きへの姿勢追従を行う
+    /// @param deltaTime 前フレームからの経過時間（秒）。0 以下ならタグの消去と速度リセットだけ行う
     void OnUpdate(float deltaTime) override {
         // パルス的なタグは早期 return より前で消す。
         // 下の guard の後ろに置くと、エディタで一時停止した瞬間（deltaTime=0）に
@@ -396,6 +408,7 @@ protected:
     }
 
 public:
+    /// @brief パラメータ編集 UI と、上下動の周期・減衰比などの挙動の見立てを表示する
     void OnImGui() override {
 #if RC_ENABLE_IMGUI
         ImGui::TextUnformatted("C-01: 交差判定");
@@ -477,6 +490,8 @@ public:
 #endif
     }
 
+    /// @brief 水面のサンプル点・喫水線・底面をギズモで描く
+    /// @note RC_ENABLE_IMGUI が無効なビルドでは何も描かない
     void OnDebugRender() override {
 #if RC_ENABLE_IMGUI
         if (!debugDraw || !hasWater_) return;

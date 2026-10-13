@@ -63,6 +63,8 @@ public:
   float clickStrength = 0.3f;
   bool playingOnly = false;
 
+  /// @brief 設定項目を JSON に書き出す
+  /// @return 設定項目を格納した JSON
   nlohmann::json Serialize() override {
     return {
         {"enabled", enabled},
@@ -80,7 +82,10 @@ public:
     };
   }
 
+  /// @brief JSON から設定項目を読み込む
+  /// @param j 読み込み元の JSON（存在し型が合うキーだけ反映する）
   void Deserialize(const nlohmann::json &j) override {
+    // キーが存在し型が一致する場合だけ上書きするヘルパー
     auto readF = [&](const char *key, float &out) {
       if (j.contains(key) && j[key].is_number()) out = j[key].get<float>();
     };
@@ -103,6 +108,7 @@ public:
   }
 
 #if RC_ENABLE_IMGUI
+  /// @brief インスペクタに現在のヒット状況と各パラメータの編集 UI を表示する
   void OnImGui() override {
     ImGui::Checkbox("Enabled", &enabled);
     ImGui::Text("Hit: %s  (%.2f, %.2f)  speed %.1f m/s  sources/frame %d",
@@ -124,7 +130,10 @@ public:
 #endif
 
 protected:
+  /// @brief マウス位置と水面の交点を求め、クリック・移動の軌跡に応じて波源を追加する
+  /// @param deltaTime 前フレームからの経過時間（秒）。カーソル速度の計算に使う
   void OnUpdate(float deltaTime) override {
+    // 無効時・入力が無いとき・再生中限定で非再生時は、軌跡を切って何もしない
     SceneContext *ctx = GetSceneContext();
     if (!enabled || !ctx || !ctx->input) {
       prevValid_ = false;
@@ -141,6 +150,7 @@ protected:
     float mx = 0.0f, my = 0.0f;
     ctx->input->GetGameMousePosition(mx, my);
 
+    // 画面サイズはウィンドウから取得し、取れなければ 1280x720 を仮定する
     float screenW = 1280.0f, screenH = 720.0f;
     auto &rc = RC::GetRenderContext();
     if (rc.Ctx() && rc.Ctx()->app && rc.Ctx()->app->width > 0 && rc.Ctx()->app->height > 0) {
@@ -190,18 +200,28 @@ protected:
       lastSpeed_ = 0.0f;
     }
 
+    // 今フレームの交点を次フレームの軌跡の始点として保存する
     prevX_ = hx;
     prevZ_ = hz;
     prevValid_ = true;
   }
 
+  /// @brief 破棄時に前フレームの交点を無効化する
   void OnDestroy() override { prevValid_ = false; }
 
 private:
   static constexpr float kMinMove = 0.02f; ///< これ未満の動き（m）は「止まっている」扱い
 
   /// @brief 画面座標から水面（y = 水面の高さ）との交点を求める
-  /// @return カメラが水面より下を向いていない等で交点が無ければ false
+  /// @param mx マウスの画面 X 座標（ピクセル）
+  /// @param my マウスの画面 Y 座標（ピクセル）
+  /// @param screenW 画面幅（ピクセル）
+  /// @param screenH 画面高さ（ピクセル）
+  /// @param view カメラのビュー行列
+  /// @param proj カメラのプロジェクション行列
+  /// @param outX 交点のワールド X 座標の出力先
+  /// @param outZ 交点のワールド Z 座標の出力先
+  /// @return 交点が求まれば true。カメラが水面を向いていない等で交点が無ければ false
   bool HitWater(float mx, float my, float screenW, float screenH, const RC::Matrix4x4 &view,
                 const RC::Matrix4x4 &proj, float &outX, float &outZ) const {
     const float waterY = FindWaterY();
@@ -216,7 +236,8 @@ private:
     return std::isfinite(outX) && std::isfinite(outZ);
   }
 
-  /// @brief シーンの WaterComponent の高さ（無ければ 0）
+  /// @brief シーン内で最初に見つかった WaterComponent を持つエンティティの水面高さを取得する
+  /// @return 水面の Y 座標。WaterComponent または Transform が無ければ 0
   float FindWaterY() const {
     Scene *scene = GetScene();
     if (!scene) return 0.0f;

@@ -64,6 +64,7 @@ using namespace PartPose;
 /// @details Model は DataDrivenScene がスクリプト更新後に同期するが、
 ///          PrimitiveMesh は次フレーム冒頭まで同期されないため 1 フレーム遅れて見える。
 ///          出現した瞬間に前回の位置で 1 フレーム映るのを防ぐ目的もある。
+/// @param e 対象のエンティティ
 inline void SyncRender(Entity &e) {
   auto *tr = e.GetComponent<TransformComponent>();
   if (!tr) return;
@@ -80,6 +81,11 @@ inline void SyncRender(Entity &e) {
 }
 
 /// @brief 水面の波紋（RenderInteractiveWater）へ波源を入れる。UV はワールド 100m 四方の固定写像
+/// @param x 波源のワールド X
+/// @param z 波源のワールド Z
+/// @param radius 半径（UV。0.01 = 1m）
+/// @param strength 強さ（負なら押し下げる）
+/// @return 入れられたら true
 inline bool PushWaveSource(float x, float z, float radius, float strength) {
   return RC::AddWaveSourceAtWorld(x, z, radius, strength); // 範囲外・64 個超えは捨てられる（false）
 }
@@ -210,6 +216,8 @@ public:
   RC::Vector4 shipHullColor = {0.36f, 0.22f, 0.12f, 1.0f};
   RC::Vector4 shipSailColor = {0.96f, 0.94f, 0.88f, 1.0f};
 
+  /// @brief 全設定を JSON にする（種類ごとの設定は "shark" / "drift" / "gull" / "ship" のオブジェクト）
+  /// @return JSON オブジェクト
   nlohmann::json Serialize() override {
     nlohmann::json j;
     j["enabled"] = enabled;
@@ -238,6 +246,7 @@ public:
     j["foamSpread"] = foamSpread;
     j["crestDecay"] = crestDecay;
 
+    // 種類ごと：共通項目（WriteKind）＋ 種類固有の項目
     nlohmann::json js = WriteKind(shark);
     js["modelPath"] = sharkModelPath;
     js["modelYawOffsetDeg"] = sharkModelYawOffsetDeg;
@@ -280,6 +289,8 @@ public:
     return j;
   }
 
+  /// @brief JSON から全設定を読み込む（無いキーは現在値のまま）
+  /// @param j 読み込み元の JSON
   void Deserialize(const nlohmann::json &j) override {
     ReadB(j, "enabled", enabled);
     ReadF(j, "firstDelay", firstDelay);
@@ -307,6 +318,7 @@ public:
     ReadF(j, "foamSpread", foamSpread);
     ReadF(j, "crestDecay", crestDecay);
 
+    // 種類ごと：共通項目（ReadKind）＋ 種類固有の項目
     if (j.contains("shark") && j["shark"].is_object()) {
       const auto &js = j["shark"];
       ReadKind(js, shark);
@@ -354,6 +366,7 @@ public:
   }
 
 #if RC_ENABLE_IMGUI
+  /// @brief 全体・航跡波・白波・種類ごとの設定を編集する UI と、種類ごとにその場で出すボタンを表示する
   void OnImGui() override {
     ImGui::Text("View: %s  (%.1f x %.1f m)  Active: %d / %d", view_.valid ? "ready" : "waiting",
                 view_.halfW * 2.0f, view_.halfH * 2.0f, CountActive(), maxActive);
@@ -390,6 +403,7 @@ public:
     ImGui::DragFloat("Arm Step (m)##Foam", &foamArmStep, 0.05f, 0.2f, 2.0f);
     ImGui::DragFloat("Crest Decay / frame##Foam", &crestDecay, 0.01f, 0.0f, 0.98f, "%.2f");
 
+    // 種類ごとの共通 UI（有効・重み・最大数・速さ・大きさ・Spawn Now）
     auto kindUi = [&](const char *label, Kind k, KindParams &p) {
       ImGui::PushID(label);
       ImGui::SeparatorText(label);
@@ -444,6 +458,7 @@ public:
 #endif
 
 protected:
+  /// @brief 乱数を初期化し、最初の出現までの待ちを設定する
   void OnCreate() override {
     // プールは再生中の最初の Update で作る（編集モードで作ると Hierarchy が散らかるため）。
     std::random_device rd;
@@ -451,18 +466,22 @@ protected:
     spawnTimer_ = firstDelay;
   }
 
+  /// @brief 再生中だけ、プールを少しずつ作り、画面範囲を確定させ、出ているものを動かし、間隔ごとに新しく出す
+  /// @param deltaTime 前フレームからの経過秒
   void OnUpdate(float deltaTime) override {
     SceneContext *ctx = GetSceneContext();
     if (!ctx || !ctx->isPlaying() || deltaTime <= 0.0f) return;
     Scene *scene = GetScene();
     if (!scene) return;
 
+    // プールは 1 フレーム 1 体ずつ作る（BuildPools で予定を積み、BuildNextPooled で進める）
     if (!poolBuilt_) BuildPools(scene);
     BuildNextPooled(scene);
 
     time_ += deltaTime;
     if (!view_.valid) TryCacheView(scene, deltaTime);
 
+    // このフレームの水面の波パラメータ・時刻を取り、波源数の集計を戻す
     hasWater_ = BuildWaterParams(scene, water_);
     waterTime_ = RC::GetWaterTime();
     wakeSourcesThisFrame_ = 0;
@@ -480,6 +499,7 @@ protected:
       UpdateActor(a, deltaTime);
     }
 
+    // 出現の間隔を数え、切れたら重み付きで抽選して出す
     if (!enabled || !view_.valid) return;
     spawnTimer_ -= deltaTime;
     if (spawnTimer_ > 0.0f) return;
@@ -491,6 +511,7 @@ protected:
     }
   }
 
+  /// @brief プールのエンティティとフォルダを破棄し、上書きした泡の残り方の設定を元に戻す
   void OnDestroy() override {
     for (auto &a : actors_) {
       for (auto &p : a.parts) {
@@ -511,9 +532,12 @@ protected:
 private:
   using Mat3 = TitleAmbientDetail::Mat3;
 
+  /// @brief 出てくるものの種類
   enum class Kind { Shark = 0, Drift, Gull, Ship, Count };
+  /// @brief 部位の役割（固定 / 翼の内側 / 翼の外側 / 旗）。役割ごとに動かし方を変える
   enum class Role { Static, WingInner, WingOuter, Flag };
 
+  /// @brief 1 体を構成する部位 1 つ（エンティティと、本体に対する配置）
   struct Part {
     std::weak_ptr<Entity> entity;
     Role role = Role::Static;
@@ -530,6 +554,7 @@ private:
     float dist = 0.0f;
   };
 
+  /// @brief 画面を横切るもの 1 体（プールの 1 要素）の状態
   struct Actor {
     Kind kind = Kind::Shark;
     int variant = 0;           ///< drift: 0 木箱 / 1 樽 / 2 流木
@@ -574,7 +599,12 @@ private:
     float halfW = 17.0f, halfH = 9.6f;
 
     /// @brief 高さ y の平面で見えている半高さ（カメラに近いほど狭い）
+    /// @param y 平面の高さ
+    /// @return 半高さ（m）
     float HalfHAt(float y) const { return (std::max)(camY - y, 1.0f) * tanHalf; }
+    /// @brief 高さ y の平面で見えている半幅（半高さ × アスペクト比）
+    /// @param y 平面の高さ
+    /// @return 半幅（m）
     float HalfWAt(float y) const { return HalfHAt(y) * aspect; }
   };
 
@@ -582,6 +612,8 @@ private:
   // 既定値
   // ------------------------------------------------------------------
 
+  /// @brief サメの既定設定
+  /// @return 種類ごとの設定
   static KindParams MakeShark() {
     KindParams p;
     p.weight = 1.4f;
@@ -593,6 +625,8 @@ private:
     p.scaleMax = 4.6f;
     return p;
   }
+  /// @brief 漂流物の既定設定
+  /// @return 種類ごとの設定
   static KindParams MakeDrift() {
     KindParams p;
     p.weight = 0.6f;
@@ -606,6 +640,8 @@ private:
     p.lanes = {{-2.8f, 1.2f}, {7.3f, 9.4f}};
     return p;
   }
+  /// @brief カモメの既定設定
+  /// @return 種類ごとの設定
   static KindParams MakeGull() {
     KindParams p;
     p.weight = 0.9f;
@@ -617,6 +653,8 @@ private:
     p.scaleMax = 0.55f;
     return p;
   }
+  /// @brief 船の既定設定
+  /// @return 種類ごとの設定
   static KindParams MakeShip() {
     KindParams p;
     p.weight = 0.5f;
@@ -634,15 +672,31 @@ private:
   // JSON
   // ------------------------------------------------------------------
 
+  /// @brief j[key] が数値なら float として読み込む（無い・型違いなら out はそのまま）
+  /// @param j 読み込み元の JSON
+  /// @param key キー名
+  /// @param out 読み込み先
   static void ReadF(const nlohmann::json &j, const char *key, float &out) {
     if (j.contains(key) && j[key].is_number()) out = j[key].get<float>();
   }
+  /// @brief j[key] が数値なら int として読み込む（無い・型違いなら out はそのまま）
+  /// @param j 読み込み元の JSON
+  /// @param key キー名
+  /// @param out 読み込み先
   static void ReadI(const nlohmann::json &j, const char *key, int &out) {
     if (j.contains(key) && j[key].is_number()) out = j[key].get<int>();
   }
+  /// @brief j[key] が真偽値なら読み込む（無い・型違いなら out はそのまま）
+  /// @param j 読み込み元の JSON
+  /// @param key キー名
+  /// @param out 読み込み先
   static void ReadB(const nlohmann::json &j, const char *key, bool &out) {
     if (j.contains(key) && j[key].is_boolean()) out = j[key].get<bool>();
   }
+  /// @brief j[key] が要素 4 つ以上の配列なら Vector4 として読み込む（それ以外は out はそのまま）
+  /// @param j 読み込み元の JSON
+  /// @param key キー名
+  /// @param out 読み込み先
   static void ReadVec4(const nlohmann::json &j, const char *key, RC::Vector4 &out) {
     if (!j.contains(key)) return;
     const auto &c = j[key];
@@ -650,6 +704,9 @@ private:
       out = {c[0].get<float>(), c[1].get<float>(), c[2].get<float>(), c[3].get<float>()};
     }
   }
+  /// @brief 種類ごとの共通設定を JSON にする
+  /// @param p 書き出す設定
+  /// @return JSON オブジェクト
   static nlohmann::json WriteKind(const KindParams &p) {
     nlohmann::json lanes = nlohmann::json::array();
     for (const auto &l : p.lanes) lanes.push_back({l.x, l.y});
@@ -657,6 +714,10 @@ private:
             {"poolSize", p.poolSize}, {"speedMin", p.speedMin}, {"speedMax", p.speedMax},
             {"scaleMin", p.scaleMin}, {"scaleMax", p.scaleMax}, {"lanes", lanes}};
   }
+  /// @brief JSON から種類ごとの共通設定を読み込む（無いキーは現在値のまま）
+  /// @param j 読み込み元の JSON
+  /// @param p 読み込み先
+  /// @note lanes は要素 2 つ未満のものを捨て、各帯を [小, 大] の順に並べ直す
   static void ReadKind(const nlohmann::json &j, KindParams &p) {
     ReadB(j, "enabled", p.enabled);
     ReadF(j, "weight", p.weight);
@@ -680,13 +741,22 @@ private:
   // 乱数・集計
   // ------------------------------------------------------------------
 
+  /// @brief a〜b の一様乱数
+  /// @param a 下限
+  /// @param b 上限
+  /// @return 乱数（b <= a なら a）
   float Rand(float a, float b) {
     if (b <= a) return a;
     std::uniform_real_distribution<float> d(a, b);
     return d(rng_);
   }
+  /// @brief 0〜1 の一様乱数
+  /// @return 乱数
   float Rand01() { return Rand(0.0f, 1.0f); }
 
+  /// @brief 種類ごとの共通設定を引く
+  /// @param k 種類
+  /// @return 設定への参照
   KindParams &Params(Kind k) {
     switch (k) {
     case Kind::Shark: return shark;
@@ -696,6 +766,9 @@ private:
     }
   }
 
+  /// @brief 出ている数を数える（引数なしの版は全種の合計）
+  /// @param k 種類
+  /// @return 出ている数
   int CountActive(Kind k) const {
     int n = 0;
     for (const auto &a : actors_) n += (a.active && a.kind == k) ? 1 : 0;
@@ -706,6 +779,9 @@ private:
     for (const auto &a : actors_) n += a.active ? 1 : 0;
     return n;
   }
+  /// @brief プールにある種類 k の数（出ているものも含む）
+  /// @param k 種類
+  /// @return プールの数
   int CountPool(Kind k) const {
     int n = 0;
     for (const auto &a : actors_) n += (a.kind == k) ? 1 : 0;
@@ -720,8 +796,11 @@ private:
   /// @details 浮上演出の途中（水中・斜め向き）の画角で出現位置を決めると画面内に湧いてしまうので、
   ///          真下向き・水面より十分上にいるときだけ採用する。6 秒待っても条件を満たさなければ
   ///          （カメラ構成を変えた場合など）その時点の位置で妥協する。
+  /// @param scene 対象のシーン
+  /// @param dt 経過秒（待ち時間の計測に使う）
   void TryCacheView(Scene *scene, float dt) {
     viewWait_ += dt;
+    // メインカメラを探す
     std::shared_ptr<Entity> camE;
     for (const auto &e : scene->GetEntities()) {
       if (!e || !e->IsActive()) continue;
@@ -735,6 +814,7 @@ private:
     auto *tr = camE->GetComponent<TransformComponent>();
     auto *cam = camE->GetComponent<CameraComponent>();
 
+    // 水面の高さ（最初に見つかった水面の Transform）
     float waterY = 0.0f;
     for (const auto &e : scene->GetEntities()) {
       if (!e || !e->GetComponent<WaterComponent>()) continue;
@@ -742,10 +822,12 @@ private:
       break;
     }
 
+    // 真下向き（rotation.x ≒ π/2）かつ水面から 8m より上なら採用。6 秒過ぎたら条件を満たさなくても採用する
     const bool lookingDown = std::fabs(tr->rotation.x - TitleAmbientDetail::kHalfPi) < 0.05f;
     const bool highEnough = (tr->position.y - waterY) > 8.0f;
     if (!(lookingDown && highEnough) && viewWait_ < 6.0f) return;
 
+    // 水面の高さでの画面範囲を求める
     view_.cx = tr->position.x;
     view_.cz = tr->position.z;
     view_.camY = (std::max)(tr->position.y, waterY + 8.0f);
@@ -762,6 +844,10 @@ private:
                std::to_string(view_.halfH * 2.0f) + " m");
   }
 
+  /// @brief シーン内で最初に見つかった水面から波のパラメータを作る
+  /// @param scene 対象のシーン
+  /// @param out 作った波のパラメータ
+  /// @return 水面があれば true
   static bool BuildWaterParams(Scene *scene, RC::WaterWaveParams &out) {
     for (const auto &e : scene->GetEntities()) {
       if (!e) continue;
@@ -775,9 +861,12 @@ private:
   }
 
   /// @brief 水面の高さ（Gerstner。ripple=true なら波紋も足す）
+  /// @param x ワールド X
+  /// @param z ワールド Z
   /// @param ripple 波紋（マウス・航跡）にも乗せるか。航跡を出す本人（サメ・船）は false にすること：
   ///               自分の航跡（船首直下の 30cm 級のへこみ。1〜2 フレーム遅れで届き、0.4m ごとに
   ///               パルス状に入る）を拾うと前後左右の 4 点差分が暴れてガクガク揺れる
+  /// @return 水面の高さ（水面が無ければ view_.waterY）
   float WaterHeight(float x, float z, bool ripple = false) const {
     if (!hasWater_) return view_.waterY;
     // 見た目だけなので逆解きは 1 回で十分（部位ごとに何点も引くため軽くしておく）
@@ -788,6 +877,14 @@ private:
   }
 
   /// @brief 前後・左右の 4 点の水面から、中心の高さとピッチ・ロールを求める
+  /// @param c 中心位置（xz を使う）
+  /// @param yaw 向き（rad）
+  /// @param halfLen 前後の点までの距離（m）
+  /// @param halfWid 左右の点までの距離（m）
+  /// @param outY 4 点の平均の高さ
+  /// @param outPitchUp ピッチ（rad。前が高いと正）
+  /// @param outRoll ロール（rad。右 = (f.z, 0, -f.x) 側が高いと正）
+  /// @param ripple 波紋も乗せるか（WaterHeight 参照）
   void WaterPose(const RC::Vector3 &c, float yaw, float halfLen, float halfWid, float &outY,
                  float &outPitchUp, float &outRoll, bool ripple = false) const {
     const RC::Vector3 f = TitleAmbientDetail::Forward(yaw);
@@ -809,6 +906,7 @@ private:
   /// @details 一度に全部作ると Debug ビルドで 1 フレーム 90ms ほど止まっていた（プリミティブ 27 個ぶん）。
   ///          最初の出現は firstDelay 秒後なので、そのあいだに分けて作れば間に合う。
   ///          サメは非同期ロードを早く始めたいので先頭に置く。
+  /// @param scene 対象のシーン（まとめ用のフォルダエンティティをここに作る）
   void BuildPools(Scene *scene) {
     poolBuilt_ = true;
     auto folder = scene->CreateEntity("TitleAmbient");
@@ -827,6 +925,7 @@ private:
   }
 
   /// @brief 生成予定を 1 体ぶん進める
+  /// @param scene 対象のシーン
   void BuildNextPooled(Scene *scene) {
     if (buildIndex_ >= buildQueue_.size()) return;
     const auto start = std::chrono::steady_clock::now();
@@ -837,6 +936,7 @@ private:
     case Kind::Gull: actors_.push_back(BuildGull(scene)); break;
     default: actors_.push_back(BuildShip(scene)); break;
     }
+    // 1 体ぶんの生成時間を計測し、全部作り終えたらログに出す
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     buildMsTotal_ += ms;
     buildMsMax_ = (std::max)(buildMsMax_, ms);
@@ -849,6 +949,10 @@ private:
   }
 
   /// @brief 部位エンティティを 1 つ作る（最初は非アクティブ）
+  /// @param scene 対象のシーン
+  /// @param name エンティティ名
+  /// @return 作ったエンティティ（失敗したら nullptr）
+  /// @note 画面に映らないよう y = -500 に極小の scale で置き、まとめ用フォルダの子にする
   std::shared_ptr<Entity> MakeEntity(Scene *scene, const std::string &name) {
     auto e = scene->CreateEntity(name);
     if (!e) return nullptr;
@@ -860,6 +964,17 @@ private:
     return e;
   }
 
+  /// @brief プリミティブの部位を 1 つ作って a に加える（非アクティブで作る）
+  /// @param scene 対象のシーン
+  /// @param a 追加先の本体
+  /// @param name エンティティ名
+  /// @param type 形状
+  /// @param color 色
+  /// @param offset 本体中心からの位置（本体ローカル、scale 1 のとき）
+  /// @param scale 部位の大きさ（scale 1 のとき）
+  /// @param local 本体に対する部位の向き
+  /// @param role 部位の役割
+  /// @param side 翼の左右（+1 右 / -1 左）
   void AddPrimitive(Scene *scene, Actor &a, const std::string &name, PrimitiveType type,
                     const RC::Vector4 &color, const RC::Vector3 &offset, const RC::Vector3 &scale,
                     const Mat3 &local = TitleAmbientDetail::Identity(), Role role = Role::Static,
@@ -883,6 +998,9 @@ private:
     a.parts.push_back(p);
   }
 
+  /// @brief サメ（shark モデル 1 つ）を作る
+  /// @param scene 対象のシーン
+  /// @return 作った本体（エンティティを作れなければ部位なし）
   Actor BuildShark(Scene *scene) {
     Actor a;
     a.kind = Kind::Shark;
@@ -898,6 +1016,10 @@ private:
     return a;
   }
 
+  /// @brief 漂流物をプリミティブの組み合わせで作る
+  /// @param scene 対象のシーン
+  /// @param variant 0 木箱 / 1 樽 / それ以外 流木
+  /// @return 作った本体
   Actor BuildDrift(Scene *scene, int variant) {
     Actor a;
     a.kind = Kind::Drift;
@@ -930,6 +1052,9 @@ private:
     return a;
   }
 
+  /// @brief カモメ（胴・頭・くちばし・尾・内翼・外翼）をプリミティブの組み合わせで作る
+  /// @param scene 対象のシーン
+  /// @return 作った本体
   Actor BuildGull(Scene *scene) {
     Actor a;
     a.kind = Kind::Gull;
@@ -953,6 +1078,9 @@ private:
     return a;
   }
 
+  /// @brief 帆船（船体・船首・甲板・船室・屋根・マスト・帆・旗）をプリミティブの組み合わせで作る
+  /// @param scene 対象のシーン
+  /// @return 作った本体
   Actor BuildShip(Scene *scene) {
     Actor a;
     a.kind = Kind::Ship;
@@ -981,6 +1109,8 @@ private:
   // 出現
   // ------------------------------------------------------------------
 
+  /// @brief 出せる種類の中から重み付きで抽選して出す
+  /// @return 出せたら true（全体の上限に達している・どの種類も出せなければ false）
   bool TrySpawnWeighted() {
     if (CountActive() >= maxActive) return false;
     // 出せる種類だけで重み付き抽選。選んだ種類が出せなければ（レーンが埋まっている等）残りで引き直す
@@ -1006,6 +1136,9 @@ private:
     return false;
   }
 
+  /// @brief 種類 k を今出せるか（有効・上限未満・使える空きがある）
+  /// @param k 種類
+  /// @return 出せるなら true
   bool CanSpawn(Kind k) {
     const KindParams &p = Params(k);
     if (!p.enabled || p.weight <= 0.0f) return false;
@@ -1017,6 +1150,8 @@ private:
   }
 
   /// @brief 出してよい状態か（モデルは非同期ロードなので、読み終わるまで出さない）
+  /// @param a 対象
+  /// @return 出してよければ true（サメ以外は常に true）
   static bool IsReady(const Actor &a) {
     if (a.kind != Kind::Shark) return true;
     if (a.parts.empty()) return false;
@@ -1026,6 +1161,9 @@ private:
     return ren && ren->modelHandle >= 0 && RC::IsModelReady(ren->modelHandle);
   }
 
+  /// @brief 種類 k の使える空きを 1 つ選ぶ
+  /// @param k 種類
+  /// @return 選んだ空き（無ければ nullptr）
   Actor *FreeActor(Kind k) {
     // 漂流物は種類がばらけるよう、空いているものからランダムに選ぶ
     std::vector<Actor *> free;
@@ -1037,6 +1175,9 @@ private:
     return free[d(rng_)];
   }
 
+  /// @brief 種類 k を 1 体（カモメは群れで）出す
+  /// @param k 種類
+  /// @return 出せたら true。失敗した理由は spawnFail_ に残す
   bool TrySpawn(Kind k) {
     spawnFail_.clear();
     if (!CanSpawn(k)) {
@@ -1058,6 +1199,7 @@ private:
     a->phase = Rand(0.0f, TitleAmbientDetail::kTwoPi);
     a->pos.y = 0.0f;
 
+    // 種類ごとの画面外判定の半径とレーンの半幅（カモメは SpawnGullFlock で決める）
     switch (k) {
     case Kind::Shark:
       a->extent = 0.55f * a->scale;
@@ -1086,6 +1228,9 @@ private:
   }
 
   /// @brief 出現位置と進行方向を決める
+  /// @param a 置く本体（pos / heading / dir を書き換える）
+  /// @param p 種類ごとの設定（lanes を使う）
+  /// @param planeY 本体がいる平面の高さ（その高さでの画面範囲を使う）
   /// @return レーンが埋まっていて置けなければ false
   bool PlacePath(Actor &a, const KindParams &p, float planeY) {
     const float hw = view_.HalfWAt(planeY);
@@ -1133,6 +1278,9 @@ private:
   }
 
   /// @brief 水面に浮くもの（漂流物・船）が同じ高さの帯を同時に通らないか
+  /// @param self 置こうとしている本体（自分自身は除外する）
+  /// @param z 置こうとしている Z
+  /// @return 他と重ならなければ true
   bool LaneFree(const Actor &self, float z) const {
     for (const auto &o : actors_) {
       if (!o.active || &o == &self) continue;
@@ -1142,6 +1290,8 @@ private:
     return true;
   }
 
+  /// @brief カモメの群れ（1〜gullFlockMax 羽）を V 字の隊形で出す
+  /// @return 先頭を置けたら true
   bool SpawnGullFlock() {
     Actor *leader = FreeActor(Kind::Gull);
     if (!leader) return false;
@@ -1155,6 +1305,7 @@ private:
     leader->pos.y = view_.waterY + height;
     if (!PlacePath(*leader, gull, leader->pos.y)) return false;
 
+    // 群れの数は、カモメと全体の上限の残りを超えない範囲で乱数で決める
     const int room = (std::min)(gull.maxActive - CountActive(Kind::Gull), maxActive - CountActive());
     std::uniform_int_distribution<int> nd(1, (std::max)(1, (std::min)(gullFlockMax, room)));
     const int count = nd(rng_);
@@ -1189,6 +1340,8 @@ private:
     return true;
   }
 
+  /// @brief 出現させる（航跡をリセットし、姿勢を書いてから部位をアクティブにする）
+  /// @param a 対象
   void Activate(Actor &a) {
     a.active = true;
     a.t = 0.0f;
@@ -1203,6 +1356,8 @@ private:
     }
   }
 
+  /// @brief 退場させる（部位を非アクティブにしてプールへ戻す）
+  /// @param a 対象
   void Deactivate(Actor &a) {
     a.active = false;
     for (auto &p : a.parts) {
@@ -1214,6 +1369,9 @@ private:
   // 更新
   // ------------------------------------------------------------------
 
+  /// @brief 種類ごとの更新を行い、画面外へ出たら退場させる
+  /// @param a 対象
+  /// @param dt 経過秒（0 なら姿勢の書き込みだけ行い、退場判定はしない）
   void UpdateActor(Actor &a, float dt) {
     a.t += dt;
     switch (a.kind) {
@@ -1227,6 +1385,8 @@ private:
   }
 
   /// @brief 画面外（拡張枠の外）へ出て、なお離れていく向きなら退場
+  /// @param a 対象
+  /// @return 退場させるなら true（出現から 1 秒未満は false、120 秒を超えたら必ず true）
   bool IsGone(const Actor &a) const {
     if (a.t < 1.0f) return false;
     if (a.t > 120.0f) return true; // 念のため（旋回し続けて戻ってこない等）
@@ -1240,6 +1400,11 @@ private:
     return (rx * f.x + rz * f.z) > 0.0f;
   }
 
+  /// @brief 部位のエンティティへワールド位置・回転・scale を書き込み、描画側へ即座に反映する
+  /// @param a 部位の持ち主（scale を使う）
+  /// @param p 部位
+  /// @param worldPos ワールド位置
+  /// @param rot ワールド回転
   void Place(const Actor &a, const Part &p, const RC::Vector3 &worldPos, const Mat3 &rot) {
     auto e = p.entity.lock();
     if (!e) return;
@@ -1252,6 +1417,10 @@ private:
   }
 
   /// @brief 固定の部位（翼以外）を本体姿勢に合わせて置く
+  /// @param a 対象
+  /// @param bodyPos 本体のワールド位置
+  /// @param body 本体の回転
+  /// @param flagAngle 旗（Role::Flag）を Y 軸まわりに振る角度（rad）
   void PlaceRigid(const Actor &a, const RC::Vector3 &bodyPos, const Mat3 &body, float flagAngle = 0.0f) {
     for (const auto &p : a.parts) {
       if (p.role == Role::WingInner || p.role == Role::WingOuter) continue;
@@ -1263,10 +1432,15 @@ private:
     }
   }
 
-  /// @brief 航跡波を出す：船首のへこみ ＋ 通った道筋から V 字に広がる 2 本の山
+  /// @brief 航跡波を出す：船首のへこみ ＋ 通った道筋から V 字に広がる 2 本の山（＋ 白波の泡）
+  /// @param a 航跡を出す本体（通った道筋を記録する）
   /// @param bow 船首（サメは頭）のワールド位置
   /// @param fwd 進行方向（xz、正規化済み）
   /// @param length V の長さ（m）。これより古い道筋は捨てる
+  /// @param stern 船尾（サメは尾）のワールド位置
+  /// @param halfWidth 船体の半幅（m）。舷側と船尾の泡の広がりに使う
+  /// @param foamScale 泡の量の倍率（種類ごと）
+  /// @param dt 経過秒（泡の量は 1 秒あたりで指定しているため）
   /// @details 波紋シミュレーション（WaveSimulation.CS）は毎フレーム減衰が強く（速度 0.95・高さ 0.99）、
   ///          波の伝播速度（約 9 m/s）が船（1.5 m/s）よりずっと速いので、点波源を置くだけでは
   ///          物理的にケルビン波（V 字）は出ない。そこで V を毎フレーム「押し続けて」形を保つ。
@@ -1282,10 +1456,6 @@ private:
   ///            V の腕の根元 … 船の近くだけ白く砕けて、先では普通の波に戻る
   ///          泡は伝播せずその場に残り、滲んで広がりながら消えるので、後ろへ白い帯が尾を引く。
   ///          泡の波源は高さとは別枠で 1 フレーム 64 個（1 体あたり 10〜20 個程度）。
-  /// @param stern 船尾（サメは尾）のワールド位置
-  /// @param halfWidth 船体の半幅（m）。舷側と船尾の泡の広がりに使う
-  /// @param foamScale 泡の量の倍率（種類ごと）
-  /// @param dt 経過秒（泡の量は 1 秒あたりで指定しているため）
   void Wake(Actor &a, const RC::Vector3 &bow, const RC::Vector3 &fwd, float length, const RC::Vector3 &stern,
             float halfWidth, float foamScale, float dt) {
     // 強さは 1.5 m/s を基準に速さへ比例させる（速いほどはっきり）
@@ -1404,6 +1574,9 @@ private:
     }
   }
 
+  /// @brief サメを蛇行・尾振りさせながら泳がせ、水面の高さに合わせて置き、頭から航跡を出す
+  /// @param a 対象
+  /// @param dt 経過秒
   void UpdateShark(Actor &a, float dt) {
     using namespace TitleAmbientDetail;
     // 進路：基準方位のまわりをゆっくり蛇行
@@ -1449,6 +1622,9 @@ private:
     }
   }
 
+  /// @brief 漂流物を流しながら自転させ、水面（波紋込み）の高さと傾きに合わせて置く
+  /// @param a 対象
+  /// @param dt 経過秒
   void UpdateDrift(Actor &a, float dt) {
     using namespace TitleAmbientDetail;
     const RC::Vector3 f = Forward(a.heading);
@@ -1459,6 +1635,7 @@ private:
     a.spin += a.turn * dt;
     a.yaw = a.heading; // 退場判定は進行方向で行う
 
+    // 形ごとの浮かせ量と、水面を引く前後・左右の距離（木箱 / 樽 / 流木）
     float floatOffset = 0.1f, halfLen = 0.45f, halfWid = 0.45f;
     if (a.variant == 1) { floatOffset = 0.06f; halfLen = 0.5f; halfWid = 0.36f; }
     if (a.variant == 2) { floatOffset = 0.02f; halfLen = 0.9f; halfWid = 0.22f; }
@@ -1474,6 +1651,9 @@ private:
     PlaceRigid(a, {a.pos.x, y, a.pos.z}, body);
   }
 
+  /// @brief カモメを旋回・バンクさせながら飛ばし、羽ばたきと滑空を切り替えて翼を動かす
+  /// @param a 対象
+  /// @param dt 経過秒
   void UpdateGull(Actor &a, float dt) {
     using namespace TitleAmbientDetail;
     // ゆるく旋回しながら飛ぶ。旋回に合わせてバンクする
@@ -1529,6 +1709,9 @@ private:
     }
   }
 
+  /// @brief 船を進め、波に合わせて揺らし、旗をなびかせ、船首から航跡を出す
+  /// @param a 対象
+  /// @param dt 経過秒
   void UpdateShip(Actor &a, float dt) {
     using namespace TitleAmbientDetail;
     const RC::Vector3 f = Forward(a.heading);
@@ -1560,6 +1743,7 @@ private:
   std::vector<Actor> actors_;
   std::weak_ptr<Entity> folder_;
   bool poolBuilt_ = false;
+  /// @brief プールの生成予定 1 件（種類と漂流物の形）
   struct PendingBuild {
     Kind kind;
     int variant;

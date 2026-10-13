@@ -8,20 +8,23 @@
 #include "Particle/GPUParticle.h"
 #include <cmath>
 
-/// @brief Visual splash particle: flies outward and fades
+/// @brief 外側へ飛び散りながら縮んで消える水しぶき 1 粒のスクリプト
 class SplashParticle : public ScriptableEntity {
 protected:
+    /// @brief 寿命（0.6〜1.6 秒）と、衝撃係数に応じたランダムな初速を決める
     void OnCreate() override {
         elapsed_ = 0.0f;
         lifetime_ = 0.6f + static_cast<float>(rand() % 100) / 100.0f;
 
+        // 衝撃係数は "impact_factor" タグ（100 倍の整数、既定 100 = 1.0）から取得
         float impactFactor = 1.0f;
         if (Entity* self = GetEntity()) {
             int scaleTag = self->GetTagInt("impact_factor", 100);
             impactFactor = static_cast<float>(scaleTag) / 100.0f;
         }
 
-        // Random velocity (outward + upward)
+        // ランダムな初速（水平方向はランダムな向き、上向きも加える）
+        // 水平速度は衝撃係数の平方根、上向き速度は衝撃係数に比例させ、強い衝撃ほど高く上がるようにする
         float angle = static_cast<float>(rand() % 360) * 3.14159f / 180.0f;
         float speed = (4.0f + static_cast<float>(rand() % 100) / 15.0f) * std::sqrt(impactFactor);
         float upSpeed = (4.0f + static_cast<float>(rand() % 100) / 15.0f) * impactFactor;
@@ -31,8 +34,11 @@ protected:
         velZ_ = std::sin(angle) * speed;
     }
 
+    /// @brief 重力付きで移動させ、時間経過で縮小・フェードし、寿命切れか水中に沈んだら消す
+    /// @param deltaTime 前フレームからの経過時間（秒）
     void OnUpdate(float deltaTime) override {
         Entity* self = GetEntity();
+        // プールから再利用された場合は初期化し直す
         if (self && self->GetTagInt("reused", 0) == 1) {
             OnCreate();
             initScale_ = false;
@@ -45,38 +51,40 @@ protected:
         auto* tr = GetComponent<TransformComponent>();
         if (!tr) return;
 
+        // 初回に初期スケールを記録（縮小の基準にする）
         if (!initScale_) {
             startScale_ = tr->scale.x;
             initScale_ = true;
         }
 
+        // 寿命切れで消滅
         elapsed_ += deltaTime;
         if (elapsed_ >= lifetime_) {
             Cleanup();
             return;
         }
 
-        // Gravity
+        // 重力
         velY_ -= 12.0f * deltaTime;
 
-        // Move
+        // 移動
         tr->position.x += velX_ * deltaTime;
         tr->position.y += velY_ * deltaTime;
         tr->position.z += velZ_ * deltaTime;
 
-        // Below water: destroy
+        // 水面より下（-0.5）まで沈んだら消滅
         if (tr->position.y < -0.5f) {
             Cleanup();
             return;
         }
 
-        // Shrink over time
+        // 経過割合に応じて縮小（最小 0.01）
         float t = elapsed_ / lifetime_;
         float scale = (1.0f - t) * startScale_;
         if (scale < 0.01f) scale = 0.01f;
         tr->scale = { scale, scale, scale };
 
-        // Fade alpha
+        // 経過割合に応じてアルファを下げる
         auto* pm = GetComponent<PrimitiveMeshComponent>();
         if (pm && pm->meshHandle >= 0) {
             if (auto* mat = RC::GetPrimitiveMeshMaterialPtr(pm->meshHandle)) {
@@ -95,6 +103,7 @@ private:
     bool initScale_ = false;
     float startScale_ = 1.0f;
 
+    /// @brief 消滅処理（破棄せず非アクティブ化してプールに戻す）
     void Cleanup() {
         if (markedForDestroy_) return;
         markedForDestroy_ = true;
@@ -108,9 +117,10 @@ private:
 
 REGISTER_SCRIPT(SplashParticle)
 
-/// @brief Wake particle: behaves like a small bouncing water droplet
+/// @brief 航跡用の小さな水滴が跳ねて消えるパーティクルのスクリプト
 class WakeParticle : public ScriptableEntity {
 protected:
+    /// @brief 寿命とランダムな初速（上向き主体でわずかに横）を決める
     void OnCreate() override {
         elapsed_ = 0.0f;
         lifetime_ = 0.5f + static_cast<float>(rand() % 50) / 100.0f; // 0.5 ~ 1.0s
@@ -123,8 +133,11 @@ protected:
         velY_ = 3.0f + static_cast<float>(rand() % 100) / 50.0f; // 3.0 ~ 5.0
     }
 
+    /// @brief 重力付きで移動させ、水面でバウンドさせながら縮小・フェードし、寿命で消す
+    /// @param deltaTime 前フレームからの経過時間（秒）
     void OnUpdate(float deltaTime) override {
         Entity* self = GetEntity();
+        // プールから再利用された場合は初期化し直す
         if (self && self->GetTagInt("reused", 0) == 1) {
             OnCreate();
             initScale_ = false;
@@ -137,11 +150,13 @@ protected:
         auto* tr = GetComponent<TransformComponent>();
         if (!tr) return;
 
+        // 初回に初期スケールを記録（縮小の基準にする）
         if (!initScale_) {
             startScale_ = tr->scale.x;
             initScale_ = true;
         }
 
+        // 寿命切れで消滅
         elapsed_ += deltaTime;
         if (elapsed_ >= lifetime_) {
             Cleanup();
@@ -154,7 +169,7 @@ protected:
         tr->position.y += velY_ * deltaTime;
         tr->position.z += velZ_ * deltaTime;
 
-        // 水面に落ちたらバウンドするか消える
+        // 水面に落ちたら上下速度を反転・減衰させてバウンドし、横速度も減衰させる
         if (tr->position.y < 0.0f) {
             tr->position.y = 0.0f;
             velY_ *= -0.3f; // 少しバウンド
@@ -168,10 +183,11 @@ protected:
         if (currentScale < 0.01f) currentScale = 0.01f;
         tr->scale = { currentScale, currentScale, currentScale };
 
+        // メッシュのアルファを下げ、メッシュ側のトランスフォームも Transform に同期する
         auto* pm = GetComponent<PrimitiveMeshComponent>();
         if (pm && pm->meshHandle >= 0) {
             if (auto* mat = RC::GetPrimitiveMeshMaterialPtr(pm->meshHandle)) {
-                mat->color.w = (1.0f - t) * 0.9f; 
+                mat->color.w = (1.0f - t) * 0.9f;
             }
             if (auto* pmTr = RC::GetPrimitiveMeshTransformPtr(pm->meshHandle)) {
                 pmTr->scale = tr->scale;
@@ -190,6 +206,7 @@ private:
     bool initScale_ = false;
     float startScale_ = 1.0f;
 
+    /// @brief 消滅処理（破棄せず非アクティブ化してプールに戻す）
     void Cleanup() {
         if (markedForDestroy_) return;
         markedForDestroy_ = true;
@@ -203,25 +220,30 @@ private:
 
 REGISTER_SCRIPT(WakeParticle)
 
-/// @brief Heavy splash particle: high velocity upward water column
+/// @brief 重い弾の着水で立ち上がる水柱パーティクルのスクリプト
 class HeavySplashParticle : public ScriptableEntity {
 protected:
+    /// @brief 寿命（1.0〜1.2 秒）と、衝撃係数に応じた水柱の最大高さを決める
     void OnCreate() override {
         elapsed_ = 0.0f;
         lifetime_ = 1.0f + static_cast<float>(rand() % 20) / 100.0f; // 1.0 ~ 1.2s
 
+        // 衝撃係数は "impact_factor" タグ（100 倍の整数、既定 100 = 1.0）から取得
         float impactFactor = 1.0f;
         if (Entity* self = GetEntity()) {
             int scaleTag = self->GetTagInt("impact_factor", 100);
             impactFactor = static_cast<float>(scaleTag) / 100.0f;
         }
 
-        // The column will grow up to this height
+        // 水柱が伸びる最大の高さ
         maxHeight_ = 15.0f * impactFactor;
     }
 
+    /// @brief 水柱を伸ばしつつ幅を変化させ、終盤でフェード・UV スクロールし、寿命で消す
+    /// @param deltaTime 前フレームからの経過時間（秒）
     void OnUpdate(float deltaTime) override {
         Entity* self = GetEntity();
+        // プールから再利用された場合は初期化し直す
         if (self && self->GetTagInt("reused", 0) == 1) {
             OnCreate();
             initScale_ = false;
@@ -234,12 +256,14 @@ protected:
         auto* tr = GetComponent<TransformComponent>();
         if (!tr) return;
 
+        // 初回に基準の幅と根元の高さを記録
         if (!initScale_) {
-            startScale_ = tr->scale.x; // base width
+            startScale_ = tr->scale.x; // 基準の幅
             startY_ = tr->position.y;
             initScale_ = true;
         }
 
+        // 寿命切れで消滅
         elapsed_ += deltaTime;
         if (elapsed_ >= lifetime_) {
             Cleanup();
@@ -247,34 +271,34 @@ protected:
         }
 
         float t = elapsed_ / lifetime_;
-        
-        // Rapidly grow height, then hold, then shrink slightly
-        // We use a custom ease out for height
+
+        // 高さは ease-out（1-(1-t)^4）で、最初に一気に伸びてから最大高さに近づく
         float heightProgress = 1.0f - std::pow(1.0f - t, 4.0f);
         float currentHeight = maxHeight_ * heightProgress;
-        
-        // Base width expands slightly then shrinks
+
+        // 幅は sin カーブで途中最大 1.5 倍まで膨らみ、最後に元の幅へ戻る
         float widthScale = startScale_ * (1.0f + std::sin(t * 3.14159f) * 0.5f);
 
         tr->scale = { widthScale, currentHeight, widthScale };
         
-        // Adjust position so the base stays at ground level
-        // Cylinder mesh is centered at 0, so moving up by half height keeps bottom fixed
+        // 根元を水面に固定するための位置補正
+        // 円柱メッシュは中心が原点なので、高さの半分だけ上げると底面が startY_ に留まる
         tr->position.y = startY_ + currentHeight * 0.5f;
 
         auto* pm = GetComponent<PrimitiveMeshComponent>();
         if (pm && pm->meshHandle >= 0) {
             if (auto* mat = RC::GetPrimitiveMeshMaterialPtr(pm->meshHandle)) {
-                // Fade out near the end
+                // 経過 70% 以降で線形にフェードアウト
                 float alpha = 1.0f;
                 if (t > 0.7f) {
                     alpha = 1.0f - (t - 0.7f) / 0.3f;
                 }
                 mat->color.w = alpha;
                 
-                // Scroll UV for the rushing water effect (V axis)
+                // 水が勢いよく流れる表現として UV を V 方向にスクロール（行列の平行移動成分）
                 mat->uvTransform.m[3][1] -= deltaTime * 3.0f;
             }
+            // メッシュ側のトランスフォームを Transform に同期
             if (auto* pmTr = RC::GetPrimitiveMeshTransformPtr(pm->meshHandle)) {
                 pmTr->scale = tr->scale;
                 pmTr->translation = tr->position;
@@ -292,6 +316,7 @@ private:
     bool initScale_ = false;
     float startScale_ = 1.0f;
 
+    /// @brief 消滅処理（破棄せず非アクティブ化してプールに戻す）
     void Cleanup() {
         if (markedForDestroy_) return;
         markedForDestroy_ = true;
@@ -304,24 +329,29 @@ private:
 
 REGISTER_SCRIPT(HeavySplashParticle)
 
-/// @brief Bubble particle: floating upwards slowly and popping
+/// @brief ゆっくり浮き上がり、最後に弾けて消える泡パーティクルのスクリプト
 class BubbleParticle : public ScriptableEntity {
 protected:
+    /// @brief 寿命（0.4〜1.0 秒）とランダムな初速（ゆっくり上昇）を決める
     void OnCreate() override {
         elapsed_ = 0.0f;
         lifetime_ = 0.4f + static_cast<float>(rand() % 60) / 100.0f; // 0.4 ~ 1.0s
 
+        // 水平はランダムな向き、上向きはゆっくり
         float angle = static_cast<float>(rand() % 360) * 3.14159f / 180.0f;
         float speed = 0.5f + static_cast<float>(rand() % 100) / 100.0f;
         velX_ = std::cos(angle) * speed;
         velZ_ = std::sin(angle) * speed;
-        velY_ = 1.0f + static_cast<float>(rand() % 100) / 50.0f; // Slow upward
-        
+        velY_ = 1.0f + static_cast<float>(rand() % 100) / 50.0f; // 1.0 ~ 3.0
+
         baseVelY_ = velY_;
     }
 
+    /// @brief 横に揺れながら上昇させ、終盤で縮めて弾ける表現をし、寿命で消す
+    /// @param deltaTime 前フレームからの経過時間（秒）
     void OnUpdate(float deltaTime) override {
         Entity* self = GetEntity();
+        // プールから再利用された場合は初期化し直す
         if (self && self->GetTagInt("reused", 0) == 1) {
             OnCreate();
             initScale_ = false;
@@ -334,25 +364,27 @@ protected:
         auto* tr = GetComponent<TransformComponent>();
         if (!tr) return;
 
+        // 初回に初期スケールを記録（縮小の基準にする）
         if (!initScale_) {
             startScale_ = tr->scale.x;
             initScale_ = true;
         }
 
+        // 寿命切れで消滅
         elapsed_ += deltaTime;
         if (elapsed_ >= lifetime_) {
             Cleanup();
             return;
         }
 
-        // Wobble horizontally
+        // 水平方向の揺らぎ（sin で振動する係数を、速度と直交する向きに掛けて加える）
         float wobble = std::sin(elapsed_ * 10.0f) * 0.5f;
 
         tr->position.x += (velX_ + wobble * velZ_) * deltaTime;
         tr->position.y += velY_ * deltaTime;
         tr->position.z += (velZ_ - wobble * velX_) * deltaTime;
 
-        // Shrink at the very end to simulate popping
+        // 経過 80% 以降で急速に縮めて弾ける様子を表現する
         float t = elapsed_ / lifetime_;
         float scale = startScale_;
         if (t > 0.8f) {
@@ -364,9 +396,10 @@ protected:
         auto* pm = GetComponent<PrimitiveMeshComponent>();
         if (pm && pm->meshHandle >= 0) {
             if (auto* mat = RC::GetPrimitiveMeshMaterialPtr(pm->meshHandle)) {
-                // Bubbles are more transparent and whitish
+                // 泡は白っぽく、透明度を高めにする
                 mat->color = { 0.8f, 0.9f, 1.0f, (1.0f - t) * 0.6f };
             }
+            // メッシュ側のトランスフォームを Transform に同期
             if (auto* pmTr = RC::GetPrimitiveMeshTransformPtr(pm->meshHandle)) {
                 pmTr->scale = tr->scale;
                 pmTr->translation = tr->position;
@@ -385,6 +418,7 @@ private:
     bool initScale_ = false;
     float startScale_ = 1.0f;
 
+    /// @brief 消滅処理（破棄せず非アクティブ化してプールに戻す）
     void Cleanup() {
         if (markedForDestroy_) return;
         markedForDestroy_ = true;
@@ -397,9 +431,10 @@ private:
 
 REGISTER_SCRIPT(BubbleParticle)
 
-/// @brief GPUBubbleEmitter: Emits GPU bubble particles and destroys itself
+/// @brief GPU パーティクルで泡を一度だけバースト放出し、一定時間後に自身を破棄するエミッタースクリプト
 class GPUBubbleEmitter : public ScriptableEntity {
 protected:
+    /// @brief GPUParticleComponent のパーティクルシステムを泡用の設定（球形エミッタ・浮上・白→透明）にする
     void OnCreate() override {
         elapsed_ = 0.0f;
         lifetime_ = 2.0f; // 2秒間エミッターとして存在
@@ -428,6 +463,8 @@ protected:
         }
     }
 
+    /// @brief 生成 0.1 秒後に放出を止め、寿命が来たらエンティティごと破棄する
+    /// @param deltaTime 前フレームからの経過時間（秒）
     void OnUpdate(float deltaTime) override {
         if (markedForDestroy_) return;
 
@@ -444,10 +481,11 @@ protected:
             }
         }
 
+        // 放出済みの粒が消えきる頃（寿命）にエンティティごと破棄する（他の粒と違いプールしない）
         if (elapsed_ >= lifetime_) {
             markedForDestroy_ = true;
             if (Entity* self = GetEntity()) {
-                self->Destroy(); // 自身を破棄
+                self->Destroy();
             }
         }
     }

@@ -21,7 +21,7 @@ class GrayscaleIntroState;
 class NormalState;
 class LoadingState;
 
-// For PostEffectType
+// PostEffectType を使うため
 #include "Graphics/PostProcess/PostProcess.h"
 
 namespace {
@@ -29,6 +29,7 @@ namespace {
 /// @brief Dive 遷移で抜ける画面色の保存先
 /// @details 関数内 static にしておくと、Application 側の静的初期化から
 ///          SetDiveScreenColor を呼ばれても初期化順の問題が起きない。
+/// @return 画面色の保存先への参照（初期値は黒）
 RC::Vector4 &DiveScreenColorStorage() {
   static RC::Vector4 color = {0.0f, 0.0f, 0.0f, 1.0f};
   return color;
@@ -37,7 +38,9 @@ RC::Vector4 &DiveScreenColorStorage() {
 /// @brief Ascend 遷移（空へ抜ける）で抜ける画面色。飛び出す側はこの白まで飛ばしてから要求する
 constexpr RC::Vector4 kAscendScreenColor = {0.97f, 0.98f, 1.0f, 1.0f};
 
-/// @brief 遷移演出ごとのフェード時間（秒）
+/// @brief 遷移演出ごとのフェード時間を取得する
+/// @param transition 遷移演出
+/// @return フェード時間（秒）。Dive / Ascend 以外は既定の kFadeTime
 float FadeTimeFor(SceneTransition transition) {
   switch (transition) {
   case SceneTransition::Dive: return Scene::SceneManager::kDiveFadeTime;
@@ -49,10 +52,15 @@ float FadeTimeFor(SceneTransition transition) {
 /// @brief 切り替え後に GrayscaleIntro（白黒から色が戻る・その間ゲーム停止）を挟まない遷移か
 /// @details Dive / Ascend は次のシーン側の演出（深海からの浮上・空からの降下）が
 ///          そのままオープニングになるので、色を抜かずにすぐシーンを動かす。
+/// @param transition 遷移演出
+/// @return GrayscaleIntro を挟まないなら true
 bool SkipsGrayscaleIntro(SceneTransition transition) {
   return transition == SceneTransition::Dive || transition == SceneTransition::Ascend;
 }
 
+/// @brief ログ出力用の遷移演出名を取得する
+/// @param transition 遷移演出
+/// @return 小文字の演出名（不明な値は "none"）
 const char *TransitionLogName(SceneTransition transition) {
   switch (transition) {
   case SceneTransition::Dive: return "dive";
@@ -65,6 +73,7 @@ const char *TransitionLogName(SceneTransition transition) {
 /// @brief Dissolve の「抜けた部分の色」と縁の色を遷移演出に合わせる
 /// @details Dissolve のパラメータは PostProcess に残り続けるので、
 ///          どちらの遷移でも毎回明示的に設定する（前回の Dive の色を引きずらない）。
+/// @param transition 遷移演出
 void ApplyDissolveLook(SceneTransition transition) {
   if (transition == SceneTransition::Dive) {
     // 飛び込み側は画面をこの色まで暗くしてから要求してくるので、
@@ -96,10 +105,21 @@ const RC::Vector4 &Scene::SceneManager::DiveScreenColor() {
 // =================================================================
 // 状態インタフェース
 // =================================================================
+/// @brief SceneManager の遷移状態（State パターン）の基底インタフェース
+/// @details 状態ごとに「シーンの Update を回すか」「何を描くか」「次にどの状態へ進むか」を決める。
 class ISceneState {
 public:
   virtual ~ISceneState() = default;
+
+  /// @brief この状態での毎フレーム更新（シーン更新の可否と次状態への遷移を決める）
+  /// @param sm 状態を持つシーンマネージャー
+  /// @param ctx シーンコンテキスト
   virtual void Update(Scene::SceneManager &sm, SceneContext &ctx) = 0;
+
+  /// @brief この状態での描画
+  /// @param sm 状態を持つシーンマネージャー
+  /// @param ctx シーンコンテキスト
+  /// @param cl グラフィックスコマンドリスト
   virtual void Render(Scene::SceneManager &sm, SceneContext &ctx,
                       ID3D12GraphicsCommandList *cl) = 0;
 };
@@ -108,49 +128,97 @@ public:
 // 各状態クラスの定義
 // =================================================================
 
+/// @brief 通常状態。シーンを普通に動かし、遷移要求が来たらフェードアウトを始める
 class NormalState : public ISceneState {
 public:
+  /// @brief シーンを更新し、遷移要求があれば Dissolve を準備して FadeOutState へ進む
+  /// @param sm シーンマネージャー
+  /// @param ctx シーンコンテキスト
   void Update(Scene::SceneManager &sm, SceneContext &ctx) override;
+
+  /// @brief 現在のシーンを描画する
+  /// @param sm シーンマネージャー
+  /// @param ctx シーンコンテキスト
+  /// @param cl グラフィックスコマンドリスト
   void Render(Scene::SceneManager &sm, SceneContext &ctx,
               ID3D12GraphicsCommandList *cl) override;
 };
 
+/// @brief フェードアウト状態。旧シーンを動かしたまま Dissolve で画面を隠していく
 class FadeOutState : public ISceneState {
 public:
+  /// @brief Dissolve の閾値を 0→1 へ進め、隠し終えたら LoadingState へ進む
+  /// @param sm シーンマネージャー
+  /// @param ctx シーンコンテキスト
   void Update(Scene::SceneManager &sm, SceneContext &ctx) override;
+
+  /// @brief 旧シーンを描画し続ける
+  /// @param sm シーンマネージャー
+  /// @param ctx シーンコンテキスト
+  /// @param cl グラフィックスコマンドリスト
   void Render(Scene::SceneManager &sm, SceneContext &ctx,
               ID3D12GraphicsCommandList *cl) override;
 private:
-  float counter_ = 0.0f;
+  float counter_ = 0.0f; ///< フェード開始からの経過時間（秒、60fps 固定換算）
 };
 
+/// @brief ロード状態。画面が完全に隠れている間にシーンを切り替える
 class LoadingState : public ISceneState {
 public:
+  /// @brief 初回だけシーンを切り替えてポストエフェクトを組み直し、FadeInState へ進む
+  /// @param sm シーンマネージャー
+  /// @param ctx シーンコンテキスト
   void Update(Scene::SceneManager &sm, SceneContext &ctx) override;
+
+  /// @brief シーンは描かず、描画前処理だけを行う
+  /// @param sm シーンマネージャー
+  /// @param ctx シーンコンテキスト
+  /// @param cl グラフィックスコマンドリスト
   void Render(Scene::SceneManager &sm, SceneContext &ctx,
               ID3D12GraphicsCommandList *cl) override;
 private:
-  bool loaded_ = false;
+  bool loaded_ = false; ///< シーン切り替えを実行済みか
 };
 
+/// @brief フェードイン状態。新シーンを止めたまま Dissolve を明けていく
 class FadeInState : public ISceneState {
 public:
+  /// @brief Dissolve の閾値を 1→0 へ戻し、明けきったら GrayscaleIntroState か NormalState へ進む
+  /// @param sm シーンマネージャー
+  /// @param ctx シーンコンテキスト
   void Update(Scene::SceneManager &sm, SceneContext &ctx) override;
+
+  /// @brief 停止中の新シーンを描画する
+  /// @param sm シーンマネージャー
+  /// @param ctx シーンコンテキスト
+  /// @param cl グラフィックスコマンドリスト
   void Render(Scene::SceneManager &sm, SceneContext &ctx,
               ID3D12GraphicsCommandList *cl) override;
 private:
-  float counter_ = 0.0f;
+  float counter_ = 0.0f; ///< フェード開始からの経過時間（秒、60fps 固定換算）
 };
 
+/// @brief 白黒から色が戻る導入演出の状態。演出が終わるまでシーンを止めておく
 class GrayscaleIntroState : public ISceneState {
 public:
+  /// @brief コンストラクタ
+  /// @param duration 白黒からフルカラーに戻るまでの時間（秒）
   explicit GrayscaleIntroState(float duration = 1.8f) : duration_(duration) {}
+
+  /// @brief Grayscale の強さを 1→0 へ下げ、戻りきったら NormalState へ進む
+  /// @param sm シーンマネージャー
+  /// @param ctx シーンコンテキスト
   void Update(Scene::SceneManager &sm, SceneContext &ctx) override;
+
+  /// @brief 停止中のシーンを描画する
+  /// @param sm シーンマネージャー
+  /// @param ctx シーンコンテキスト
+  /// @param cl グラフィックスコマンドリスト
   void Render(Scene::SceneManager &sm, SceneContext &ctx,
               ID3D12GraphicsCommandList *cl) override;
 private:
-  float counter_ = 0.0f;
-  float duration_ = 1.8f;
+  float counter_ = 0.0f;  ///< 演出開始からの経過時間（秒、60fps 固定換算）
+  float duration_ = 1.8f; ///< 色が戻りきるまでの時間（秒）
 };
 
 // =================================================================
@@ -189,6 +257,7 @@ void NormalState::Render(Scene::SceneManager &sm, SceneContext &ctx,
 // FadeOutState 実装
 // =================================================================
 void FadeOutState::Update(Scene::SceneManager &sm, SceneContext &ctx) {
+  // 経過時間は実時間ではなく 60fps 固定（1 フレーム = 1/60 秒）で数え、閾値 0→1 に換算する
   const float fadeTime = FadeTimeFor(sm.transition_);
   counter_ += 1.0f / 60.0f;
   if (counter_ > fadeTime) counter_ = fadeTime;
@@ -265,9 +334,10 @@ void LoadingState::Render(Scene::SceneManager &sm, SceneContext &ctx,
 }
 
 // =================================================================
-// FadeInState 実装 (Dissolveがノイズより開ける期間：ゲーム進行は止めておく)
+// FadeInState 実装（Dissolve がノイズ状に明けていく期間。ゲーム進行は止めておく）
 // =================================================================
 void FadeInState::Update(Scene::SceneManager &sm, SceneContext &ctx) {
+  // FadeOutState と同じく 60fps 固定で数え、閾値を 1→0 へ戻す
   const float fadeTime = FadeTimeFor(sm.transition_);
   counter_ += 1.0f / 60.0f;
   if (counter_ > fadeTime) counter_ = fadeTime;
@@ -275,7 +345,7 @@ void FadeInState::Update(Scene::SceneManager &sm, SceneContext &ctx) {
   float threshold = 1.0f - (counter_ / fadeTime);
   RC::SetDissolveThreshold(threshold);
 
-  // 【ゲーム完全停止】演出完了までシーン更新 (sm.current_->Update) を飛ばし、時間とアクションをフリーズ！
+  // 演出が終わるまでシーンの Update は意図的に呼ばない（ゲーム進行を止めておく）
 
   if (counter_ >= fadeTime) {
     RC::RemovePostEffect(PostEffectType::Dissolve);
@@ -288,13 +358,13 @@ void FadeInState::Update(Scene::SceneManager &sm, SceneContext &ctx) {
       sm.ChangeState(std::make_unique<NormalState>());
       return;
     }
-    // Dissolveが完全に明けきった後、静止したモノクロ世界にカラーが満ちる GrayscaleIntroState へバトンタッチ！
+    // Dissolve が明けきったら、白黒から色を戻す GrayscaleIntroState へ進む
     sm.ChangeState(std::make_unique<GrayscaleIntroState>(1.8f));
   }
 }
 void FadeInState::Render(Scene::SceneManager &sm, SceneContext &ctx,
                          ID3D12GraphicsCommandList *cl) {
-  // 静止したゲーム世界を美しく描画
+  // 更新を止めた新シーンをそのまま描画する
   if (sm.current_) {
     sm.current_->Render(ctx, cl);
   } else {
@@ -303,26 +373,26 @@ void FadeInState::Render(Scene::SceneManager &sm, SceneContext &ctx,
 }
 
 // =================================================================
-// GrayscaleIntroState 実装 (モノクロからのシネマティックカラーライゼーション -> GAME START!!)
+// GrayscaleIntroState 実装（白黒から色を戻し、終わったら通常状態へ）
 // =================================================================
 void GrayscaleIntroState::Update(Scene::SceneManager &sm, SceneContext &ctx) {
   counter_ += 1.0f / 60.0f;
   if (counter_ > duration_) counter_ = duration_;
 
-  // 白黒 (1.0f) から フルカラー (0.0f) へ滑らかに色彩復元
+  // Grayscale の補間係数を白黒 (1.0f) からフルカラー (0.0f) へ線形に下げる
   float progress = counter_ / duration_;
   if (ctx.postProcess) {
     ctx.postProcess->SetGrayscaleLerpFactor(1.0f - progress);
   }
 
-  // 【引き続きゲーム完全停止】色彩が蘇るまで敵の行動や射撃・移動操作を一時留保！
+  // 色が戻りきるまでシーンの Update は引き続き呼ばない（敵の行動・プレイヤー操作も止まったまま）
 
   if (counter_ >= duration_) {
     if (ctx.postProcess) {
       ctx.postProcess->RemoveEffect(PostEffectType::Grayscale);
     }
     Log::Print("[SceneState] All intro sequences complete! GAME START!");
-    // すべてのオープニングの終わり、かつゲーム本番（NormalState）への覚醒！ここから時が動き始める！
+    // 導入演出がすべて終わったので遷移情報を消し、NormalState でシーン更新を再開する
     sm.transition_ = SceneTransition::None;
     sm.ChangeState(std::make_unique<NormalState>());
   }
@@ -455,6 +525,7 @@ void Scene::SceneManager::ChangeImmediately(const std::string &name,
   
   RC::ClearPostEffects();
 
+  // OnExit から OnEnter・ロード待ちまでの所要時間を計測してログに出す
   auto start = std::chrono::high_resolution_clock::now();
 
   if (current_) {
@@ -498,7 +569,7 @@ void Scene::SceneManager::ReloadCurrentScene(SceneContext &ctx) {
 
 void Scene::SceneManager::BackupCurrentScene() {
     if (current_) {
-        // dynamic_cast checking if it's DataDrivenScene
+        // バックアップは DataDrivenScene だけが対応しているので型を確かめる
         if (auto* dds = dynamic_cast<DataDrivenScene*>(current_)) {
             dds->BackupState();
             Log::Print("[Scene] Backup created for: " + currentName_);
@@ -568,7 +639,7 @@ Scene *Scene::SceneManager::get_(const std::string &name) {
 }
 
 // =================================================================
-// Data-driven scene management
+// データ駆動シーン（JSON）の管理
 // =================================================================
 #include "DataDrivenScene/DataDrivenScene.h"
 #include <filesystem>
@@ -580,6 +651,7 @@ void Scene::SceneManager::LoadScenesFromDirectory(const std::string& dirPath) {
     return;
   }
 
+  // 直下の .json だけを対象にする（サブディレクトリは見ない）。コード登録済みの同名シーンを優先する
   for (auto& entry : fs::directory_iterator(dirPath)) {
     if (entry.is_regular_file() && entry.path().extension() == ".json") {
       std::string sceneName = entry.path().stem().string();
@@ -653,6 +725,7 @@ bool Scene::SceneManager::DeleteScene(const std::string& name) {
     return false;
   }
 
+  // JSON を持つ DataDrivenScene はファイルも消す（残すと次回起動時に再登録されるため）
   if (auto* dds = dynamic_cast<DataDrivenScene*>(it->second.get())) {
     namespace fs = std::filesystem;
     if (fs::exists(dds->FilePath())) {

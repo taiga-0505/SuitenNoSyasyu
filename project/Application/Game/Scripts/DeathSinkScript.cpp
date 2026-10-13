@@ -50,6 +50,8 @@ public:
   float darkDepth = 24.0f;    ///< この深さで遷移する（UnderwaterLook の deepDepth と揃える）
   bool bubbles = true;
 
+  /// @brief 設定項目を JSON に書き出す
+  /// @return 設定項目を格納した JSON
   nlohmann::json Serialize() override {
     return {{"enabled", enabled},   {"delay", delay},       {"fallTime", fallTime},
             {"sinkTime", sinkTime}, {"depth", depth},       {"lookUpPitch", lookUpPitch},
@@ -57,7 +59,10 @@ public:
             {"bubbles", bubbles}};
   }
 
+  /// @brief JSON から設定項目を読み込む
+  /// @param j 読み込み元の JSON（存在し型が合うキーだけ反映する）
   void Deserialize(const nlohmann::json &j) override {
+    // キーが存在し型が一致する場合だけ上書きするヘルパー（数値用 / 真偽値用）
     auto f = [&](const char *k, float &o) { if (j.contains(k) && j[k].is_number()) o = j[k].get<float>(); };
     auto b = [&](const char *k, bool &o) { if (j.contains(k) && j[k].is_boolean()) o = j[k].get<bool>(); };
     b("enabled", enabled);
@@ -73,6 +78,7 @@ public:
   }
 
 #if RC_ENABLE_IMGUI
+  /// @brief インスペクタに現在の状態と各パラメータの編集 UI を表示する
   void OnImGui() override {
     static const char *kNames[] = {"idle", "wait", "fall", "sink", "done"};
     ImGui::Text("State: %s  t=%.2f", kNames[static_cast<int>(phase_)], t_);
@@ -90,6 +96,7 @@ public:
 #endif
 
 protected:
+  /// @brief 状態を初期化し、前回のタグを消して沈む間に出す泡を生成しておく
   void OnCreate() override {
     phase_ = Phase::Idle;
     demo_ = false;
@@ -98,12 +105,15 @@ protected:
     if (enabled && bubbles) bubbles_.Spawn(GetScene(), "DeathBubbles");
   }
 
+  /// @brief 力尽きたこと（またはデモ開始）を検知し、待機→落下→沈降→遷移要求の順にカメラを動かす
+  /// @param dt 前フレームからの経過時間（秒）
   void OnUpdate(float dt) override {
     if (dt <= 0.0f || !enabled) return;
     Entity *self = GetEntity();
     auto *tr = GetComponent<TransformComponent>();
     if (!self || !tr) return;
 
+    // 待機中: game_over タグかデモ開始を検知したら遷移を引き受けて演出を始める
     if (phase_ == Phase::Idle) {
       SceneContext *ctx = GetSceneContext();
       // 遷移の見せ用デモ：開始演出が終わって一定時間たったら、力尽きていなくても沈む
@@ -127,9 +137,11 @@ protected:
       Log::Print(demo_ ? "[DeathSinkScript] begin (transition demo)" : "[DeathSinkScript] begin");
     }
 
+    // 段階ごとの進行（各段階の経過時間は t_ で測り、段階が変わるたびに 0 へ戻す）
     t_ += dt;
     switch (phase_) {
     case Phase::Wait:
+      // 待ち終わったら開始姿勢を記録し、水面より上なら落下、水中ならすぐ沈降へ
       if (t_ >= delay) {
         startPos_ = tr->position;
         startRot_ = tr->rotation;
@@ -155,6 +167,7 @@ protected:
     }
     case Phase::Sink: {
       // 着水の勢いのまま沈み、水の抵抗でゆっくりになっていく
+      // 沈み始めた最初のフレームだけ泡を放出する
       if (t_ <= dt * 1.5f && bubbles) bubbles_.SetEmission(WaterCameraFx::Bubbles::kEmitPerFrame);
       const float u = t_ / (std::max)(sinkTime, 1e-3f);
       const float targetY = waterY_ - depth;
@@ -200,19 +213,24 @@ protected:
       break;
     }
 
+    // 泡をカメラに追従させる（Wait 中はまだ動かないので不要）
     if (phase_ != Phase::Wait) bubbles_.Follow(*tr, waterY_);
   }
 
+  /// @brief 遷移担当タグを外し、泡を破棄する
   void OnDestroy() override {
     if (Entity *self = GetEntity()) self->ClearTag(kOwnerTag);
     bubbles_.Destroy();
   }
 
 private:
+  /// @brief 演出の進行段階
   enum class Phase { Idle = 0, Wait, Fall, Sink, Done };
   static constexpr const char *kOwnerTag = "result_transition_owner";
 
   /// @brief 水面を見上げる向きへ、少し横に傾きながらゆっくり回す
+  /// @param tr 回転させるカメラの Transform
+  /// @param dt 前フレームからの経過時間（秒）
   void UpdateTilt(TransformComponent &tr, float dt) {
     tiltT_ += dt;
     const float r = (tiltTime > 0.0f) ? WaterCameraFx::Smooth01(tiltT_ / tiltTime) : 1.0f;

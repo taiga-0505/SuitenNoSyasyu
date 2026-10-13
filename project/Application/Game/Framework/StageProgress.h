@@ -18,8 +18,8 @@
 ///   中間の 3 面（2〜4）が洞窟内（2 は入口、5 は出口をまたぐ）。
 ///
 ///   値の流れ:
-///     ステージシーン OnEnter -> SetCurrent(index)（DataDrivenScene がシーン名から判定）
-///     クリア時               -> MarkCleared(index, score)（DataDrivenScene）→ 次の面を解放して Save()
+///     ステージシーン OnEnter -> SetCurrentScene(sceneName)（RailShooterGameMode::OnSceneEnter）
+///     クリア時               -> MarkCleared(index, score)（RailShooterGameMode::EvaluateOutcome）→ 次の面を解放して Save()
 ///     StageSelectScript      -> IsUnlocked / IsCleared / BestScore を読んで一覧を描く
 ///     ResultScreenScript     -> Current() / NextSceneName() で「次のステージへ」「もう一度」を決める
 ///
@@ -41,7 +41,9 @@ public:
     const char *placeText; ///< 情報パネルの「外洋／洞窟」タグ（例: "外洋→洞窟"）
   };
 
-  /// @brief ステージの一覧（並び順＝進行順）
+  /// @brief ステージの静的情報を取得する（一覧の並び順＝進行順）
+  /// @param index ステージ番号（0 始まり。範囲外は 0〜kStageCount-1 に丸める）
+  /// @return ステージ情報
   static const StageInfo &Info(int index) {
     static const std::array<StageInfo, kStageCount> kStages = {{
         {"Stage1", "外洋", "OPEN SEA", false, false, "水上", "外洋"},
@@ -53,7 +55,9 @@ public:
     return kStages[static_cast<size_t>(std::clamp(index, 0, kStageCount - 1))];
   }
 
-  /// @brief シーン名からステージ番号（0 始まり）を引く。ステージでなければ -1
+  /// @brief シーン名からステージ番号（0 始まり）を引く
+  /// @param sceneName シーン名
+  /// @return ステージ番号。ステージでなければ -1
   static int IndexOf(const std::string &sceneName) {
     for (int i = 0; i < kStageCount; ++i) {
       if (sceneName == Info(i).sceneName) return i;
@@ -62,12 +66,15 @@ public:
   }
 
   /// @brief プレイ対象のシーンか（ステージ 1〜5）
-  /// @details DataDrivenScene のクリア・死亡判定や GameSession::BeginRun をかける対象。
+  /// @details RailShooterGameMode のクリア・死亡判定や GameSession::BeginRun をかける対象。
+  /// @param sceneName シーン名
+  /// @return ステージ 1〜5 のいずれかなら true
   static bool IsPlayScene(const std::string &sceneName) {
     return IndexOf(sceneName) >= 0;
   }
 
   /// @brief 唯一のインスタンスを取得する
+  /// @return StageProgress のシングルトンインスタンス
   static StageProgress &Get() {
     static StageProgress instance;
     return instance;
@@ -79,26 +86,33 @@ public:
 
   /// @brief いま遊んでいる（直前に遊んだ）ステージのシーン名を記録する
   /// @details ステージ以外（Game など）を渡したときは -1 になり、Result は従来どおり振る舞う。
+  /// @param sceneName 入ったシーンの名前
   void SetCurrentScene(const std::string &sceneName) {
     current_ = IndexOf(sceneName);
     currentSceneName_ = sceneName;
   }
-  /// @brief いまのステージ番号（0 始まり。ステージ外なら -1）
+  /// @brief いまのステージ番号
+  /// @return 0 始まりの番号。ステージ外なら -1
   int Current() const { return current_; }
-  /// @brief 直前にプレイしたシーン名（リトライの遷移先。未設定なら "Stage1"）
+  /// @brief 直前にプレイしたシーン名（リトライの遷移先）
+  /// @return シーン名。未設定なら "Stage1"
   const std::string &CurrentSceneName() const {
     static const std::string kFallback = "Stage1";
     return currentSceneName_.empty() ? kFallback : currentSceneName_;
   }
-  /// @brief 次のステージのシーン名。最終面・ステージ外なら空文字
+  /// @brief 次のステージのシーン名
+  /// @return シーン名。最終面・ステージ外なら空文字
   std::string NextSceneName() const {
     if (current_ < 0 || current_ + 1 >= kStageCount) return {};
     return Info(current_ + 1).sceneName;
   }
   /// @brief 最終面か
+  /// @return 現在のステージが最終面なら true
   bool IsFinalStage() const { return current_ == kStageCount - 1; }
 
-  /// @brief セレクト画面で最後にカーソルを置いていたステージ（戻ってきたときの初期位置）
+  /// @brief セレクト画面で最後にカーソルを置いていたステージ（戻ってきたときの初期位置）の取得・設定
+  /// @param index 設定するステージ番号（0〜kStageCount-1 に丸める）
+  /// @return 記録しているステージ番号
   int LastSelected() const { return std::clamp(lastSelected_, 0, kStageCount - 1); }
   void SetLastSelected(int index) { lastSelected_ = std::clamp(index, 0, kStageCount - 1); }
 
@@ -106,28 +120,40 @@ public:
   // 解放・クリア記録
   // ------------------------------------------------------------------
 
+  /// @brief ステージが解放済みか（ステージ 1 は常に解放。未読込なら先にファイルを読む）
+  /// @param index ステージ番号（0 始まり）
+  /// @return 解放済みなら true。範囲外は false
   bool IsUnlocked(int index) const {
     EnsureLoaded();
     if (index < 0 || index >= kStageCount) return false;
     return index == 0 || unlockAll_ || index <= unlocked_;
   }
+  /// @brief ステージをクリア済みか（未読込なら先にファイルを読む）
+  /// @param index ステージ番号（0 始まり）
+  /// @return クリア済みなら true。範囲外は false
   bool IsCleared(int index) const {
     EnsureLoaded();
     if (index < 0 || index >= kStageCount) return false;
     return cleared_[static_cast<size_t>(index)];
   }
+  /// @brief ステージのベストスコア（未読込なら先にファイルを読む）
+  /// @param index ステージ番号（0 始まり）
+  /// @return ベストスコア。範囲外は 0
   int BestScore(int index) const {
     EnsureLoaded();
     if (index < 0 || index >= kStageCount) return 0;
     return bestScore_[static_cast<size_t>(index)];
   }
   /// @brief 解放済みのうち最も先のステージ番号
+  /// @return ステージ番号（0 始まり。全解放中なら最終面）
   int HighestUnlocked() const {
     EnsureLoaded();
     return unlockAll_ ? kStageCount - 1 : std::clamp(unlocked_, 0, kStageCount - 1);
   }
 
   /// @brief クリアを記録し、次のステージを解放して保存する
+  /// @param index クリアしたステージ番号（0 始まり。範囲外なら何もしない）
+  /// @param score 今回のスコア（ベストを超えていれば更新する）
   /// @return 今回のクリアで新しく解放されたステージがあれば true
   bool MarkCleared(int index, int score) {
     EnsureLoaded();
@@ -135,6 +161,7 @@ public:
     const size_t i = static_cast<size_t>(index);
     cleared_[i] = true;
     bestScore_[i] = (std::max)(bestScore_[i], score);
+    // 次の面がまだ解放されていなければ解放し、セレクト画面の演出用に記録する
     bool newlyUnlocked = false;
     if (index + 1 < kStageCount && unlocked_ < index + 1) {
       unlocked_ = index + 1;
@@ -147,8 +174,10 @@ public:
     return newlyUnlocked;
   }
 
-  /// @brief 直前のクリアで新しく解放されたステージ（無ければ -1）。セレクト画面の演出用
+  /// @brief 直前のクリアで新しく解放されたステージ。セレクト画面の演出用
+  /// @return ステージ番号（無ければ -1）
   int JustUnlocked() const { return justUnlocked_; }
+  /// @brief 解放演出を見せ終えたので JustUnlocked を -1 に戻す
   void ConsumeJustUnlocked() { justUnlocked_ = -1; }
 
   /// @brief 進行をすべて消す（デバッグ用）
@@ -160,7 +189,9 @@ public:
     Save();
   }
 
-  /// @brief 全ステージを解放済み扱いにする（保存はしない。デバッグ用）
+  /// @brief 全ステージを解放済み扱いにするフラグの設定・取得（保存はしない。デバッグ用）
+  /// @param v true で全解放扱い
+  /// @return 全解放扱いなら true
   void SetUnlockAll(bool v) { unlockAll_ = v; }
   bool UnlockAll() const { return unlockAll_; }
 
@@ -168,10 +199,13 @@ public:
   // 保存
   // ------------------------------------------------------------------
 
+  /// @brief セーブデータを読み込む（無ければ「ステージ 1 だけ解放」のまま）
+  /// @return ファイルを開けたら true（パースに失敗して初期状態へ戻した場合も true）
   bool Load() {
     loaded_ = true;
     std::ifstream ifs(kPath);
     if (!ifs.is_open()) return false;
+    // 項目ごとに型を確かめて読み、壊れたファイルなら初期状態から始める
     try {
       nlohmann::json j;
       ifs >> j;
@@ -196,6 +230,8 @@ public:
     return true;
   }
 
+  /// @brief セーブデータを書き出す
+  /// @return 書けたら true
   bool Save() const {
     std::ofstream ofs(kPath);
     if (!ofs.is_open()) {
@@ -215,19 +251,20 @@ public:
 private:
   StageProgress() = default;
 
+  /// @brief まだ読み込んでいなければ Load する（const な参照系からも遅延読み込みできるよう const_cast する）
   void EnsureLoaded() const {
     if (!loaded_) const_cast<StageProgress *>(this)->Load();
   }
 
   static constexpr const char *kPath = "../project/StageProgress.json"; ///< セーブデータ（配布パッケージには含めない）
 
-  bool loaded_ = false;
-  bool unlockAll_ = false;
+  bool loaded_ = false;    ///< Load 済みか
+  bool unlockAll_ = false; ///< デバッグ用の全解放フラグ（保存しない）
   int unlocked_ = 0; ///< 解放済みの最大ステージ番号（0 始まり）
-  std::array<bool, kStageCount> cleared_{};
-  std::array<int, kStageCount> bestScore_{};
-  int current_ = -1;
-  std::string currentSceneName_;
-  int lastSelected_ = 0;
-  int justUnlocked_ = -1;
+  std::array<bool, kStageCount> cleared_{};  ///< ステージごとのクリア済みフラグ
+  std::array<int, kStageCount> bestScore_{}; ///< ステージごとのベストスコア
+  int current_ = -1;             ///< いまのステージ番号（ステージ外なら -1）
+  std::string currentSceneName_; ///< 直前にプレイしたシーン名
+  int lastSelected_ = 0;         ///< セレクト画面で最後に選んでいたステージ
+  int justUnlocked_ = -1;        ///< 直前のクリアで解放されたステージ（無ければ -1）
 };

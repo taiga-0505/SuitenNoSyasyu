@@ -98,6 +98,8 @@ public:
     bool  debugDraw = true;         ///< 交戦円・砲の位置などをギズモ描画する
 
 protected:
+    /// @brief 基底の体力に加えて、船のパラメータを JSON へ書き出す
+    /// @return 全パラメータを格納した json
     nlohmann::json Serialize() override {
         nlohmann::json j = EnemyBaseScript::Serialize(); // hp / maxHp / deathDuration
         j["detectDistance"] = detectDistance;
@@ -126,6 +128,8 @@ protected:
         return j;
     }
 
+    /// @brief JSON から基底の体力と船のパラメータを読み込む（含まれる項目だけ上書きする）
+    /// @param j 読み込み元の json
     void Deserialize(const nlohmann::json& j) override {
         EnemyBaseScript::Deserialize(j);
         if (j.contains("detectDistance")) detectDistance = j["detectDistance"].get<float>();
@@ -153,6 +157,7 @@ protected:
         if (j.contains("debugDraw")) debugDraw = j["debugDraw"].get<bool>();
     }
 
+    /// @brief 船としての既定値（HP・撃破演出時間）を設定し、出現位置・船首方位・巡航の回り方を決める
     void OnCreate() override {
         EnemyBaseScript::OnCreate();
         // 船はサメより硬く、沈むまでにも時間がかかる。
@@ -179,6 +184,9 @@ protected:
         }
     }
 
+    /// @brief 目標の速度推定、状態遷移（巡航・交戦・斉射・再装填）、操船を行う
+    /// @param deltaTime 前フレームからの経過秒数
+    /// @note 書き込むのは XZ 座標と rotation.y のみ。Y と pitch / roll は BuoyancyScript の担当。
     void OnUpdate(float deltaTime) override {
         EnemyBaseScript::OnUpdate(deltaTime); // 被弾処理・HP タグ・消滅タイマー
 
@@ -186,7 +194,7 @@ protected:
         if (!tr) return;
 
         // 撃沈後は操船も砲撃もしない。沈める処理は BuoyancyScript に任せる
-        // （OnDeath で flooding タグを立ててある）。
+        // （TakeDamage で flooding タグを立ててある）。
         if (isDead) return;
         if (deltaTime <= 0.0f) return;
 
@@ -207,7 +215,7 @@ protected:
         lastDistance_ = dist;
 
         // --- 状態遷移 ---
-        // 自機の前方方向
+        // 交戦時の旋回中心。自機の向きから前方へ preferredDistance の 7 割ずらした点にする
         const float tCy = std::cos(targetTr->rotation.y);
         const float tSy = std::sin(targetTr->rotation.y);
         const float forwardOffset = preferredDistance * 0.7f;
@@ -238,6 +246,7 @@ protected:
             break;
 
         case ShipState::Firing:
+            // volleyInterval ごとに 1 発ずつ撃ち、撃ち切ったら再装填へ
             shotTimer_ -= deltaTime;
             if (shotTimer_ <= 0.0f) {
                 FireShell(scene, tr, targetTr->position);
@@ -279,6 +288,7 @@ protected:
 
         SteerTowards(desired, deltaTime);
 
+        // 船首方向にだけ進む（真横へは動けない）
         const float fx = std::sin(headingY_);
         const float fz = std::cos(headingY_);
         tr->position.x += fx * speed * deltaTime;
@@ -288,7 +298,8 @@ protected:
     }
 
 public:
-    /// @brief 撃沈されたら船体を浸水させる
+    /// @brief 基底の被ダメージ処理に加え、撃沈されたら船体を浸水させる
+    /// @param damage 受けるダメージ量
     void TakeDamage(int damage) override {
         const bool wasDead = isDead;
         EnemyBaseScript::TakeDamage(damage);
@@ -303,6 +314,7 @@ public:
         }
     }
 
+    /// @brief 船首方向・左右の砲の位置・交戦距離をギズモ描画する（debugDraw が偽なら何もしない）
     void OnDebugRender() override {
         if (!debugDraw) return;
         auto* tr = GetComponent<TransformComponent>();
@@ -330,6 +342,7 @@ public:
     }
 
 #if RC_ENABLE_IMGUI
+    /// @brief インスペクタに状態表示・各パラメータの編集欄・斉射サイクルの目安を表示する
     void OnImGui() override {
         EnemyBaseScript::OnImGui();
         ImGui::Text("State: %s  dist %.1fm", StateName(state_), lastDistance_);
@@ -395,6 +408,9 @@ private:
     /// @brief 交戦をやめる距離の倍率（探知距離ちょうどで切ると境目でばたつく）
     static constexpr float kDisengageMargin = 1.35f;
 
+    /// @brief 状態の表示名を返す（ImGui 表示用）
+    /// @param s 状態
+    /// @return 状態名の文字列
     static const char* StateName(ShipState s) {
         switch (s) {
         case ShipState::Patrol: return "Patrol";
@@ -405,12 +421,17 @@ private:
         return "?";
     }
 
+    /// @brief 0..1 の一様乱数を返す
+    /// @return 0 以上 1 未満の乱数
     static float RandomUnit() {
         static std::mt19937 engine{ std::random_device{}() };
         static std::uniform_real_distribution<float> dist(0.0f, 1.0f);
         return dist(engine);
     }
 
+    /// @brief 角度を -π..π に丸める
+    /// @param a 角度 (rad)
+    /// @return -π..π に丸めた角度 (rad)
     static float WrapPi(float a) {
         const float twoPi = kPi * 2.0f;
         while (a > kPi)  a -= twoPi;
@@ -419,6 +440,8 @@ private:
     }
 
     /// @brief プレイヤー（カメラ）を探す。見つけたものはキャッシュする
+    /// @param scene 検索するシーン
+    /// @return カメラを持つエンティティ。無ければ nullptr
     Entity* FindTarget(Scene* scene) {
         if (auto cached = cachedTarget_.lock()) {
             if (!cached->IsPendingDestroy() && cached->IsActive()) return cached.get();
@@ -435,6 +458,8 @@ private:
     /// @brief 目標の速度を差分から推定する（偏差射撃に使う）
     /// @details レール上のプレイヤーはほぼ等速なので線形予測でよく当たる。
     ///          生の差分はフレーム単位で暴れるので指数平滑を掛けている。
+    /// @param pos 目標の現在位置
+    /// @param deltaTime 前フレームからの経過秒数
     void UpdateTargetVelocity(const RC::Vector3& pos, float deltaTime) {
         if (hasLastTarget_ && deltaTime > 1e-5f) {
             const RC::Vector3 raw = { (pos.x - lastTargetPos_.x) / deltaTime,
@@ -448,6 +473,11 @@ private:
     }
 
     /// @brief プレイヤーの視界に入っているか（見えない位置から撃たれないようにする）
+    /// @param targetTr 目標（プレイヤー）の Transform
+    /// @param dx 船から目標への X 方向の差
+    /// @param dz 船から目標への Z 方向の差
+    /// @param dist 船と目標の XZ 平面上の距離
+    /// @return 視界内なら true（requireInView が偽なら常に true）
     bool IsSeenBy(const TransformComponent* targetTr, float dx, float dz, float dist) const {
         if (!requireInView) return true;
         if (dist < 0.01f) return true;
@@ -459,6 +489,9 @@ private:
     }
 
     /// @brief 回り込む向きを「旋回量が少ないほう」で決める
+    /// @param from 船の現在位置
+    /// @param center 回り込む中心
+    /// @return 回り込む向き（+1 / -1）
     float ChooseCircleSign(const RC::Vector3& from, const RC::Vector3& center) const {
         float best = 1.0f;
         float bestTurn = 1e9f;
@@ -476,6 +509,11 @@ private:
     ///          接線成分に sqrt(1 - e^2) を掛けてあるので合成は常に単位長。
     ///          「接線を向く」＝「目標に横腹を向ける」なので、
     ///          距離を保つ操船と砲門を向ける操船が 1 本の式で両立する。
+    /// @param from 船の現在位置
+    /// @param center 回る中心
+    /// @param radius 回る半径
+    /// @param sign 回る向き（+1 / -1）
+    /// @return 進みたい方向（XZ 平面上の単位ベクトル）
     RC::Vector3 OrbitDirection(const RC::Vector3& from, const RC::Vector3& center,
                                float radius, float sign) const {
         float tx = center.x - from.x;
@@ -485,6 +523,7 @@ private:
         tx /= dist;
         tz /= dist;
 
+        // e: 半径からのずれの比（-1..1）。正なら外側にいるので内向き成分、負なら外向き成分になる
         const float r = (std::max)(radius, 1e-3f);
         const float e = std::clamp((dist - r) / r, -1.0f, 1.0f);
         const float tanW = std::sqrt((std::max)(0.0f, 1.0f - e * e));
@@ -497,6 +536,8 @@ private:
     }
 
     /// @brief 船首を desired へ向ける（旋回速度の上限つき）
+    /// @param desired 向けたい方向（XZ）
+    /// @param deltaTime 前フレームからの経過秒数
     void SteerTowards(const RC::Vector3& desired, float deltaTime) {
         const float target = std::atan2(desired.x, desired.z);
         const float maxStep = (std::max)(turnRateDeg, 0.0f) * kDeg2Rad * deltaTime;
@@ -507,6 +548,10 @@ private:
     }
 
     /// @brief 撃てる状態か（距離が射程内で、かつ横腹を向けている）
+    /// @param dx 船から目標への X 方向の差
+    /// @param dz 船から目標への Z 方向の差
+    /// @param dist 船と目標の XZ 平面上の距離
+    /// @return 撃てるなら true
     bool CanFire(float dx, float dz, float dist) const {
         if (dist < fireMinDistance || dist > fireMaxDistance) return false;
         if (dist < 1e-3f) return false;
@@ -521,6 +566,10 @@ private:
     }
 
     /// @brief 砲弾を 1 発撃つ
+    /// @param scene 砲弾を生成するシーン
+    /// @param tr 船の Transform
+    /// @param targetPos 目標（プレイヤー）の位置
+    /// @note 目標側の舷の砲から、偏差と落下を補正した狙点へ向けて撃つ。
     void FireShell(Scene* scene, const TransformComponent* tr, const RC::Vector3& targetPos) {
         const float fx = std::sin(headingY_);
         const float fz = std::cos(headingY_);
@@ -536,6 +585,7 @@ private:
                                      tr->position.y + gunHeight,
                                      tr->position.z + rz * gunOffset * side };
 
+        // 砲口から狙点への単位方向を求める
         const RC::Vector3 aim = SolveAimPoint(muzzle, targetPos);
 
         float dirX = aim.x - muzzle.x;
@@ -564,6 +614,9 @@ private:
     ///          2 回ほど反復して両者を折り合わせる。
     ///          数値検証では、静止目標で誤差 0.05m、横切る目標でも 0.32m まで詰まる
     ///          （補正なしだとそれぞれ 2.41m / 5.61m）。
+    /// @param muzzle 砲口の位置
+    /// @param targetPos 目標の現在位置
+    /// @return 狙うべき点
     RC::Vector3 SolveAimPoint(const RC::Vector3& muzzle, const RC::Vector3& targetPos) const {
         const float speed = (std::max)(shellSpeed, 1.0f);
         const float shellGravity = ShellGravityFor(bulletType);
@@ -584,7 +637,11 @@ private:
     }
 
     /// @brief 砲弾エンティティを出す（既存の EnemyBullet プールを流用）
+    /// @param scene 砲弾を生成するシーン
+    /// @param pos 発射位置（砲口）
+    /// @param dir 発射方向（単位ベクトル）
     void SpawnShell(Scene* scene, const RC::Vector3& pos, const RC::Vector3& dir) {
+        // 非アクティブな EnemyBullet があれば再利用し、無ければ新規に作る
         std::shared_ptr<Entity> shell = nullptr;
         for (auto& e : scene->GetEntities()) {
             if (e && e->GetName() == "EnemyBullet" && !e->IsActive() && !e->IsPendingDestroy()) {
@@ -619,6 +676,7 @@ private:
             }
         }
 
+        // 当たり判定（トリガー）と弾の挙動スクリプトを付ける。再利用時は既存のものを使う
         auto* col = shell->GetComponent<ColliderComponent>();
         if (!col) col = &shell->AddComponent<ColliderComponent>();
         col->shape = ColliderComponent::Shape::Sphere;
@@ -661,11 +719,15 @@ private:
     }
 
     /// @brief 弾種を実際に撃てるものへ丸める（1＝拡散は EnemyBullet では機能しない）
+    /// @param t 指定された弾種
+    /// @return 2 なら 2、それ以外は 0
     static int SanitizeBulletType(int t) { return (t == 2) ? 2 : 0; }
 
     /// @brief 弾種ごとに掛かっている重力の大きさ(m/s^2)
     /// @warning WaterBullet.cpp の `gravity` の初期値と分岐に揃えること
     ///          （通常 -3.0 / 重量弾 -6.0）。片方だけ変えると弾道補正がずれて当たらなくなる。
+    /// @param type 弾種
+    /// @return 重力の大きさ（正の値, m/s^2）
     static float ShellGravityFor(int type) {
         return (SanitizeBulletType(type) == 2) ? 6.0f : 3.0f;
     }
@@ -678,8 +740,8 @@ private:
     ShipState state_ = ShipState::Patrol;
     float headingY_ = 0.0f;       ///< 船首方位(rad)。モデル補正を含まない素の向き
     float circleSign_ = 1.0f;     ///< 回り込む向き(+1 / -1)
-    RC::Vector3 spawnPos_{ 0.0f, 0.0f, 0.0f };
-    float lastDistance_ = 0.0f;
+    RC::Vector3 spawnPos_{ 0.0f, 0.0f, 0.0f }; ///< 出現地点（巡航の中心）
+    float lastDistance_ = 0.0f;   ///< 直近の目標との距離（ImGui 表示用）
 
     int   shotsLeft_ = 0;
     float shotTimer_ = 0.0f;

@@ -100,6 +100,8 @@ public:
 
   bool debugDraw = true; ///< 採用した障害物の円をギズモ描画する
 
+  /// @brief 障害物の選び方・半径・反射の設定を JSON に書き出す
+  /// @return 設定項目を格納した JSON
   nlohmann::json Serialize() override {
     return {
         {"autoDetect", autoDetect},
@@ -113,6 +115,8 @@ public:
     };
   }
 
+  /// @brief JSON から障害物の選び方・半径・反射の設定を読み込む
+  /// @param j 読み込み元の JSON（存在するキーだけ反映する）
   void Deserialize(const nlohmann::json &j) override {
     if (j.contains("autoDetect")) autoDetect = j["autoDetect"].get<bool>();
     if (j.contains("terrainTag")) terrainTag = j["terrainTag"].get<std::string>();
@@ -125,8 +129,11 @@ public:
   }
 
 protected:
+  /// @brief シーンから障害物を集め直して水面シェーダへ渡し、反射パラメータを設定する
+  /// @param deltaTime 前フレームからの経過時間（秒）。未使用
   void OnUpdate(float deltaTime) override {
     (void)deltaTime;
+    // 障害物は動いたり増減したりしうるので、毎フレーム作り直して渡す
     Collect();
     RC::SetWaterObstacles(picked_.empty() ? nullptr : picked_.data(),
                           static_cast<int>(picked_.size()));
@@ -135,6 +142,7 @@ protected:
                               (std::max)(reflectRange, kMinReflect));
   }
 
+  /// @brief 水面シェーダへ渡している障害物リストを空にする
   void OnDestroy() override {
     // このスクリプトが居なくなったら障害物も無くす。
     // 残したままだと、水面だけ残ったシーンで岩の無い場所の波が平らになる。
@@ -142,6 +150,7 @@ protected:
   }
 
 public:
+  /// @brief 採用した障害物の円と、反射の届く範囲の円を水面の高さに描く
   void OnDebugRender() override {
     if (!debugDraw) return;
     const float waterY = WaterHeight();
@@ -158,6 +167,7 @@ public:
   }
 
 #if RC_ENABLE_IMGUI
+  /// @brief 選び方・半径・反射の設定 UI と、採用した障害物の一覧を表示する
   void OnImGui() override {
     ImGui::Checkbox("Auto Detect", &autoDetect);
     {
@@ -175,6 +185,7 @@ public:
     ImGui::Checkbox("Debug Draw", &debugDraw);
 
     ImGui::Separator();
+    // 採用結果の一覧
     ImGui::Text("Water Y: %.2f   Picked: %zu / %d", WaterHeight(), picked_.size(),
                 RC::GetMaxWaterObstacles());
     for (size_t i = 0; i < picked_.size(); ++i) {
@@ -193,6 +204,7 @@ public:
 
 private:
   /// @brief 水面の高さ（このエンティティの Y）
+  /// @return 水面の Y 座標（Transform が無ければ 0）
   float WaterHeight() {
     if (auto *tr = GetComponent<TransformComponent>()) return tr->position.y;
     return 0.0f;
@@ -202,6 +214,7 @@ private:
   /// @param e 対象エンティティ
   /// @param tr その Transform
   /// @param waterY 水面の高さ
+  /// @return 障害物として扱うなら true
   bool IsObstacle(Entity &e, const TransformComponent &tr, float waterY) const {
     // 明示指定があればそれが最優先。0 と書けば地形でも障害物にしない。
     if (e.HasTag("water_obstacle")) {
@@ -225,7 +238,11 @@ private:
   ///              円で近似するため対角線の半分（外接円）を採る。
   ///          球・円柱：素の半径が 1.0 なので、そのまま scale が半径になる。
   ///          タグ `water_obstacle_radius`（10 倍した整数）があればそれを優先する。
+  /// @param e 対象エンティティ
+  /// @param tr その Transform
+  /// @return 水際での半径(m)。radiusScale を掛けて minRadius で下限を切った値（タグ指定時はその値）
   float ComputeRadius(Entity &e, const TransformComponent &tr) const {
+    // タグで半径が固定されていればそれを優先する（10 倍した整数で持っているので 0.1 を掛ける）
     if (e.HasTag("water_obstacle_radius")) {
       const float pinned = static_cast<float>(e.GetTagInt("water_obstacle_radius", 0)) * 0.1f;
       if (pinned > 0.0f) return pinned;
@@ -263,6 +280,8 @@ private:
 
     // 上限（シェーダの gObstacles[4]）を超える場合に「どれを捨てるか」を
     // 決められるよう、いったん全部集めてから距離で選ぶ。
+
+    /// @brief シェーダへ渡す障害物の候補（送信データと、選別用の距離キー・名前）
     struct Candidate {
       RC::Vector4 data;
       float key;
@@ -273,6 +292,7 @@ private:
     // 近いものを残す基準点。カメラがあればカメラ、無ければ水面の中心。
     const RC::Vector3 origin = ViewOrigin(scene);
 
+    // 障害物の条件を満たすものを候補に集める（並べ替えのキーは基準点からの XZ 距離の 2 乗）
     for (const auto &e : scene->GetEntities()) {
       if (!e || e.get() == self || !e->IsActive()) continue;
       auto *tr = e->GetComponent<TransformComponent>();
@@ -297,6 +317,7 @@ private:
       candidates.resize(static_cast<size_t>(maxCount));
     }
 
+    // 残った候補を採用リストへ移す
     picked_.reserve(candidates.size());
     pickedNames_.reserve(candidates.size());
     for (const auto &c : candidates) {
@@ -306,6 +327,8 @@ private:
   }
 
   /// @brief 上限を超えたときに「近い」を測る基準点
+  /// @param scene 探索するシーン
+  /// @return "Camera" という名前のエンティティの位置。無ければ自分（水面）の位置、それも無ければ原点
   RC::Vector3 ViewOrigin(Scene *scene) {
     if (Entity *cam = scene->FindEntityByName("Camera")) {
       if (auto *tr = cam->GetComponent<TransformComponent>()) return tr->position;
@@ -315,6 +338,10 @@ private:
   }
 
   /// @brief XZ 平面に円を描く（水面上の輪を見せるため）
+  /// @param center 円の中心
+  /// @param radius 半径（0 以下なら描かない）
+  /// @param color 線の色
+  /// @param segments 円を近似する線分の数（3 未満なら描かない）
   static void DrawCircleXZ(const RC::Vector3 &center, float radius, const RC::Vector4 &color,
                            int segments) {
     if (radius <= 0.0f || segments < 3) return;

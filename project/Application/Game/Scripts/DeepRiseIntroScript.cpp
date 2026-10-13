@@ -92,6 +92,8 @@ public:
   float cardHold = 0.9f;    ///< 出きったまま見せる時間
   float cardFadeOut = 0.45f;///< 上へ抜けながら消える時間
 
+  /// @brief 設定項目を JSON に書き出す
+  /// @return 設定項目を格納した JSON
   nlohmann::json Serialize() override {
     return {
         {"alwaysPlay", alwaysPlay},
@@ -114,7 +116,10 @@ public:
     };
   }
 
+  /// @brief JSON から設定項目を読み込む
+  /// @param j 読み込み元の JSON（存在し型が合うキーだけ反映する）
   void Deserialize(const nlohmann::json &j) override {
+    // キーが存在し型が一致する場合だけ上書きするヘルパー（数値 / 真偽値 / 文字列）
     auto readF = [&](const char *key, float &out) {
       if (j.contains(key) && j[key].is_number()) out = j[key].get<float>();
     };
@@ -144,6 +149,7 @@ public:
   }
 
 #if RC_ENABLE_IMGUI
+  /// @brief インスペクタに浮上・ステージ名カードの状態と各パラメータ、再生し直すボタンを表示する
   void OnImGui() override {
     ImGui::Text("State: %s  t=%.2f / %.2f", playing_ ? "rising" : (finished_ ? "finished" : "idle"),
                 t_, riseDuration);
@@ -172,6 +178,7 @@ public:
 #endif
 
 protected:
+  /// @brief フォントを読み込み、入り方（dive 遷移か）に応じて浮上演出を始めるか決める
   void OnCreate() override {
     if (showStartText) {
       startFont_ = RC::LoadFont(startFontPath, startFontSize);
@@ -185,6 +192,7 @@ protected:
     if (Scene *scene = GetScene()) cardStage_ = StageProgress::IndexOf(scene->Name());
     if (showStageCard && cardStage_ >= 0) LoadCardFonts();
 
+    // 再生するか: alwaysPlay か、タイトルから dive 遷移で入ったとき
     bool play = alwaysPlay;
     if (SceneContext *ctx = GetSceneContext()) {
       play = play || (ctx->lastTransition == SceneTransition::Dive);
@@ -201,6 +209,8 @@ protected:
     }
   }
 
+  /// @brief 浮上・ステージ名カード・GAME START 表示の時間を進める
+  /// @param deltaTime 前フレームからの経過時間（秒。ポーズ中は 0 以下）
   void OnUpdate(float deltaTime) override {
     // ポーズ中はカードを隠す（オーバーレイはポーズメニューより手前に出てしまうため）
     paused_ = (deltaTime <= 0.0f);
@@ -213,12 +223,14 @@ protected:
       cardTime_ += deltaTime;
       if (cardTime_ >= CardTotal()) cardActive_ = false;
     }
+    // GAME START の表示が終わったら、帯に合わせて登録した輪郭の除外矩形を外す
     if (startTextTimer_ > 0.0f) {
       startTextTimer_ -= deltaTime;
       if (startTextTimer_ <= 0.0f) ClearOutlineExclusion();
     }
   }
 
+  /// @brief 輪郭の除外矩形・タグ・泡エンティティ・フォントを後片付けする
   void OnDestroy() override {
     ClearOutlineExclusion();
     if (Entity *self = GetEntity()) self->ClearTag(kTagIntroPlaying);
@@ -239,7 +251,7 @@ protected:
     cardActive_ = false;
   }
 
-  /// @brief ステージ名カード（ポストプロセスの後に描く）
+  /// @brief ステージ名カードをポストプロセスの後に描く
   /// @details 深海では Underwater のフォグが距離で画面を塗り潰すので、OnRender（ポストプロセス前）
   ///          に描くと文字までフォグ色に沈む。オーバーレイなら輪郭線も乗らない。
   ///          レイアウトは RailShooterController の HUD と同じ 1280x720 基準（レターボックス分をずらす）。
@@ -273,6 +285,7 @@ protected:
     const float fs = (cardFontScale_ > 0.0f) ? (s / cardFontScale_) : 1.0f;
     auto P = [&](float x, float y) { return RC::Vector2{ox + x * s, oy + y * s}; };
 
+    // ---- 文字列と縦のレイアウト（添え書き + 間隔 + ステージ名の塊を画面の 44% の高さに中央寄せ）----
     const StageProgress::StageInfo &info = StageProgress::Info(cardStage_);
     const std::string label = "STAGE " + std::to_string(cardStage_ + 1) + "  /  " + info.subtitle;
     const std::string title = info.title;
@@ -308,9 +321,11 @@ protected:
     }
   }
 
+  /// @brief 水面に出た直後の GAME START を、暗い帯の上に描く
   void OnRender() override {
     if (startTextTimer_ <= 0.0f || startFont_ < 0) return;
 
+    // 画面サイズはウィンドウから取得し、取れなければ 1280x720 を仮定する
     float screenW = 1280.0f;
     float screenH = 720.0f;
     auto &rc = RC::GetRenderContext();
@@ -343,11 +358,13 @@ protected:
                   {0.02f, 0.05f, 0.10f, startBandAlpha * alpha});
     }
 
+    // 右下へずらした暗い影を先に描き、その上に本体の文字を重ねる
     RC::DrawString(startFont_, startText, {pos.x + 3.0f, pos.y + 3.0f},
                    {0.0f, 0.03f, 0.08f, 0.65f * alpha}, pop, TextAlign::Center);
     RC::DrawString(startFont_, startText, pos, {0.97f, 0.98f, 1.0f, alpha}, pop,
                    TextAlign::Center);
 
+    // 帯の矩形を輪郭線の除外矩形として登録する（表示終了時に ClearOutlineExclusion で外す）
     if (auto *pp = rc.GetPostProcess()) {
       const float rect[4] = {0.0f, bandTop, screenW, bandBottom};
       pp->SetOutlineExclusions(rect, 1);
@@ -369,10 +386,13 @@ private:
   static constexpr float kCardTitlePx = 64.0f; ///< ステージ名の文字サイズ
   static constexpr float kCardLabelPx = 22.0f; ///< 「STAGE n / 欧文名」の文字サイズ
 
+  /// @brief ステージ名カードの表示にかかる合計時間を求める
+  /// @return 出始めの遅れ・フェードイン・表示・フェードアウトの合計（秒）
   float CardTotal() const { return cardDelay + cardFadeIn + cardHold + cardFadeOut; }
 
   /// @brief カード用のフォントを実解像度に合わせた大きさでロードする（拡大でぼやけないように）
   void LoadCardFonts() {
+    // 実解像度と 1280x720 の比率（縦横の小さいほう）をフォントの拡大率にする
     float w = kDesignW, h = kDesignH;
     auto &rc = RC::GetRenderContext();
     if (rc.Ctx() && rc.Ctx()->app && rc.Ctx()->app->width > 0 && rc.Ctx()->app->height > 0) {
@@ -389,6 +409,9 @@ private:
     }
   }
 
+  /// @brief 0〜1 に丸めてから smoothstep（3t^2 - 2t^3）で補間する
+  /// @param t 進行度（範囲外は 0〜1 に丸める）
+  /// @return 始まりと終わりがなめらかな 0〜1 の値
   static float Smooth01(float t) {
     t = std::clamp(t, 0.0f, 1.0f);
     return t * t * (3.0f - 2.0f * t);
@@ -397,16 +420,22 @@ private:
   /// @brief 最初は速く、終わりに向かって減速する（1 - (1-u)^k。k=1 で等速）
   /// @details 深海は真っ暗で見せるものが無いので、そこを長引かせないためにこの形。
   ///          水面に近づくほど遅くなるので、明るくなっていく過程はゆっくり見える。
+  /// @param u 進行度（0〜1 に丸める）
+  /// @param k 減速の強さ（0.1 未満は 0.1 に丸める）
+  /// @return 補間後の進行度（0〜1）
   static float EaseOutPow(float u, float k) {
     u = std::clamp(u, 0.0f, 1.0f);
     k = (std::max)(k, 0.1f);
     return 1.0f - std::pow(1.0f - u, k);
   }
 
+  /// @brief 浮上演出を開始する。現在のカメラ位置・向きを目標にし、riseDepth 下から見上げた状態へ移す
+  /// @note intro_playing タグを立て、ステージ名カードと泡の射出もここで始める
   void Begin() {
     auto *tr = GetComponent<TransformComponent>();
     if (!tr) return;
 
+    // 現在の位置・向きを到達目標として記録し、開始位置は真下 riseDepth、向きは見上げに置き換える
     goalPos_ = tr->position;
     goalRot_ = tr->rotation;
     startPos_ = {goalPos_.x, goalPos_.y - riseDepth, goalPos_.z};
@@ -434,6 +463,7 @@ private:
     cardTime_ = 0.0f;
     cardActive_ = showStageCard && cardStage_ >= 0 && cardTitleFont_ >= 0 && cardLabelFont_ >= 0;
 
+    // 開始位置が泡を止める深さより深いときだけ泡を出し始める
     bubbleEmitting_ = false;
     if (bubbles && (waterY_ - startPos_.y) >= kBubbleStopDepth) {
       if (bubbles_.expired()) SpawnBubbleEmitter();
@@ -452,6 +482,7 @@ private:
     }
   }
 
+  /// @brief カメラを浮上の目標位置・向き（演出開始前の状態）へ戻す
   void RestoreCamera() {
     if (auto *tr = GetComponent<TransformComponent>()) {
       tr->position = goalPos_;
@@ -459,10 +490,13 @@ private:
     }
   }
 
+  /// @brief 浮上を 1 フレーム進め、泡の射出を制御し、終わったら Finish する
+  /// @param dt 前フレームからの経過時間（秒）
   void UpdateRise(float dt) {
     auto *tr = GetComponent<TransformComponent>();
     if (!tr) return;
 
+    // 位置は EaseOutPow で「速く出て水面手前で減速」させる
     t_ += dt;
     const float u = t_ / (std::max)(riseDuration, 1e-3f);
     const float e = EaseOutPow(u, riseEase);
@@ -486,6 +520,7 @@ private:
     }
   }
 
+  /// @brief 浮上を終える。カメラを目標へ合わせ、タグと泡を止めて GAME START を出す
   void Finish() {
     auto *tr = GetComponent<TransformComponent>();
     if (tr) {
@@ -511,6 +546,7 @@ private:
 
   // ---- 泡（GPU パーティクル）----
 
+  /// @brief 浮上中に流す泡の GPU パーティクルエンティティを生成して設定する
   void SpawnBubbleEmitter() {
     Scene *scene = GetScene();
     if (!scene) return;
@@ -543,6 +579,8 @@ private:
     bubbles_ = e;
   }
 
+  /// @brief 泡の射出数を設定する（泡エンティティが無ければ何もしない）
+  /// @param perFrame 1 フレームあたりの射出数（0 で停止）
   void SetBubbleEmission(uint32_t perFrame) {
     auto e = bubbles_.lock();
     if (!e) return;
@@ -551,6 +589,8 @@ private:
     }
   }
 
+  /// @brief 泡の射出点をカメラの前方・少し下へ追従させる
+  /// @param camTr カメラの Transform
   void UpdateBubbleEmitter(const TransformComponent &camTr) {
     auto e = bubbles_.lock();
     if (!e) return;

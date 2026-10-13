@@ -65,6 +65,8 @@ public:
   WaterCameraFx::RiseParams rise;
   UnderwaterLook::Params look;
 
+  /// @brief 設定項目を JSON に書き出す
+  /// @return 設定項目（演出パラメータ dive / rise / underwater を含む）を格納した JSON
   nlohmann::json Serialize() override {
     auto v4 = [](const RC::Vector4 &c) { return nlohmann::json{c.x, c.y, c.z, c.w}; };
     nlohmann::json j = {
@@ -83,7 +85,10 @@ public:
     return j;
   }
 
+  /// @brief JSON から設定項目を読み込む
+  /// @param j 読み込み元の JSON（存在し型が合うキーだけ反映する）
   void Deserialize(const nlohmann::json &j) override {
+    // キーが存在し型が一致する場合だけ上書きするヘルパー（数値 / 文字列 / RGBA 配列）
     auto readF = [&](const char *key, float &out) {
       if (j.contains(key) && j[key].is_number()) out = j[key].get<float>();
     };
@@ -110,6 +115,7 @@ public:
     rise.ReadJson(j);
   }
 
+  /// @brief インスペクタに選択状態と各面の進行を表示し、デバッグ用の全解放・進行リセットを操作させる
   void OnImGui() override {
 #if RC_ENABLE_IMGUI
     StageProgress &prog = StageProgress::Get();
@@ -125,9 +131,11 @@ public:
   }
 
 protected:
+  /// @brief フォントを読み込み、初期選択を決め、Dive 遷移で入ったときは浮上演出を始める
   void OnCreate() override {
     RC::SetWaterObstacles(nullptr, 0);
 
+    // 実解像度と 1280x720 の比率に合わせた大きさでフォントを読み込む（拡大でぼやけないように）
     float w = 1280.0f, h = 720.0f;
     if (SceneContext *ctx = GetSceneContext()) {
       if (ctx->app && ctx->app->width > 0 && ctx->app->height > 0) {
@@ -160,6 +168,7 @@ protected:
 
     if (Input *in = Input::GetInstance()) in->GetGameMousePosition(lastMouseX_, lastMouseY_);
 
+    // 退出状態を初期化し、Title から Dive 遷移で入ったときは UI を隠して深海から浮上させる
     leaving_ = false;
     uiAlpha_ = 1.0f;
     uiFadeIn_ = -1.0f;
@@ -178,12 +187,16 @@ protected:
     }
   }
 
+  /// @brief 演出用タイマー・浮上・UI のフェードインを進め、出航中は退出処理、それ以外は入力を処理する
+  /// @param deltaTime 前フレームからの経過時間（秒）
   void OnUpdate(float deltaTime) override {
     if (deltaTime <= 0.0f) return;
+    // 選択の弾み（bump_）と揺れ（shake_）は 1 → 0 へそれぞれの時間で減衰させる
     time_ += deltaTime;
     if (bump_ > 0.0f) bump_ = (std::max)(0.0f, bump_ - deltaTime / kBumpTime);
     if (shake_ > 0.0f) shake_ = (std::max)(0.0f, shake_ - deltaTime / kShakeTime);
 
+    // 浮上中は操作させず、浮上が止まってから UI をフェードインさせる
     if (rise_.IsActive()) rise_.Update(deltaTime);
     if (rise_.IsMoving()) return;
     if (uiFadeIn_ >= 0.0f) {
@@ -199,6 +212,7 @@ protected:
     if (!decided_) HandleInput();
   }
 
+  /// @brief 飛び込み・浮上演出を終わらせ、泡とフォントを解放する
   void OnDestroy() override {
     if (dive_.IsActive()) dive_.End(/*restoreCamera=*/true);
     if (rise_.IsActive()) rise_.End();
@@ -215,8 +229,10 @@ protected:
     unload(labelFont_);
   }
 
+  /// @brief 1280x720 基準のレイアウトを実解像度へ合わせ、HUD 全体（見出し・海図・情報・操作説明）を描く
   void OnRender() override {
     if (uiAlpha_ <= 0.0f) return;
+    // 縦横の小さいほうの倍率で拡大し、余った分は左右または上下に均等に空ける（レターボックス）
     float screenW = 1280.0f, screenH = 720.0f;
     auto &rc = RC::GetRenderContext();
     if (rc.Ctx() && rc.Ctx()->app) {
@@ -290,18 +306,36 @@ private:
   static constexpr RC::Vector4 kRock = {0.16f, 0.14f, 0.13f, 0.95f};
   static constexpr RC::Vector4 kRockEdge = {0.42f, 0.37f, 0.32f, 1.0f};
 
+  /// @brief 1280x720 基準座標を実画面座標へ変換するための倍率とオフセット
+  /// @details s: 拡大率 / ox, oy: レターボックスのずれ / fs: フォント描画時の倍率（s ÷ ロード時の倍率）
   struct Layout {
     float s = 1.0f, ox = 0.0f, oy = 0.0f, fs = 1.0f;
   };
   Layout L_;
 
+  /// @brief 基準座標の X / Y を実画面座標へ変換する
+  /// @param x 基準座標の X（Y は y）
+  /// @return 実画面座標
   float X(float x) const { return L_.ox + x * L_.s; }
   float Y(float y) const { return L_.oy + y * L_.s; }
+  /// @brief 基準座標系の長さを実画面の長さへ変換する
+  /// @param v 基準座標系での長さ
+  /// @return 実画面での長さ
   float S(float v) const { return v * L_.s; }
+  /// @brief 基準座標の点を実画面座標の点へ変換する
+  /// @param x 基準座標の X
+  /// @param y 基準座標の Y
+  /// @return 実画面座標の点
   RC::Vector2 P(float x, float y) const { return {X(x), Y(y)}; }
+  /// @brief 色の不透明度に係数を掛けた色を作る
+  /// @param c 元の色
+  /// @param a 不透明度に掛ける係数
+  /// @return 不透明度を変えた色
   static RC::Vector4 WithAlpha(const RC::Vector4 &c, float a) { return {c.x, c.y, c.z, c.w * a}; }
 
-  /// @brief 面 i の丸の中心（基準座標）
+  /// @brief 面 i の丸の中心（基準座標）を求める
+  /// @param i 面の番号（0 始まり）
+  /// @return 丸の中心。X は海図の左右 120px を空けて等間隔、Y は水上なら kAboveY、水中なら kBelowY
   RC::Vector2 NodePos(int i) const {
     const float span = (kChartR - kChartL) - 240.0f;
     const float x = kChartL + 120.0f + span * static_cast<float>(i) / (StageProgress::kStageCount - 1);
@@ -309,6 +343,14 @@ private:
     return {x, y};
   }
 
+  /// @brief 右下に 1px 程度ずらした影付きで文字列を描く
+  /// @param font フォントハンドル（負なら何もしない）
+  /// @param text 描く文字列（空なら何もしない）
+  /// @param x 描画位置の X（実画面座標）
+  /// @param y 描画位置の Y（実画面座標。文字の上端）
+  /// @param color 文字色（影の濃さもこの不透明度に比例する）
+  /// @param align 横方向のそろえ
+  /// @param scale ロードしたサイズに対する倍率
   void Text(int font, const std::string &text, float x, float y, const RC::Vector4 &color,
             TextAlign align = TextAlign::Left, float scale = 1.0f) const {
     if (font < 0 || text.empty()) return;
@@ -317,9 +359,18 @@ private:
     UiString(font, text, {x + sh, y + sh}, {0.0f, 0.02f, 0.05f, 0.55f * color.w}, sc, align);
     UiString(font, text, {x, y}, color, sc, align);
   }
+  /// @brief フォントの 1 行の高さ（実画面座標）を求める
+  /// @param font フォントハンドル
+  /// @param scale ロードしたサイズに対する倍率
+  /// @return 行の高さ。フォントが無ければ kLabelPx を基準にした概算値
   float LineH(int font, float scale = 1.0f) const {
     return (font >= 0) ? RC::GetFontLineHeight(font, scale * L_.fs) : S(kLabelPx) * scale;
   }
+  /// @brief 文字列の描画幅（実画面座標）を求める
+  /// @param font フォントハンドル
+  /// @param text 測る文字列
+  /// @param scale ロードしたサイズに対する倍率
+  /// @return 描画幅。フォントが無ければ 0
   float TextW(int font, const std::string &text, float scale = 1.0f) const {
     return (font >= 0) ? RC::MeasureString(font, text, scale * L_.fs).x : 0.0f;
   }
@@ -328,11 +379,17 @@ private:
   // 描画
   // ------------------------------------------------------------------
 
+  /// @brief パネルの下地・内側の細枠・四隅の L 字飾りを描く
+  /// @param l 左端（基準座標）
+  /// @param t 上端（基準座標）
+  /// @param r 右端（基準座標）
+  /// @param b 下端（基準座標）
   void DrawFrame(float l, float t, float r, float b) const {
     const RC::Vector2 tl = P(l, t), br = P(r, b);
     UiBox(tl, br, panelColor);
     const float in1 = S(6.0f);
     UiBox({tl.x + in1, tl.y + in1}, {br.x - in1, br.y - in1}, WithAlpha(kInk, 0.4f), kWire);
+    // 四隅に長さ arm の L 字をアクセント色で描く（左上・右上・左下・右下の順に 2 本ずつ）
     const float arm = S(22.0f), th = (std::max)(1.0f, S(2.0f)), o = S(2.0f);
     const RC::Vector4 c = WithAlpha(accentColor, 0.9f);
     UiLine({tl.x + o, tl.y + o}, {tl.x + o + arm, tl.y + o}, c, th);
@@ -345,11 +402,13 @@ private:
     UiLine({br.x - o, br.y - o}, {br.x - o, br.y - o - arm}, c, th);
   }
 
+  /// @brief 画面上部の見出し（タイトル・左右の飾り線・副題）を描く
   void DrawHeading() const {
     const float cx = X(kDesignW * 0.5f);
     const float top = Y(30.0f);
     const float hh = LineH(headingFont_);
     Text(headingFont_, titleText, cx, top, kInk, TextAlign::Center);
+    // タイトルの左右に、文字から 28px 離して先端に点の付いた飾り線を引く
     const float halfW = TextW(headingFont_, titleText) * 0.5f + S(28.0f);
     const float ruleY = top + hh * 0.56f, ruleLen = S(150.0f), th = (std::max)(1.0f, S(1.0f));
     UiLine({cx - halfW - ruleLen, ruleY}, {cx - halfW, ruleY}, WithAlpha(kInk, 0.5f), th);
@@ -360,7 +419,7 @@ private:
          0.75f);
   }
 
-  /// @brief 海図：水面・海中・洞窟・航路・各面の丸
+  /// @brief 海図パネル（水面・海中・洞窟・航路・各面の丸）を描く
   void DrawChart() const {
     DrawFrame(kChartL, kChartT, kChartR, kChartB);
     const float pad = 12.0f;
@@ -406,16 +465,18 @@ private:
       }
     }
 
-    // 各面の丸
+    // 各面の丸（pulse は kPulsePeriod 秒周期で 0〜1 を往復する明滅量）
     const float pulse = 0.5f + 0.5f * std::sin(time_ * (6.28318530718f / kPulsePeriod));
     for (int i = 0; i < StageProgress::kStageCount; ++i) {
       RC::Vector2 c = NodePos(i);
       const bool sel = (i == selected_);
       const bool unlocked = prog.IsUnlocked(i);
       const bool cleared = prog.IsCleared(i);
+      // 選択中は少し大きく、選び直した直後は弾ませ、未解放へ進もうとしたときは横に揺らす
       float rad = kNodeR * (sel ? (1.0f + 0.08f * bump_) : 0.82f);
       if (sel && shake_ > 0.0f) c.x += std::sin(shake_ * 40.0f) * 5.0f * shake_;
 
+      // 選択中の光輪・新しく解放された面の金の輪・丸の外周と中身
       if (sel) {
         UiCircle(P(c.x, c.y), S(rad + 9.0f + 3.0f * pulse), WithAlpha(accentColor, 0.25f + 0.2f * pulse));
       }
@@ -427,6 +488,7 @@ private:
                unlocked ? (sel ? selectedColor : RC::Vector4{panelColor.x, panelColor.y, panelColor.z, 1.0f})
                         : RC::Vector4{0.08f, 0.09f, 0.11f, 1.0f});
 
+      // 解放済みなら面の番号、未解放なら錠前
       if (unlocked) {
         const std::string num = std::to_string(i + 1);
         Text(nodeFont_, num, X(c.x), Y(c.y) - LineH(nodeFont_) * 0.5f, sel ? kInk : kMuted,
@@ -447,7 +509,8 @@ private:
     }
   }
 
-  /// @brief 面 2〜4 を囲む洞窟（岩の天井・床と、左右の口）
+  /// @brief 面 2〜4 を囲む洞窟（岩の天井・床と、左右の口）を描く
+  /// @note 範囲は StageInfo の cave が立っている最初と最後の面から決める（無ければ描かない）
   void DrawCave() const {
     int first = -1, last = -1;
     for (int i = 0; i < StageProgress::kStageCount; ++i) {
@@ -466,7 +529,7 @@ private:
     UiBox(P(x0, kRoofT), P(x1, kRoofBase), kRock);
     UiBox(P(x0, kFloorBase), P(x1, kFloorB), kRock);
 
-    // ギザギザの牙（天井は下向き、床は上向き）
+    // ギザギザの牙（天井は下向き、床は上向き）。長さは sin / cos で不揃いにし、最大 kToothMax の 40〜100%
     const int teeth = 18;
     const float w = (x1 - x0) / teeth;
     for (int k = 0; k < teeth; ++k) {
@@ -495,7 +558,8 @@ private:
          labelScale);
   }
 
-  /// @brief 錠前（未解放の面）
+  /// @brief 未解放の面の丸の中に錠前（本体の箱・つる・鍵穴）を描く
+  /// @param c 丸の中心（基準座標）
   void DrawLock(const RC::Vector2 &c) const {
     const RC::Vector4 col = WithAlpha(kDim, 1.0f);
     const float bw = 11.0f, bh = 9.0f;
@@ -504,7 +568,7 @@ private:
     UiCircle(P(c.x, c.y + 7.0f), S(2.5f), {0.08f, 0.09f, 0.11f, 1.0f});
   }
 
-  /// @brief 選択中の面の情報
+  /// @brief 下段の情報パネル（選択中の面の番号・名前・環境・状態・最高得点）を描く
   void DrawInfo() const {
     DrawFrame(kInfoL, kInfoT, kInfoR, kInfoB);
     const StageProgress &prog = StageProgress::Get();
@@ -527,6 +591,7 @@ private:
     {
       float tx = left;
       const float ty = Y(kInfoT + 112.0f);
+      // 枠付きの札を 1 つ描き、次の札の X（tx）を右へ進めるヘルパー
       auto tag = [&](const std::string &label, const RC::Vector4 &col) {
         const float w = TextW(labelFont_, label, 0.85f) + S(24.0f);
         const float h = LineH(labelFont_, 0.85f) + S(8.0f);
@@ -556,6 +621,7 @@ private:
     }
   }
 
+  /// @brief 画面下部に操作説明を描く
   void DrawHint() const {
     const char *text = "←→ 選択　　SPACE / Enter 出航　　ESC タイトルへ";
     Text(labelFont_, text, X(kDesignW * 0.5f), Y(kInfoB + 30.0f), WithAlpha(kMuted, 0.85f),
@@ -566,11 +632,13 @@ private:
   // 入力
   // ------------------------------------------------------------------
 
+  /// @brief キーボード・ゲームパッド・マウスの入力から選択の移動、出航、タイトルへ戻るを処理する
   void HandleInput() {
     SceneContext *ctx = GetSceneContext();
     if (!ctx || !ctx->input) return;
     Input *in = ctx->input;
 
+    // キーボードとゲームパッドの入力を「決定 / 戻る / 左右移動」にまとめる
     bool confirm = in->IsKeyTrigger(DIK_SPACE) || in->IsKeyTrigger(DIK_RETURN);
     bool back = in->IsKeyTrigger(DIK_ESCAPE);
     int move = 0;
@@ -581,6 +649,7 @@ private:
       if (in->IsXInputButtonTrigger(XINPUT_GAMEPAD_B)) back = true;
       if (in->IsXInputButtonTrigger(XINPUT_GAMEPAD_DPAD_LEFT)) move -= 1;
       if (in->IsXInputButtonTrigger(XINPUT_GAMEPAD_DPAD_RIGHT)) move += 1;
+      // スティックは倒した瞬間だけ 1 面動かす（倒しっぱなしで連続移動しないよう前フレームと比べる）
       const SHORT lx = in->GetXInputThumbLX();
       int stickDir = 0;
       if (lx > kStickThreshold) stickDir = 1;
@@ -601,6 +670,7 @@ private:
       SetSelected(hovered);
       move = 0;
     }
+    // クリックは解放済みならその面で出航、未解放なら揺らして知らせる
     if (in->IsMouseTrigger(0) && hovered >= 0) {
       if (prog.IsUnlocked(hovered)) {
         SetSelected(hovered);
@@ -641,6 +711,7 @@ private:
       }
       return;
     }
+    // 出航: 未解放なら揺らして止め、解放済みなら選択を記録して遷移する
     if (!confirm) return;
     if (!prog.IsUnlocked(selected_)) {
       shake_ = 1.0f;
@@ -655,6 +726,7 @@ private:
       Log::Print("[StageSelectScript] scene flow has no target for 'stage'");
       return;
     }
+    // 演出が dive なら UI フェード → 飛び込みを挟んでから遷移する（UpdateLeave へ）
     if (dive.enabled && transition == SceneTransitions::kDive) {
       decided_ = true;
       leaving_ = true;
@@ -672,6 +744,10 @@ private:
     }
   }
 
+  /// @brief マウス位置がどの面の丸に重なっているかを調べる（判定半径は丸より 10px 大きい）
+  /// @param mx マウスの X（実画面座標）
+  /// @param my マウスの Y（実画面座標）
+  /// @return 重なっている面の番号（0 始まり）。どれにも重なっていなければ -1
   int HitTestNodes(float mx, float my) const {
     for (int i = 0; i < StageProgress::kStageCount; ++i) {
       const RC::Vector2 c = NodePos(i);
@@ -682,6 +758,8 @@ private:
     return -1;
   }
 
+  /// @brief 選択中の面を変え、変わったときは丸を弾ませる
+  /// @param index 新しく選ぶ面の番号（0 始まり）
   void SetSelected(int index) {
     if (index == selected_) return;
     selected_ = index;
@@ -692,8 +770,12 @@ private:
   // 出航：UI フェード → 飛び込み → 遷移（Result と同じ流れ）
   // ------------------------------------------------------------------
 
+  /// @brief 出航・戻るを決めた後の退出処理（UI フェード → 飛び込み → dive 遷移の要求）を進める
+  /// @param dt 前フレームからの経過時間（秒）
+  /// @note 飛び込みを始められないときは素の遷移で送り、遷移も通らなければ選択画面へ戻す
   void UpdateLeave(float dt) {
     leaveTime_ += dt;
+    // UI が消えきるまで待ってから飛び込みを始める
     if (!dive_.IsActive()) {
       uiAlpha_ = 1.0f - WaterCameraFx::Smooth01(leaveTime_ / (std::max)(uiFadeTime, 1e-3f));
       if (uiAlpha_ > 0.0f) return;
@@ -713,6 +795,7 @@ private:
       if (!RequestSceneChange(leaveTarget_)) CancelLeave();
       return;
     }
+    // 飛び込みが終わったら dive 遷移を要求し、kLeaveRetrySeconds 通らなければ諦める
     if (!dive_.IsDone() || leaveRequested_) return;
     leaveRequested_ = RequestSceneChange(leaveTarget_, SceneTransitions::kDive);
     if (!leaveRequested_ && dive_.DoneTime() > kLeaveRetrySeconds) {
@@ -722,6 +805,7 @@ private:
     }
   }
 
+  /// @brief 退出を取り消し、UI を表示して再び操作できる状態へ戻す
   void CancelLeave() {
     leaving_ = false;
     leaveRequested_ = false;
@@ -729,8 +813,12 @@ private:
     uiAlpha_ = 1.0f;
   }
 
-  // UI 描画のラッパー（フェードで全体の不透明度を下げる）
+  /// @brief 色の不透明度に UI 全体のフェード量（uiAlpha_）を掛ける
+  /// @param c 元の色
+  /// @return フェードを反映した色
   RC::Vector4 Ui(const RC::Vector4 &c) const { return {c.x, c.y, c.z, c.w * uiAlpha_}; }
+  /// @brief UI のフェードを反映して RC::DrawString / DrawBox / DrawLine / DrawCircle / DrawTriangle を呼ぶラッパー群
+  /// @note 引数は各 RC::Draw* と同じ（color だけ Ui() で不透明度を下げてから渡す）
   void UiString(int font, const std::string &text, const RC::Vector2 &pos, const RC::Vector4 &color,
                 float scale = 1.0f, TextAlign align = TextAlign::Left) const {
     RC::DrawString(font, text, pos, Ui(color), scale, align);

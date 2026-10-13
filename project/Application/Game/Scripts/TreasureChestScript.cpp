@@ -92,6 +92,8 @@ public:
   RC::Vector4 treasureColor = {1.0f, 0.86f, 0.32f, 1.0f};
 
 protected:
+  /// @brief 宝箱の設定を JSON に書き出す
+  /// @return HP・ポイント・演出・見た目の各パラメータを格納した JSON
   nlohmann::json Serialize() override {
     nlohmann::json j;
     j["hp"] = hp;
@@ -112,6 +114,8 @@ protected:
     return j;
   }
 
+  /// @brief JSON から宝箱の設定を読み込む
+  /// @param j 読み込み元の JSON（存在するキーだけ反映する）
   void Deserialize(const nlohmann::json& j) override {
     // EnemyBaseScript と同じ流儀: "maxHp" だけ書けば hp も満タンに揃える
     if (j.contains("maxHp")) {
@@ -128,6 +132,7 @@ protected:
     if (j.contains("spinSpeedDeg")) spinSpeedDeg = j["spinSpeedDeg"].get<float>();
     if (j.contains("openDuration")) openDuration = j["openDuration"].get<float>();
     if (j.contains("popHeight")) popHeight = j["popHeight"].get<float>();
+    // 色は要素数 4 以上の配列のときだけ反映するヘルパー
     auto readV4 = [&](const char* key, RC::Vector4& out) {
       if (!j.contains(key) || !j[key].is_array() || j[key].size() < 4) return;
       const auto& c = j[key];
@@ -139,10 +144,12 @@ protected:
     readV4("lidColor", lidColor);
     readV4("metalColor", metalColor);
     readV4("treasureColor", treasureColor);
+    // 不正な値で即開いたり開けなくなったりしないよう、HP を 1 以上に補正する
     if (maxHp < 1) maxHp = 1;
     if (hp < 1) hp = maxHp;
   }
 
+  /// @brief 弾の当たり判定対象のタグを立て、コライダーや見た目が無ければ補い、演出の状態を初期化する
   void OnCreate() override {
     Entity* self = GetEntity();
     if (!self) return;
@@ -177,6 +184,8 @@ protected:
     bobTime_ = 0.0f;
   }
 
+  /// @brief 被弾処理・被弾フラッシュの解除・待機中の上下動と、開いたあとの演出・消滅を行う
+  /// @param deltaTime 前フレームからの経過時間（秒）
   void OnUpdate(float deltaTime) override {
     Entity* self = GetEntity();
     if (!self) return;
@@ -248,6 +257,7 @@ protected:
     }
   }
 
+  /// @brief 宝箱の部位エンティティをすべて破棄する
   void OnDestroy() override {
     for (auto& p : chestParts_) {
       if (auto e = p.entity.lock()) e->Destroy();
@@ -257,6 +267,7 @@ protected:
   }
 
 public:
+  /// @brief HP・ポイント・演出パラメータをインスペクタで編集できるようにする
   void OnImGui() override {
 #if RC_ENABLE_IMGUI
     ImGui::DragInt("HP##TreasureChest", &hp, 1, 0, maxHp);
@@ -271,6 +282,9 @@ public:
 #endif
   }
 
+  /// @brief ダメージを受けて HP を減らし、被弾フラッシュを出す。HP が 0 以下になったら開く
+  /// @param damage 受けるダメージ量
+  /// @note 開いたあとは何もしない
   void TakeDamage(int damage) {
     if (isOpened) return;
     hp -= damage;
@@ -327,11 +341,15 @@ private:
     SpawnBubbles();
   }
 
+  /// @brief プレイヤーの score_add タグへスコアを積む
+  /// @param amount 加算する点数（0 以下なら何もしない）
+  /// @details 積み先は is_player タグを持つエンティティ。見つからなければカメラを持つエンティティで代用する。
   void AddScore(int amount) {
     if (amount <= 0) return;
     Scene* scene = GetScene();
     if (!scene) return;
 
+    // 前回見つけた積み先がまだ有効ならそれを使い、無効ならシーンから探し直す
     std::shared_ptr<Entity> target = cachedPlayer_.lock();
     if (!target || target->IsPendingDestroy() || !target->IsActive()) {
       target = nullptr;
@@ -354,6 +372,7 @@ private:
   }
   std::weak_ptr<Entity> cachedPlayer_;
 
+  /// @brief 宝箱の位置に GPU 泡エフェクトのエミッターを生成する
   void SpawnBubbles() {
     Scene* scene = GetScene();
     Entity* self = GetEntity();
@@ -372,6 +391,7 @@ private:
   }
 
   // --- 色の保存／適用（EnemyBaseScript と同じ方式）---
+  /// @brief 被弾フラッシュで色を変える前に、本体の元の色を一度だけ保存する
   void SaveOriginalColor() {
     if (hasSavedColor_) return;
     Entity* self = GetEntity();
@@ -389,6 +409,9 @@ private:
     }
   }
 
+  /// @brief 本体と宝箱の部位に色を適用する
+  /// @param color 適用する色
+  /// @param restoreParts true なら部位には color ではなく各部位の元の色を戻す
   void ApplyColor(const RC::Vector4& color, bool restoreParts = false) {
     // 宝箱の部位も同じ色で点滅させる（戻すときは部位それぞれの色へ）
     for (auto& p : chestParts_) {
@@ -409,12 +432,15 @@ private:
     }
   }
 
+  /// @brief 保存しておいた元の色へ戻す（部位もそれぞれの元の色へ戻す）
   void RestoreColor() {
     if (hasSavedColor_) ApplyColor(originalColor_, /*restoreParts=*/true);
   }
 
   // --- 宝箱の部位 ---
+  /// @brief 宝箱の部位の分類（Base: 下箱と一緒に動く / Lid: ふたと一緒に開く / Treasure: 開くとせり上がる）
   enum class ChestGroup { Base, Lid, Treasure };
+  /// @brief 宝箱の部位 1 つぶんの情報（本体ローカルでの配置・分類・元の色）
   struct ChestPart {
     std::weak_ptr<Entity> entity;
     RC::Vector3 offset{};                      ///< 本体中心からの位置（m、本体ローカル、縮小前）
@@ -428,6 +454,14 @@ private:
   float chestTopY_ = 0.5f;   ///< 下箱の上面の高さ（本体中心から、m）
   float chestDepth_ = 1.0f;  ///< 奥行き（m）。ちょうつがいの位置に使う
 
+  /// @brief 宝箱の部位エンティティを 1 つ生成して chestParts_ に登録する
+  /// @param type 部位のプリミティブ形状
+  /// @param color 部位の色（被弾色から戻すときの色にもなる）
+  /// @param offset 本体中心からの位置（m、本体ローカル、縮小前）
+  /// @param scale 部位の Transform の scale（m、縮小前）
+  /// @param group 部位の分類（ふたの開閉・財宝のせり上がりの対象を決める）
+  /// @param local 本体に対する部位の向き
+  /// @param unlit true ならライティングせず、自分で光っているように見せる
   void AddChestPart(PrimitiveType type, const RC::Vector4& color, const RC::Vector3& offset,
                     const RC::Vector3& scale, ChestGroup group,
                     const PartPose::Mat3& local = PartPose::Identity(), bool unlit = false) {
@@ -437,13 +471,16 @@ private:
     auto e = scene->CreateEntity(self->GetName() + "_part");
     if (!e) return;
     e->SetParentGuid(self->Guid()); // Hierarchy で宝箱の下にまとまるように（描画上の親子ではない）
+    // 実行時だけの部位なのでシーン保存に含めない
     e->SetTag("transient", 1);
+    // PlaceChest で配置されるまで大きく映らないよう、本体の位置に極小スケールで仮置きする
     auto& ptr = e->AddComponent<TransformComponent>();
     if (auto* tr = self->GetComponent<TransformComponent>()) ptr.position = tr->position;
     ptr.scale = {0.01f, 0.01f, 0.01f};
     auto& pm = e->AddComponent<PrimitiveMeshComponent>();
     pm.type = type;
     pm.color = color;
+    // 下箱・ふたの金色の部位（金具）だけ光沢を強くする
     pm.shininess = (group == ChestGroup::Base || group == ChestGroup::Lid) && color.x > 0.8f ? 64.0f : 12.0f;
     if (unlit) pm.lightingMode = 0; // 財宝は自分で光って見えるようにライティングしない
     scene->InitDynamicEntityRuntime(*e);
@@ -461,6 +498,7 @@ private:
   /// @details 大きさは本体の scale（幅 W・高さ・奥行き D、m）から決める。+X が横幅、-Z が正面（錠前側）。
   ///          下箱は本体の高さの baseHeightRatio 倍に縮め、その上にふた（高さ ≒ 0.4m）を載せる。
   ///          本体の当たり判定は半径 × scale の最大値（横幅）なので、高さを縮めても大きさは変わらない。
+  /// @param tr 本体の Transform（高さを baseHeightRatio 倍に縮める）
   void BuildChest(TransformComponent& tr) {
     using namespace PartPose;
     chestBuilt_ = true;
@@ -522,6 +560,7 @@ private:
   }
 
   /// @brief 部位を本体の位置・回転・大きさに合わせる
+  /// @param tr 本体の Transform（位置・回転・大きさの基準）
   /// @param lidT ふたの開き具合（0: 閉じている / 1: lidOpenDeg まで開いた）
   void PlaceChest(const TransformComponent& tr, float lidT) {
     using namespace PartPose;

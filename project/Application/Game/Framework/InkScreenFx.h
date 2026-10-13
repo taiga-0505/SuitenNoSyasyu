@@ -25,12 +25,12 @@ struct InkScreenFx {
   float fadeDuration = 2.6f;   ///< 薄れ始めてから消えきるまで（秒）
   float underwaterFadeScale = 1.35f; ///< 水中では墨が水に溶けて早く消える（倍率）
   float radiusMin = 0.26f;     ///< 墨の半径（画面の高さ=1）
-  float radiusMax = 0.40f;
+  float radiusMax = 0.40f;     ///< 墨の半径の上限（画面の高さ=1）
   float centerSpread = 0.22f;  ///< 画面中央からどれだけずらして貼るか（UV）
   float murkPerSplat = 0.22f;  ///< 墨 1 個あたりの画面全体の濁り
-  float murkMax = 0.55f;
-  float inkColor[3] = {0.03f, 0.02f, 0.05f};
-  float inkOpacity = 0.96f;
+  float murkMax = 0.55f;       ///< 画面全体の濁りの上限
+  float inkColor[3] = {0.03f, 0.02f, 0.05f}; ///< 墨の色（RGB）
+  float inkOpacity = 0.96f;    ///< 墨の不透明度
 
   /// @brief 墨を 1 個貼る
   /// @param amount 強さ 0..1（1 でフルサイズ）。小さい墨ほど小さく貼る
@@ -69,7 +69,11 @@ struct InkScreenFx {
   }
 
   /// @brief 毎フレーム呼ぶ。寿命を進めて PostProcess に流し込む
+  /// @param pp         反映先の PostProcess（nullptr なら寿命だけ進める）
+  /// @param dt         経過時間（秒）
+  /// @param underwater 水中にいるか（true なら underwaterFadeScale 倍の速さで薄れる）
   void Update(PostProcess *pp, float dt, bool underwater) {
+    // 各墨の寿命を進める。holdDuration を過ぎたものだけ薄れさせ、消えたものは末尾と入れ替えて詰める
     const float fadeMul = underwater ? underwaterFadeScale : 1.0f;
     for (int i = 0; i < count_;) {
       PostProcess::InkSplat &s = splats_[i];
@@ -78,7 +82,6 @@ struct InkScreenFx {
         s.strength -= dt * fadeMul / (std::max)(fadeDuration, 0.01f);
       }
       if (s.strength <= 0.0f) {
-        // 詰めて消す
         splats_[i] = splats_[count_ - 1];
         --count_;
         continue;
@@ -92,6 +95,7 @@ struct InkScreenFx {
     kick_ = (std::max)(0.0f, kick_ - dt * 2.5f);
     const float murk = (std::min)(murkMax, sum * murkPerSplat + kick_ * 0.25f);
 
+    // 墨か濁りが残っている間は InkOverlay を有効にして値を渡し、無くなったら外す
     if (!pp) return;
     if (count_ > 0 || murk > 0.001f) {
       // 墨はレンズの表面に付いているので、必ず最後に掛ける。
@@ -115,6 +119,7 @@ struct InkScreenFx {
   }
 
   /// @brief 全部消す（シーンを抜けるとき・リトライ時）
+  /// @param pp 反映先の PostProcess（nullptr なら内部状態だけ消す）
   void Clear(PostProcess *pp) {
     count_ = 0;
     kick_ = 0.0f;
@@ -126,8 +131,12 @@ struct InkScreenFx {
     active_ = false;
   }
 
+  /// @brief 現在貼られている墨の数
+  /// @return 墨の個数（0〜PostProcess::kMaxInkSplats）
   int Count() const { return count_; }
 
+  /// @brief 調整値を JSON に変換する
+  /// @return 調整値を持つ JSON オブジェクト
   nlohmann::json ToJson() const {
     return {
         {"holdDuration", holdDuration},
@@ -143,6 +152,8 @@ struct InkScreenFx {
     };
   }
 
+  /// @brief JSON から調整値を読み込む
+  /// @param j 読み込む JSON（無いキー・型が違うキーは現在の値のまま）
   void FromJson(const nlohmann::json &j) {
     auto f = [&](const char *k, float &o) { if (j.contains(k) && j[k].is_number()) o = j[k].get<float>(); };
     f("holdDuration", holdDuration);
@@ -160,6 +171,7 @@ struct InkScreenFx {
   }
 
 #if RC_ENABLE_IMGUI
+  /// @brief 調整値の編集 UI とテスト用の被弾ボタンを ImGui に描画する
   void DrawImGui() {
     ImGui::Text("Ink splats: %d / %d", count_, PostProcess::kMaxInkSplats);
     ImGui::DragFloat("Ink Hold (s)", &holdDuration, 0.05f, 0.0f, 10.0f);
@@ -177,10 +189,15 @@ struct InkScreenFx {
 #endif
 
 private:
+  /// @brief 小数部を返す
+  /// @param x 入力値
+  /// @return x - floor(x)（0 以上 1 未満）
   static float Frac(float x) { return x - std::floor(x); }
+  /// @brief 墨の残り寿命（フェード時間を 1 とした単位）。貼りたてほど大きい
+  /// @param i 墨のスロット番号
+  /// @return 残り寿命
   float Remaining(int i) const {
     const auto &s = splats_[i];
-    // 残り寿命（フェード時間を 1 とした単位）。貼りたてほど大きい
     return s.strength + (std::max)(0.0f, holdDuration - s.age) / (std::max)(fadeDuration, 0.01f);
   }
 

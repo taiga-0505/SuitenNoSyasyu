@@ -40,6 +40,7 @@ bool SceneFlow::Load(const std::string &path) {
     return false;
   }
 
+  // rules 配列の各行を読む。欠けているキーは既定値（transition は dissolve、他は空）で埋める
   if (root.contains("rules") && root["rules"].is_array()) {
     for (const auto &j : root["rules"]) {
       if (!j.is_object()) continue;
@@ -58,6 +59,7 @@ bool SceneFlow::Load(const std::string &path) {
 }
 
 bool SceneFlow::Save() {
+  // 行を JSON に組み立てる（note は空なら書かない）
   nlohmann::json rules = nlohmann::json::array();
   for (const auto &r : rules_) {
     nlohmann::json j = {
@@ -71,6 +73,7 @@ bool SceneFlow::Save() {
   }
   nlohmann::json root = {{"version", 1}, {"rules", std::move(rules)}};
 
+  // 保存先のディレクトリが無ければ作る（失敗は直後の open で検出する）
   const std::filesystem::path p(path_);
   if (p.has_parent_path()) {
     std::error_code ec;
@@ -92,6 +95,7 @@ bool SceneFlow::Save() {
 // ============================================================================
 
 bool SceneFlow::MatchFrom(const std::string &pattern, const std::string &scene, int *score) {
+  // 優先度: "*" = 1 < 前方一致 = 2 + 接頭辞の長さ < 完全一致 = 100000
   int s = 0;
   if (pattern == "*") {
     s = 1;
@@ -166,6 +170,7 @@ std::string SceneFlow::Describe(const std::string &fromScene, const std::string 
   const SceneFlowRule *rule = FindRule(fromScene, trigger);
   if (!rule) return trigger + " -> (未登録。Window > Scene Flow で追加)";
   std::string s = trigger + " -> " + (rule->to.empty() ? std::string("(空)") : rule->to);
+  // 変数なら現時点の解決結果も添える。$arg は実行時にスクリプトが渡すまで決まらないので出さない
   if (!rule->to.empty() && rule->to[0] == '$') {
     const std::string resolved = ResolveTarget(rule->to, fromScene, "");
     if (rule->to != kVarArg) s += " = " + (resolved.empty() ? std::string("(なし)") : resolved);

@@ -17,14 +17,15 @@ class Entity;
 ///          DataDrivenScene がシーンを読み込むたびにそのファクトリで GameMode を作る。
 class GameModeBase {
 public:
+    /// @brief 既定の GameStateBase を生成して保持する
     GameModeBase();
     virtual ~GameModeBase() = default;
 
-    /// @brief ゲーム開始時の初期化処理
+    /// @brief ゲーム開始時の初期化処理（既定では GameState の BeginPlay を呼ぶ）
     /// @param ctx シーンコンテキスト
     virtual void BeginPlay(SceneContext& ctx);
 
-    /// @brief 毎フレームの更新処理
+    /// @brief 毎フレームの更新処理（既定では GameState の経過時間を進める）
     /// @param ctx シーンコンテキスト
     virtual void Tick(SceneContext& ctx);
 
@@ -58,9 +59,12 @@ public:
 
     // ------------------------------------------------------------------
 
-    /// @brief GameStateの取得
+    /// @brief GameState を取得する
+    /// @return 保持している GameState（未設定なら nullptr）
     GameStateBase* GetGameState() const { return gameState_.get(); }
 
+    /// @brief BeginPlay 済みかどうかの取得と、BeginPlay 済みとしての記録
+    /// @return HasBegunPlay: BeginPlay 済みなら true
     bool HasBegunPlay() const { return hasBegunPlay_; }
     void MarkBegunPlay() { hasBegunPlay_ = true; }
 
@@ -75,7 +79,8 @@ public:
         }
     }
 
-    /// @brief カスタムのGameStateを設定（派生クラスのコンストラクタ等で利用）
+    /// @brief カスタムの GameState を生成して差し替える（派生クラスのコンストラクタ等で利用）
+    /// @tparam T GameStateBase の派生型
     template <typename T>
     void SetGameState() {
         gameState_ = std::make_unique<T>();
@@ -89,6 +94,7 @@ public:
     using Factory = std::function<std::unique_ptr<GameModeBase>(const std::string& sceneName)>;
 
     /// @brief GameMode のファクトリを登録する
+    /// @param factory 登録するファクトリ（既存の登録は上書きされる）
     /// @details Application 側の静的初期化から呼んでよい（保存先は関数内 static）。
     ///          未登録なら GameModeBase そのものが使われる。
     static void SetFactory(Factory factory);
@@ -99,9 +105,12 @@ public:
     static std::unique_ptr<GameModeBase> Create(const std::string& sceneName);
 
 protected:
-    std::unique_ptr<GameStateBase> gameState_;
-    bool hasBegunPlay_ = false;
+    std::unique_ptr<GameStateBase> gameState_; ///< ゲームの進行状況
+    bool hasBegunPlay_ = false;                ///< BeginPlay 済みか
 
 private:
+    /// @brief 登録済みファクトリの保存先を取得する
+    /// @return ファクトリの参照
+    /// @note 関数内 static にして、静的初期化順序に依存せず SetFactory を呼べるようにしている
     static Factory& FactoryStorage();
 };

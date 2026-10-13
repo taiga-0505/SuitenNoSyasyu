@@ -37,7 +37,9 @@ namespace OctopusDetail {
 
 constexpr float kPi = 3.14159265f;
 
-/// @brief シーンのメインカメラ（isMain 優先。無ければ最初のカメラ）
+/// @brief シーンのメインカメラ（isMain 優先。無ければ最初のカメラ）を探す
+/// @param scene 検索するシーン
+/// @return 見つかったカメラのエンティティ。無ければ nullptr
 inline std::shared_ptr<Entity> FindPlayerCamera(Scene *scene) {
   if (!scene) return nullptr;
   std::shared_ptr<Entity> fallback;
@@ -51,7 +53,10 @@ inline std::shared_ptr<Entity> FindPlayerCamera(Scene *scene) {
   return fallback;
 }
 
-/// @brief シーンの水面の高さ（WaterComponent の Transform.y）。無ければ false
+/// @brief シーンの水面の高さ（WaterComponent の Transform.y）を取得する
+/// @param scene 検索するシーン
+/// @param outY 見つかった水面の高さの格納先
+/// @return 水面が見つかれば true、無ければ false
 inline bool FindWaterY(Scene *scene, float &outY) {
   if (!scene) return false;
   for (const auto &e : scene->GetEntities()) {
@@ -63,6 +68,9 @@ inline bool FindWaterY(Scene *scene, float &outY) {
   return false;
 }
 
+/// @brief ベクトルの長さを求める
+/// @param v 対象のベクトル
+/// @return v の長さ
 inline float Len(const RC::Vector3 &v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); }
 
 } // namespace OctopusDetail
@@ -77,9 +85,12 @@ inline float Len(const RC::Vector3 &v) { return std::sqrt(v.x * v.x + v.y * v.y 
 ///          Splash と同じく、終わったら非アクティブにしてプールへ戻す。
 class InkParticleScript : public ScriptableEntity {
 protected:
+  /// @brief 粒を動かし、種類に応じて大きさと不透明度を変化させ、寿命が来たらプールへ戻す
+  /// @param dt 前フレームからの経過秒数
   void OnUpdate(float dt) override {
     Entity *self = GetEntity();
     if (!self) return;
+    // 初回、またはプールから再利用された直後にタグからパラメータを読み直す
     if (self->GetTagInt("reused", 0) == 1 || !started_) {
       self->ClearTag("reused");
       Start(*self);
@@ -105,6 +116,7 @@ protected:
     tr->position.y += vel_.y * dt;
     tr->position.z += vel_.z * dt;
 
+    // 種類ごとに経過割合 t から大きさと不透明度を決める
     float scale = s0_;
     float alpha = a0_;
     const float easeOut = 1.0f - (1.0f - t) * (1.0f - t);
@@ -133,6 +145,9 @@ protected:
   }
 
 private:
+  /// @brief タグから動きのパラメータを読み込み、状態を初期化する
+  /// @param self 自身のエンティティ
+  /// @note タグは 1000 倍の整数で渡されるので 1000 で割って戻す。
   void Start(Entity &self) {
     started_ = true;
     finished_ = false;
@@ -163,6 +178,8 @@ REGISTER_SCRIPT(InkParticleScript)
 namespace OctopusDetail {
 
 /// @brief 墨玉がはじける演出を出す
+/// @param scene   生成先のシーン
+/// @param ctx     粒のスクリプトに渡すシーンコンテキスト（nullptr 可）
 /// @param pos     はじけた位置
 /// @param dir     墨玉が飛んでいた向き（＝自機へ向かう向き）
 /// @param size    墨玉の大きさ（Transform の scale）
@@ -176,6 +193,7 @@ inline void SpawnInkBurst(Scene *scene, SceneContext *ctx, const RC::Vector3 &po
   static std::mt19937 rng{std::random_device{}()};
   std::uniform_real_distribution<float> U(0.0f, 1.0f);
 
+  /// @brief 粒 1 つぶんの生成仕様（種類・初速・大きさ・寿命・抵抗・重力・色）
   struct Spec {
     int kind;
     RC::Vector3 vel;
@@ -225,6 +243,7 @@ inline void SpawnInkBurst(Scene *scene, SceneContext *ctx, const RC::Vector3 &po
     folder = f->Guid();
   }
 
+  // 仕様ごとに粒を用意する。プールに残りがあれば使い回し、足りない分だけ新規に作る
   auto toTag = [](float v) { return static_cast<int>(v * 1000.0f); };
   for (size_t i = 0; i < specs.size(); ++i) {
     const Spec &sp = specs[i];
@@ -252,6 +271,7 @@ inline void SpawnInkBurst(Scene *scene, SceneContext *ctx, const RC::Vector3 &po
     }
     pm->color = sp.color;
 
+    // InkParticleScript へ動きのパラメータをタグで渡す（タグは int なので 1000 倍の固定小数）
     e->SetTag("no_shadow", 1); // エフェクトの粒は影を落とさない
     e->SetTag("ink_kind", sp.kind);
     e->SetTag("ink_vx", toTag(sp.vel.x));
@@ -311,9 +331,11 @@ public:
   float shootRadius = 1.3f;   ///< 自機の弾がこの距離まで来たら撃ち落とされる
   float inkAmount = 1.0f;     ///< 命中時に貼る墨の強さ 0..1
   int damage = 0;             ///< 命中時のダメージ（既定は視界だけ奪う）
-  RC::Vector3 direction = {0.0f, 0.0f, 1.0f};
+  RC::Vector3 direction = {0.0f, 0.0f, 1.0f}; ///< 進行方向（OnCreate で正規化し、追尾で毎フレーム更新する）
 
 protected:
+  /// @brief 墨玉のパラメータを JSON へ書き出す
+  /// @return 速度・追尾・寿命・判定半径・墨の強さ・ダメージ・向きを格納した json
   nlohmann::json Serialize() override {
     return {
         {"speed", speed},
@@ -327,6 +349,8 @@ protected:
     };
   }
 
+  /// @brief JSON から墨玉のパラメータを読み込む（含まれる項目だけ上書きする）
+  /// @param j 読み込み元の json（タコが発射時に pendingData として渡す）
   void Deserialize(const nlohmann::json &j) override {
     auto f = [&](const char *k, float &o) { if (j.contains(k) && j[k].is_number()) o = j[k].get<float>(); };
     f("speed", speed);
@@ -341,6 +365,7 @@ protected:
     }
   }
 
+  /// @brief 進行方向を正規化し（長さ 0 なら +Z）、脈打ちの基準スケールを保存する
   void OnCreate() override {
     const float l = OctopusDetail::Len(direction);
     if (l > 1e-4f) direction = {direction.x / l, direction.y / l, direction.z / l};
@@ -349,6 +374,8 @@ protected:
     if (auto *tr = GetComponent<TransformComponent>()) baseScale_ = tr->scale;
   }
 
+  /// @brief 自機へゆるく追尾しながら進み、命中と自機の弾による撃ち落としを判定する
+  /// @param dt 前フレームからの経過秒数
   void OnUpdate(float dt) override {
     if (done_ || dt <= 0.0f) return;
     auto *tr = GetComponent<TransformComponent>();
@@ -358,6 +385,7 @@ protected:
     elapsed_ += dt;
     if (elapsed_ >= lifetime) { Finish(); return; }
 
+    // 自機（カメラ）を取得する。キャッシュが無効になったときだけ探し直す
     std::shared_ptr<Entity> cam = target_.lock();
     if (!cam || cam->IsPendingDestroy() || !cam->IsActive()) {
       cam = OctopusDetail::FindPlayerCamera(scene);
@@ -372,7 +400,7 @@ protected:
                           camTr->position.z - tr->position.z};
         const float dist = OctopusDetail::Len(to);
 
-        // 命中
+        // 命中：墨の強さを ×100 の整数で pending_ink に加算し、ダメージがあれば pending_damage にも積む
         if (dist <= hitRadius) {
           const int ink = cam->GetTagInt("pending_ink", 0);
           cam->SetTag("pending_ink", ink + static_cast<int>(std::clamp(inkAmount, 0.0f, 1.0f) * 100.0f));
@@ -384,6 +412,7 @@ protected:
           return;
         }
 
+        // 現在の向きと目標方向の角度差を求め、今フレームで回せる割合 t だけ線形補間して正規化する
         if (dist > 1e-3f && homingRate > 0.0f) {
           to = {to.x / dist, to.y / dist, to.z / dist};
           const float d = std::clamp(direction.x * to.x + direction.y * to.y + direction.z * to.z, -1.0f, 1.0f);
@@ -432,6 +461,7 @@ protected:
   }
 
 private:
+  /// @brief 墨玉を終了させて自身を破棄する（以降の更新は行わない）
   void Finish() {
     done_ = true;
     if (Entity *self = GetEntity()) self->Destroy();
@@ -449,8 +479,11 @@ REGISTER_SCRIPT(InkBlobScript)
 // タコ本体
 // ============================================================================
 
+/// @brief タコの行動状態（待機 → 接近 → ため → 立て直し）
 enum class OctopusState { Wait, Approach, Windup, Recover };
 
+/// @brief タコの敵。ジェット推進で自機の前方水中に陣取り、ためてから墨玉を吐いて視界を奪う
+/// @details 状態遷移・ジェット推進と水の抵抗による移動・ため中の膨らみ／明滅・墨玉の発射を担う。
 class OctopusEnemyScript : public EnemyBaseScript {
 public:
   // --- 索敵・位置取り ---
@@ -464,22 +497,22 @@ public:
   float jetInterval = 1.1f;   ///< 1 回噴いてから次に噴くまで（秒）
   float jetImpulse = 9.0f;    ///< 1 回の噴射で得る速さ (m/s)
   float waterDrag = 1.8f;     ///< 水の抵抗（1/s）。噴射後にスーッと減速する
-  float maxSpeed = 14.0f;
+  float maxSpeed = 14.0f;     ///< 最高速 (m/s)
 
   // --- 墨 ---
-  float fireMinDistance = 8.0f;
-  float fireMaxDistance = 32.0f;
+  float fireMinDistance = 8.0f;   ///< 墨を吐く最小距離（これより近いと吐かない）
+  float fireMaxDistance = 32.0f;  ///< 墨を吐く最大距離
   float fireInterval = 4.0f;      ///< 吐いてから次に吐けるまで（秒）
   float firstFireDelay = 1.5f;    ///< 動き出してから最初に吐けるまで（秒）
   float windupDuration = 0.9f;    ///< ため（膨らむ）時間。この間に倒せば吐かれない
   float recoverDuration = 0.6f;   ///< 吐いたあと動けない時間
   float recoilSpeed = 6.0f;       ///< 吐いた反動で後ろへ下がる速さ
-  float inkSpeed = 13.0f;
-  float inkHoming = 1.1f;
-  float inkAmount = 1.0f;
-  int inkDamage = 0;
-  float inkBlobScale = 0.7f;
-  RC::Vector4 inkBlobColor = {0.05f, 0.03f, 0.08f, 1.0f};
+  float inkSpeed = 13.0f;         ///< 墨玉の速さ（InkBlobScript::speed へ渡す）
+  float inkHoming = 1.1f;         ///< 墨玉の追尾の強さ（InkBlobScript::homingRate へ渡す）
+  float inkAmount = 1.0f;         ///< 命中時に貼る墨の強さ（InkBlobScript::inkAmount へ渡す）
+  int inkDamage = 0;              ///< 墨玉の命中ダメージ（InkBlobScript::damage へ渡す）
+  float inkBlobScale = 0.7f;      ///< 墨玉の大きさ
+  RC::Vector4 inkBlobColor = {0.05f, 0.03f, 0.08f, 1.0f}; ///< 墨玉の色
 
   // --- 見た目 ---
   float squash = 0.28f;           ///< 噴射時の伸び縮み
@@ -487,6 +520,8 @@ public:
   RC::Vector4 windupColor = {0.55f, 0.15f, 0.75f, 1.0f}; ///< ため時に明滅する色（予兆）
 
 protected:
+  /// @brief 基底の体力に加えて、タコのパラメータを JSON へ書き出す
+  /// @return 全パラメータを格納した json
   nlohmann::json Serialize() override {
     nlohmann::json j = EnemyBaseScript::Serialize();
     j["detectDistance"] = detectDistance;
@@ -517,6 +552,8 @@ protected:
     return j;
   }
 
+  /// @brief JSON から基底の体力とタコのパラメータを読み込む（含まれる項目だけ上書きする）
+  /// @param j 読み込み元の json
   void Deserialize(const nlohmann::json &j) override {
     EnemyBaseScript::Deserialize(j);
     auto f = [&](const char *k, float &o) { if (j.contains(k) && j[k].is_number()) o = j[k].get<float>(); };
@@ -552,8 +589,10 @@ protected:
     c4("windupColor", windupColor);
   }
 
+  /// @brief タコとしての既定値（HP・撃破演出時間）を設定し、陣取る側と噴射の位相を決める
   void OnCreate() override {
     EnemyBaseScript::OnCreate();
+    // データ側で指定されていなければタコの既定値を使う
     if (!hpFromData) {
       hp = 4;
       maxHp = 4;
@@ -570,6 +609,8 @@ protected:
     fireCooldown_ = firstFireDelay;
   }
 
+  /// @brief 自機の進行方向の推定、陣取る位置の計算、状態ごとの行動、向きと見た目の更新を行う
+  /// @param dt 前フレームからの経過秒数
   void OnUpdate(float dt) override {
     EnemyBaseScript::OnUpdate(dt);
     if (dt <= 0.0f) return;
@@ -587,6 +628,7 @@ protected:
       return;
     }
 
+    // 自機（カメラ）を取得する。探し直したときは前フレーム位置が別物になるので速度推定をやり直す
     std::shared_ptr<Entity> cam = target_.lock();
     if (!cam || cam->IsPendingDestroy() || !cam->IsActive()) {
       cam = OctopusDetail::FindPlayerCamera(scene);
@@ -651,6 +693,7 @@ protected:
 
     switch (state_) {
     case OctopusState::Wait:
+      // 慣性で漂いながら、自機が索敵距離に入るのを待つ
       Drift(tr, dt);
       if (dist <= detectDistance) {
         state_ = OctopusState::Approach;
@@ -676,6 +719,7 @@ protected:
       }
       Drift(tr, dt);
 
+      // クールダウンが明け、自機の前方かつ射程内にいれば「ため」に入る
       fireCooldown_ -= dt;
       if (fireCooldown_ <= 0.0f && inFront && dist >= fireMinDistance && dist <= fireMaxDistance) {
         state_ = OctopusState::Windup;
@@ -719,6 +763,7 @@ protected:
     }
 
     case OctopusState::Recover:
+      // 吐いた直後の硬直。終わったらすぐ噴射できるよう jetTimer_ を短くして接近へ戻る
       Drift(tr, dt);
       stateTimer_ += dt;
       if (stateTimer_ >= recoverDuration) {
@@ -741,6 +786,8 @@ protected:
                  baseScale_.z * s * (1.0f - p * 0.6f + breathe)};
   }
 
+  /// @brief 基底の被ダメージ処理に加え、ため中に撃たれたらひるませて吐くのを中断する
+  /// @param damage 受けるダメージ量
   void TakeDamage(int damage) override {
     const bool wasWindup = (state_ == OctopusState::Windup);
     EnemyBaseScript::TakeDamage(damage);
@@ -754,6 +801,7 @@ protected:
   }
 
 public:
+  /// @brief インスペクタに状態表示・各パラメータの編集欄・即時発射ボタンを表示する
   void OnImGui() override {
     EnemyBaseScript::OnImGui();
 #if RC_ENABLE_IMGUI
@@ -788,6 +836,9 @@ public:
   }
 
 private:
+  /// @brief 状態の表示名を返す（ImGui 表示用）
+  /// @param s 状態
+  /// @return 状態名の文字列
   static const char *StateName(OctopusState s) {
     switch (s) {
     case OctopusState::Wait: return "Wait";
@@ -798,11 +849,19 @@ private:
     return "?";
   }
 
+  /// @brief 色（4 成分ベクトル）を線形補間する
+  /// @param a t = 0 のときの値
+  /// @param b t = 1 のときの値
+  /// @param t 補間係数
+  /// @return 補間結果
   static RC::Vector4 Lerp4(const RC::Vector4 &a, const RC::Vector4 &b, float t) {
     return {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t};
   }
 
   /// @brief 速度で動かして、水の抵抗で減速させる（陰的に解くので dt が大きくても発散しない）
+  /// @param tr 移動させる自身の Transform
+  /// @param dt 前フレームからの経過秒数
+  /// @note 速度は maxSpeed で頭打ちにし、水面から surfaceMargin の半分より上には出さない。
   void Drift(TransformComponent *tr, float dt) {
     const float k = 1.0f / (1.0f + waterDrag * dt);
     velocity_.x *= k;
@@ -824,6 +883,9 @@ private:
   }
 
   /// @brief 墨玉を吐く
+  /// @param scene 墨玉を生成するシーン
+  /// @param tr 自身の Transform（吐く位置の基準）
+  /// @param targetPos 狙う自機（カメラ）の位置
   void SpitInk(Scene *scene, const TransformComponent *tr, const RC::Vector3 &targetPos) {
     if (!scene || !tr) return;
 
@@ -843,6 +905,7 @@ private:
     dir = {dir.x / l, dir.y / l, dir.z / l};
     const float mouth = (std::max)({baseScale_.x, baseScale_.y, baseScale_.z}) * 0.6f;
 
+    // 墨玉エンティティを生成し、InkBlobScript へ速度・追尾・墨の強さ・ダメージ・向きを pendingData で渡す
     auto blob = scene->CreateEntity("InkBlob");
     if (!blob) return;
     auto &btr = blob->AddComponent<TransformComponent>();

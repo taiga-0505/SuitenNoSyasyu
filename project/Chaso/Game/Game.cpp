@@ -7,9 +7,6 @@
 #include <shellapi.h>
 #include <filesystem>
 
-// C++ hardcoded scenes (scenes with rich runtime logic)
-// (All scenes have been moved to DataDrivenScene via JSON)
-
 void Game::Init(SceneContext &ctx) {
   sceneMgr_.Init(ctx);
   registerScenes_();
@@ -19,7 +16,7 @@ void Game::Init(SceneContext &ctx) {
 }
 
 void Game::registerScenes_() {
-  // Load data-driven scenes from JSON directory (editor-managed)
+  // エディタで管理している JSON ディレクトリからデータ駆動シーンを読み込む
   sceneMgr_.LoadScenesFromDirectory(kSceneDir);
 
   // シーン遷移表（Resources/SceneFlow.json）。無ければ空で始まり、エディタから作れる
@@ -71,6 +68,7 @@ void Game::DrawDebugUI(SceneContext &ctx) {
       auto sceneNames = sceneMgr_.GetSceneNames();
       const char *currentSceneName = CurrentSceneName().c_str();
 
+      // 登録済みシーンの一覧。選択したシーンへ遷移を要求する
       for (auto& name : sceneNames) {
         bool is_selected = (name == currentSceneName);
         if (ImGui::MenuItem(name.c_str(), nullptr, is_selected)) {
@@ -80,6 +78,7 @@ void Game::DrawDebugUI(SceneContext &ctx) {
 
       ImGui::Separator();
 
+      // 新規シーン作成。作成に成功したら入力欄を空に戻す
       ImGui::InputText("##NewSceneName", newSceneNameBuf_, sizeof(newSceneNameBuf_));
       ImGui::SameLine();
       if (ImGui::MenuItem("New Scene")) {
@@ -99,6 +98,7 @@ void Game::DrawDebugUI(SceneContext &ctx) {
 
       ImGui::Separator();
 
+      // シーン削除。実行中のシーンは消せないよう一覧から除外する
       if (ImGui::BeginMenu("Delete Scene")) {
         for (auto& name : sceneNames) {
           if (name == CurrentSceneName()) continue;

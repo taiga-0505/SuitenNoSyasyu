@@ -24,21 +24,28 @@
 #include "Game/Framework/GameSession.h"
 
 
-/// @brief Base class for enemies handling HP, damage, and death state
+/// @brief 敵の共通基底クラス。体力・被ダメージ・撃破状態の管理を担う
+/// @details 被弾フラッシュ、撃破時の当たり判定無効化と泡演出、撃破数の集計もここで行う。
 class EnemyBaseScript : public ScriptableEntity {
 public:
+    /// @brief 現在の体力
     int hp = 10;
+    /// @brief 最大体力
     int maxHp = 10;
+    /// @brief 撃破済みか
     bool isDead = false;
+    /// @brief 撃破されてからの経過秒数
     float deathTimer = 0.0f;
     /// @brief 撃破されてから実体を消すまでの秒数
     /// @details 沈む・崩れるといった演出の長さがタイプごとに違うため可変にした。
     ///          船（T-15）は浸水して沈みきるまでに時間がかかるので長めに取る。
     float deathDuration = 2.0f;
     
-    // Flash variables
+    /// @brief 被弾フラッシュの残り秒数（0 以下で元の色に戻す）
     float flashTimer = 0.0f;
+    /// @brief フラッシュ前の元の色
     RC::Vector4 originalColor = {1.0f, 1.0f, 1.0f, 1.0f};
+    /// @brief originalColor を保存済みか
     bool hasSavedColor = false;
 
     /// @brief 体力が JSON / スポナーから明示的に与えられたか
@@ -62,6 +69,7 @@ protected:
     /// @brief 体力を JSON へ書き出す
     /// @details 派生クラスは自分の Serialize の先頭でこれを呼び、
     ///          返ってきた json に自分の項目を足していく。
+    /// @return hp / maxHp / deathDuration を格納した json
     nlohmann::json Serialize() override {
         nlohmann::json j;
         j["hp"] = hp;
@@ -70,6 +78,9 @@ protected:
         return j;
     }
 
+    /// @brief JSON から体力と撃破演出時間を読み込む
+    /// @param j 読み込み元の json（hp / maxHp / deathDuration は任意）
+    /// @note 指定があった項目は hpFromData / deathDurationFromData を立て、派生側の既定値で上書きされないようにする。
     void Deserialize(const nlohmann::json& j) override {
         // maxHp だけ指定された場合は hp も満タンとして揃える。
         // ウェーブ定義に "maxHp" とだけ書けるほうが素直なため。
@@ -89,6 +100,8 @@ protected:
         }
     }
 
+    /// @brief 被弾フラッシュ前の元の色を保存する
+    /// @note ModelRenderer を優先し、無ければ PrimitiveMesh のマテリアル色を使う。保存は初回のみ。
     void SaveOriginalColor() {
         if (hasSavedColor) return;
         if (Entity* self = GetEntity()) {
@@ -106,6 +119,9 @@ protected:
         }
     }
 
+    /// @brief 自身の描画色を変更する
+    /// @param color 設定する色（RGBA）
+    /// @note ModelRenderer を優先し、無ければ PrimitiveMesh のマテリアル色を変更する。
     void ApplyColor(const RC::Vector4& color) {
         if (Entity* self = GetEntity()) {
             if (auto* mr = self->GetComponent<ModelRendererComponent>()) {
@@ -120,12 +136,14 @@ protected:
         }
     }
 
+    /// @brief 保存しておいた元の色に戻す（未保存なら何もしない）
     void RestoreColor() {
         if (hasSavedColor) {
             ApplyColor(originalColor);
         }
     }
 
+    /// @brief 敵タグを付け、コライダーが無ければ既定の球コライダーを追加する
     void OnCreate() override {
         if (Entity* self = GetEntity()) {
             self->SetTag("is_enemy", 1);
@@ -140,8 +158,10 @@ protected:
         }
     }
 
+    /// @brief タグ経由の被ダメージ反映、被弾フラッシュ、撃破後の消滅、HP の公開を行う
+    /// @param deltaTime 前フレームからの経過秒数
     void OnUpdate(float deltaTime) override {
-        // Process pending damage from tag system
+        // 他スクリプトが "pending_damage" タグに積んだダメージを取り出して反映する
         Entity* self = GetEntity();
         if (self) {
             int dmg = self->GetTagInt("pending_damage", 0);
@@ -150,7 +170,7 @@ protected:
                 TakeDamage(dmg);
             }
             
-            // Update flash timer
+            // 被弾フラッシュの時間を進め、終わったら元の色に戻す
             if (flashTimer > 0.0f) {
                 flashTimer -= deltaTime;
                 if (flashTimer <= 0.0f) {
@@ -158,7 +178,7 @@ protected:
                 }
             }
 
-            // 仮の消滅処理
+            // 撃破後、deathDuration 秒経ったら実体を消す（仮の消滅処理）
             if (isDead) {
                 deathTimer += deltaTime;
                 if (deathTimer > deathDuration) {
@@ -172,17 +192,24 @@ protected:
         }
     }
 
+    /// @brief 描画処理（このクラスでは何もしない）
+    /// @note HP などの UI 描画は RailShooterController 側で一括して行う。
     void OnRender() override {
         // UI描画は RailShooterController 側で一括して行うように変更しました
     }
 
 public:
+    /// @brief インスペクタに HP の編集欄を表示する
     void OnImGui() override {
 #if RC_ENABLE_IMGUI
         ImGui::DragInt("HP##EnemyBase", &hp, 1, 0, maxHp);
 #endif
     }
 
+    /// @brief ダメージを受ける。体力が 0 以下になったら撃破処理を行う
+    /// @param damage 受けるダメージ量
+    /// @note 撃破時は撃破数の加算、"enemy_defeated" タグ通知、当たり判定の無効化、
+    ///       spawnDeathBubbles が真なら泡パーティクルの生成を行う。撃破済みなら何もしない。
     virtual void TakeDamage(int damage) {
         if (isDead) return;
         hp -= damage;

@@ -37,6 +37,9 @@ enum class BranchCondition : int {
     Chance,       ///< chance の確率で成立（0.0〜1.0）
 };
 
+/// @brief 分岐条件をシリアライズ用の文字列に変換する（ConditionFromString と対）
+/// @param c 変換する分岐条件
+/// @return 条件名の文字列（"always" / "tag_equals" / "tag_at_least" / "key_held" / "chance"）
 static const char* ToString(BranchCondition c) {
     switch (c) {
     case BranchCondition::Always:     return "always";
@@ -48,6 +51,9 @@ static const char* ToString(BranchCondition c) {
     return "always";
 }
 
+/// @brief シリアライズ用の文字列から分岐条件に変換する（ToString と対）
+/// @param s 条件名の文字列
+/// @return 対応する分岐条件（未知の文字列なら Always）
 static BranchCondition ConditionFromString(const std::string& s) {
     if (s == "tag_equals")   return BranchCondition::TagEquals;
     if (s == "tag_at_least") return BranchCondition::TagAtLeast;
@@ -138,6 +144,7 @@ public:
     /// @brief 次に向かうウェイポイントを外部から指定する
     /// @details A-03 のウェーブ戦闘やイベントスクリプトから、条件式に落とし込めない
     ///          分岐を直接指示するための入口。範囲外は無視する。
+    /// @param index 次に向かうウェイポイント index
     /// @return 受理したら true
     bool ForceNextWaypoint(int index) {
         if (index < 0 || index >= static_cast<int>(waypoints.size())) {
@@ -157,13 +164,16 @@ public:
     /// @brief 進行を再開する
     void Resume() { isMoving = true; }
 
-    /// @brief 現在向かっているウェイポイント index
+    /// @brief 現在向かっているウェイポイント index を取得する
+    /// @return 現在向かっているウェイポイント index
     int CurrentIndex() const { return currentWaypointIndex; }
 
-    /// @brief ウェーブのクリア待ちで停止しているか（0 なら待っていない）
+    /// @brief ウェーブのクリア待ちで停止しているかを取得する
+    /// @return 待っているウェーブ id（0 なら待っていない）
     int WaitingWaveId() const { return waitingWaveId_; }
 
-    /// @brief このラップで到達したウェイポイントの数（リザルトの達成率の分子）
+    /// @brief このラップで到達したウェイポイントの数を取得する
+    /// @return 到達数（リザルトの達成率の分子）
     int ReachedCount() const { return reachedCount_; }
 
     /// @brief いま向かっている地点から終点までに、あと何地点通る予定か
@@ -171,6 +181,7 @@ public:
     ///          条件付き分岐の行き先は走ってみるまで分からないので、本線を進む前提で見積もり、
     ///          実際に分岐した時点で数え直す（達成率が途中で少し跳ねるのは許容する）。
     ///          終点（isEnd）か配列の末尾で止める。ループ検出のために訪問済みを覚えておく。
+    /// @return 現在向かっている地点を含めた残り地点数（終点到達後は 0）
     int RemainingCount() const {
         const int n = static_cast<int>(waypoints.size());
         if (n == 0) return 0;
@@ -185,6 +196,7 @@ public:
             const Waypoint& wp = waypoints[static_cast<size_t>(index)];
             if (wp.isEnd) break;
 
+            // 無条件分岐があればその先、無ければ直進として次の地点を決める
             int next = index + 1;
             for (const auto& b : wp.branches) {
                 if (b.condition == BranchCondition::Always &&
@@ -217,6 +229,8 @@ private:
     std::vector<int> clearedWaves_;
 
     /// @brief 指定ウェーブがこのラップですでにクリア済みか
+    /// @param waveId 調べるウェーブ id
+    /// @return クリア済みなら true
     bool IsWaveAlreadyCleared(int waveId) const {
         for (int id : clearedWaves_) {
             if (id == waveId) return true;
@@ -224,7 +238,8 @@ private:
         return false;
     }
 
-    /// @brief WaveManager のエンティティを引く（居なければ nullptr）
+    /// @brief WaveManager のエンティティを waveManagerName で引く
+    /// @return 見つかったエンティティ（名前が空・シーン無し・居ない場合は nullptr）
     Entity* FindWaveManager() {
         if (waveManagerName.empty()) return nullptr;
         Scene* scene = GetScene();
@@ -233,7 +248,8 @@ private:
     }
 
     /// @brief ウェーブ地点に到達したので、WaveManager へ開始を要求して停止する
-    /// @return 実際に待機へ入ったら true
+    /// @param arrivedIndex 到達したウェイポイントの index
+    /// @return 実際に待機へ入ったら true（ウェーブ無し・クリア済み・WaveManager 不在なら false）
     bool BeginWaveWait(int arrivedIndex) {
         const int waveId = waypoints[arrivedIndex].waveId;
         if (waveId == 0) return false;
@@ -257,6 +273,7 @@ private:
     }
 
     /// @brief 待っているウェーブが決着したか
+    /// @return WaveManager の wave_cleared_id が待機中の id と一致すれば true（WaveManager が居なくなった場合も true）
     bool IsWaitingWaveCleared() {
         Entity* manager = FindWaveManager();
         if (!manager) return true; // 途中で居なくなったら止まり続けない
@@ -275,10 +292,12 @@ private:
     /// @brief 到達したウェイポイントから次の行き先へ進む
     /// @details ウェーブ待機の前後で同じ処理を使うため切り出した。
     ///          分岐条件はここで評価されるので、ウェーブの結果を見て分岐させることもできる。
+    /// @param arrivedIndex 到達したウェイポイントの index
     void AdvanceFrom(int arrivedIndex) {
         currentWaitTimer = waypoints[arrivedIndex].waitTime;
         currentWaypointIndex = ResolveNextIndex(arrivedIndex);
 
+        // 次の index が配列外（末尾を越えた／終点）なら、ループか停止かを決める
         if (currentWaypointIndex >= static_cast<int>(waypoints.size())) {
             if (loop) {
                 currentWaypointIndex = 0; // ループする場合
@@ -291,7 +310,8 @@ private:
         }
     }
 
-    /// @brief 0.0〜1.0 の一様乱数
+    /// @brief 0.0〜1.0 の一様乱数を得る
+    /// @return 0.0〜1.0 の乱数
     static float RandomUnit() {
         static std::mt19937 engine{ std::random_device{}() };
         static std::uniform_real_distribution<float> dist(0.0f, 1.0f);
@@ -299,10 +319,12 @@ private:
     }
 
     /// @brief 分岐が参照するエンティティの int タグを読む
-    /// @return 見つからなければ INT_MIN（＝条件は不成立扱い）
+    /// @param b 参照先エンティティ名とタグキーを持つ分岐定義
+    /// @return タグの値。見つからなければ INT_MIN（＝条件は不成立扱い）
     int ReadBranchTag(const RailBranch& b) {
         if (b.tagKey.empty()) return INT_MIN;
 
+        // エンティティ名が空なら自分自身、そうでなければ名前でシーンから探す
         Entity* target = nullptr;
         if (b.entityName.empty()) {
             target = GetEntity();
@@ -314,6 +336,9 @@ private:
     }
 
     /// @brief 分岐条件が成立しているか判定する
+    /// @param b 判定する分岐定義
+    /// @return 成立していれば true
+    /// @note Chance は呼ぶたびに乱数を引くため、同じ分岐でも結果が変わる
     bool IsBranchTaken(const RailBranch& b) {
         switch (b.condition) {
         case BranchCondition::Always:
@@ -327,6 +352,7 @@ private:
             return (v != INT_MIN) && (v >= b.value);
         }
         case BranchCondition::KeyHeld: {
+            // DIK コードの有効範囲（1〜255）外は不成立
             if (b.keyCode <= 0 || b.keyCode > 255) return false;
             auto* input = Input::GetInstance();
             return input && input->IsKeyPressed(static_cast<uint8_t>(b.keyCode));
@@ -349,6 +375,7 @@ private:
             return static_cast<int>(waypoints.size());
         }
 
+        // 分岐を先頭から評価し、成立かつ行き先が有効な最初の分岐を採用する
         for (const auto& b : wp.branches) {
             if (!IsBranchTaken(b)) continue;
 
@@ -373,6 +400,7 @@ private:
             return b.target;
         }
 
+        // どの分岐も成立しなければ直進
         lastBranchLog_ = "straight -> " + std::to_string(arrivedIndex + 1);
         if (Entity* self = GetEntity()) {
             self->SetTag("rail_branch_to", -1);
@@ -381,6 +409,9 @@ private:
     }
 
 protected:
+    /// @brief 速度・フラグ・描画色・ウェイポイント（分岐含む）を JSON に書き出す
+    /// @return シリアライズした JSON
+    /// @note isEnd / waveId / branches は既定値なら省略する
     nlohmann::json Serialize() override {
         nlohmann::json j;
         j["speed"] = speed;
@@ -395,6 +426,7 @@ protected:
         j["pathColor"] = { pathColor.x, pathColor.y, pathColor.z, pathColor.w };
         j["branchColor"] = { branchColor.x, branchColor.y, branchColor.z, branchColor.w };
         j["waveColor"] = { waveColor.x, waveColor.y, waveColor.z, waveColor.w };
+        // ウェイポイント配列（既定値の項目は書かずにデータを小さく保つ）
         nlohmann::json wpArray = nlohmann::json::array();
         for (const auto& wp : waypoints) {
             nlohmann::json wj;
@@ -423,6 +455,8 @@ protected:
         return j;
     }
 
+    /// @brief JSON から設定とウェイポイント（分岐含む）を読み込む
+    /// @param j 読み込む JSON（無いキーは現在値のまま）
     void Deserialize(const nlohmann::json& j) override {
         if (j.contains("speed")) speed = j["speed"].get<float>();
         if (j.contains("isMoving")) isMoving = j["isMoving"].get<bool>();
@@ -447,6 +481,7 @@ protected:
             waveColor.w = j["waveColor"][3];
         }
         if (j.contains("waveManagerName")) waveManagerName = j["waveManagerName"].get<std::string>();
+        // ウェイポイント配列は丸ごと置き換える
         if (j.contains("waypoints") && j["waypoints"].is_array()) {
             waypoints.clear();
             for (const auto& wj : j["waypoints"]) {
@@ -478,6 +513,7 @@ protected:
         }
     }
 
+    /// @brief ウェイポイントが無ければ現在位置を追加し、ランタイム専用タグと内部状態を初期化する
     void OnCreate() override {
         // 初期化時に何もウェイポイントがなければ、現在位置を追加しておく
         if (waypoints.empty()) {
@@ -510,9 +546,9 @@ protected:
         reachedCount_ = 0;
     }
 
+    /// @brief 状態タグ・達成率を公開し、演出中／ゲームオーバー／ウェーブ待機／待ち時間を考慮してウェイポイントへ移動する
+    /// @param deltaTime 前フレームからの経過時間（秒）
     void OnUpdate(float deltaTime) override {
-        // パス描画処理はOnImGui(選択時)に移動しました。
-
         // いま向かっているウェイポイント番号を外へ公開する（動作確認用）。
         // 早期 return の前に置いてあるのは、待機中や終点でも最後の番号が
         // 残っていてほしいため。
@@ -563,6 +599,7 @@ protected:
             return; // 再開したフレームは移動せず、次フレームから進む
         }
 
+        // 停止中、または index が範囲外（終点到達後など）なら動かない
         if (!isMoving ||
             currentWaypointIndex < 0 ||
             currentWaypointIndex >= static_cast<int>(waypoints.size())) {
@@ -578,6 +615,7 @@ protected:
         auto* tr = GetComponent<TransformComponent>();
         if (!tr) return;
 
+        // 目標地点までの距離と今フレームの移動量を比べ、届くなら到達処理、届かないなら等速で近づく
         RC::Vector3 targetPos = waypoints[currentWaypointIndex].pos;
         RC::Vector3 diff = RC::Sub(targetPos, tr->position);
         float dist = RC::Length(diff);
@@ -606,12 +644,15 @@ protected:
         }
     }
 
+    /// @brief 破棄時の処理（このクラスでは何もしない）
     void OnDestroy() override {
     }
 
 public:
+    /// @brief 移動設定・状態表示・ウェーブ待機のスキップ・ウェイポイントと分岐の編集 UI を出す
     void OnImGui() override {
 #if RC_ENABLE_IMGUI
+        // 基本設定
         ImGui::Checkbox("Is Moving", &isMoving);
         ImGui::Checkbox("Loop", &loop);
         ImGui::DragFloat("Speed", &speed, 0.1f, 0.1f, 100.0f);
@@ -622,6 +663,7 @@ public:
             ImGui::ColorEdit4("Wave Color", &waveColor.x);
         }
 
+        // WaveManager 名の編集（InputText 用に固定長バッファへ写して編集する）
         {
             char mgrBuf[64] = {};
             std::snprintf(mgrBuf, sizeof(mgrBuf), "%s", waveManagerName.c_str());
@@ -630,6 +672,7 @@ public:
             }
         }
 
+        // 進行状況の表示
         ImGui::Text("Waypoints (Count: %zu)", waypoints.size());
         ImGui::Text("Current Index: %d", currentWaypointIndex);
         if (!lastBranchLog_.empty()) {
@@ -659,6 +702,7 @@ public:
             ImGui::Text("Cleared Waves: %s", cleared.c_str());
         }
 
+        // パスを最初からやり直す（ウェーブ待機・クリア記録・終点通知も含めて初期化し、先頭地点へ戻す）
         if (ImGui::Button("Restart Path")) {
             currentWaypointIndex = 0;
             currentWaitTimer = 0.0f;
@@ -692,6 +736,8 @@ public:
             }
         }
 
+        // ウェイポイントごとの編集行（位置・待ち時間・終点・削除・ウェーブ ID・分岐）
+        // 削除した場合はループ中の配列が変わるため、その場で break する
         ImGui::Separator();
         for (size_t i = 0; i < waypoints.size(); ++i) {
             ImGui::PushID(static_cast<int>(i));
@@ -733,6 +779,7 @@ public:
 #endif
     }
 
+    /// @brief ウェイポイント（球）・直進線・分岐リンク・ループ線をデバッグ描画する
     void OnDebugRender() override {
 #if RC_ENABLE_IMGUI
         // 選択時（または全描画モード時）のみパスとウェイポイントを描画
@@ -772,6 +819,7 @@ public:
                     RC::DrawLine3D(mid, to, branchColor, true);
                 }
             }
+            // ループ時は末尾から先頭へ戻る線も引く
             if (loop && waypoints.size() >= 2) {
                 RC::DrawLine3D(waypoints.back().pos, waypoints.front().pos, pathColor, true);
             }
@@ -782,20 +830,25 @@ public:
 private:
 #if RC_ENABLE_IMGUI
     /// @brief 1ウェイポイントぶんの分岐編集 UI
+    /// @param wp 編集対象のウェイポイント
+    /// @param wpIndex 編集対象のウェイポイント index（追加する分岐の既定の行き先に使う）
     void DrawBranchEditor(Waypoint& wp, int wpIndex) {
         const std::string header = "Branches (" + std::to_string(wp.branches.size()) + ")";
         if (!ImGui::TreeNode(header.c_str())) return;
 
+        // 追加する分岐の既定の行き先は次の地点（末尾なら 0）
         if (ImGui::Button("Add Branch")) {
             RailBranch b;
             b.target = (wpIndex + 1 < static_cast<int>(waypoints.size())) ? wpIndex + 1 : 0;
             wp.branches.push_back(b);
         }
 
+        // BranchCondition の列挙順と一致させること（Combo の index をそのまま enum にキャストしている）
         static const char* kConditionLabels[] = {
             "always", "tag_equals", "tag_at_least", "key_held", "chance"
         };
 
+        // 分岐ごとの編集。ID はウェイポイント側の PushID と衝突しないよう +1000 する
         for (size_t bi = 0; bi < wp.branches.size(); ++bi) {
             ImGui::PushID(static_cast<int>(bi) + 1000);
             auto& b = wp.branches[bi];
@@ -808,6 +861,7 @@ private:
             ImGui::DragInt("Target WP", &b.target, 1.0f, 0,
                            static_cast<int>(waypoints.size()) - 1);
 
+            // 条件の種類に応じたパラメータ入力欄を出す
             switch (b.condition) {
             case BranchCondition::TagEquals:
             case BranchCondition::TagAtLeast: {
@@ -832,6 +886,7 @@ private:
                 break;
             }
 
+            // 削除したら配列が変わるので、PopID してからループを抜ける
             if (ImGui::Button("Remove Branch")) {
                 wp.branches.erase(wp.branches.begin() + bi);
                 ImGui::PopID();

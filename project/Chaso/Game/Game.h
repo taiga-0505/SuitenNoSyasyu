@@ -13,10 +13,12 @@ public:
   Game() = default;
   ~Game() = default;
 
-  /// @brief 起動時に読み込むシーン名を設定する（Init より前に呼ぶ。未設定なら "Title"）
+  /// @brief 起動時に読み込むシーン名を設定する
+  /// @param name 起動シーン名
+  /// @note Init より前に呼ぶこと。未設定なら "Title" が使われる
   void SetBootScene(const std::string &name) { bootScene_ = name; }
 
-  /// @brief 初期化（シーンやオーディオパスの登録、初期シーンへの遷移）
+  /// @brief 初期化（シーンと遷移表の登録、起動シーンへの遷移）
   /// @param ctx シーンコンテキスト
   void Init(SceneContext &ctx);
 
@@ -37,7 +39,9 @@ public:
   /// @brief 終了処理
   void Term();
 
-  /// @brief デバッグ用（ImGui）シーン切替 UI を表示する
+  /// @brief デバッグ用（ImGui）のシーンメニューを表示する
+  /// @param ctx シーンコンテキスト
+  /// @details シーン切替・新規作成・保存・削除を行うメニュー。RC_ENABLE_IMGUI 無効時は何もしない。
   void DrawDebugUI(SceneContext &ctx);
 
   /// @brief 外部からシーン遷移を要求する
@@ -63,7 +67,8 @@ public:
   /// @return シーンのポインタ（なければnullptr）
   Scene* GetCurrentScene();
 
-  /// @brief Provide access to SceneManager
+  /// @brief シーンマネージャーを取得する
+  /// @return シーンマネージャーの参照
   Scene::SceneManager& GetSceneManager() { return sceneMgr_; }
 
 private:
@@ -74,9 +79,9 @@ private:
   Scene::SceneManager sceneMgr_; ///< シーンマネージャー
   std::string bootScene_ = "Title"; ///< 起動シーン名（App が AppConfig.json から渡す）
 
-  /// @brief Directory for data-driven scene JSON files
+  /// @brief データ駆動シーンの JSON ファイルを置くディレクトリ
   static inline const std::string kSceneDir = "Resources/Scenes";
 
-  /// @brief Editor UI: new scene name input buffer
+  /// @brief エディタ UI: 新規シーン名の入力バッファ
   char newSceneNameBuf_[128] = {};
 };

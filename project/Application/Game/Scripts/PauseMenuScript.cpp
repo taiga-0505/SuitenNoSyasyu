@@ -57,6 +57,8 @@ public:
   RC::Vector4 accentColor = {0.88f, 0.74f, 0.38f, 1.0f}; ///< 金（選択中）
   float dimAlpha = 0.55f;                                ///< 背後の画面を沈める濃さ
 
+  /// @brief 設定項目を JSON に書き出す
+  /// @return 設定項目を格納した JSON
   nlohmann::json Serialize() override {
     return {
         {"fontPath", fontPath},
@@ -67,7 +69,10 @@ public:
     };
   }
 
+  /// @brief JSON から設定項目を読み込む
+  /// @param j 読み込み元の JSON（存在し型が合うキーだけ反映する）
   void Deserialize(const nlohmann::json &j) override {
+    // キーが存在し型が一致する場合だけ上書きするヘルパー（文字列 / RGBA 配列）
     auto readS = [&](const char *key, std::string &dst) {
       if (j.contains(key) && j[key].is_string()) dst = j[key].get<std::string>();
     };
@@ -85,6 +90,7 @@ public:
     if (j.contains("dimAlpha")) dimAlpha = j["dimAlpha"].get<float>();
   }
 
+  /// @brief インスペクタにメニューの状態・開閉ボタン・見た目と GameSettings の編集 UI を表示する
   void OnImGui() override {
 #if RC_ENABLE_IMGUI
     ImGui::Text("Pause: %s  page=%s  selected=%d", open_ ? "OPEN" : "closed",
@@ -96,6 +102,7 @@ public:
     ImGui::ColorEdit4("Accent Color", &accentColor.x);
     ImGui::SliderFloat("Dim Alpha", &dimAlpha, 0.0f, 1.0f);
     ImGui::Separator();
+    // GameSettings を直接編集し、変更があれば即反映して保存待ちにする
     ImGui::TextUnformatted("GameSettings (shared, saved to Resources/Setting/GameSettings.json)");
     GameSettings &gs = GameSettings::Get();
     bool changed = false;
@@ -115,6 +122,7 @@ public:
   }
 
 protected:
+  /// @brief 設定を読み込み、ポーズ状態を初期化してフォントを用意する
   void OnCreate() override {
     GameSettings::Get().EnsureLoaded();
     if (SceneContext *ctx = GetSceneContext()) ctx->gamePaused = false;
@@ -145,6 +153,7 @@ protected:
     if (Input *in = Input::GetInstance()) in->GetGameMousePosition(lastMouseX_, lastMouseY_);
   }
 
+  /// @brief ポーズを解除し、未保存の設定を保存してフォントを解放する
   void OnDestroy() override {
     // シーンをまたいでポーズが残らないように必ず下ろす
     if (SceneContext *ctx = GetSceneContext()) ctx->gamePaused = false;
@@ -160,6 +169,7 @@ protected:
     unload(labelFont_);
   }
 
+  /// @brief 閉じているときは開く操作を待ち、開いているときはアニメーションと入力を処理する
   /// @param deltaTime ポーズ中は 0 で来るので使わない。ctx.deltaTime（実時間）で動く
   void OnUpdate(float /*deltaTime*/) override {
     SceneContext *ctx = GetSceneContext();
@@ -186,7 +196,8 @@ protected:
     HandleInput(in);
   }
 
-  /// @brief ポストプロセスの後に描く（輪郭・水中・ビネットが UI に乗らないように）
+  /// @brief メニュー（または遷移前の沈む幕）を描く
+  /// @note ポストプロセスの後に描く（輪郭・水中・ビネットが UI に乗らないように）
   void OnOverlayRender() override {
     if (sinking_) {
       DrawSink();
@@ -194,6 +205,7 @@ protected:
     }
     if (!open_) return;
 
+    // 1280x720 基準のレイアウトを、縦横の小さいほうの倍率で実解像度へ合わせる（余りは均等に空ける）
     float screenW = 1280.0f, screenH = 720.0f;
     auto &rc = RC::GetRenderContext();
     if (rc.Ctx() && rc.Ctx()->app) {
@@ -216,6 +228,7 @@ protected:
   }
 
 private:
+  /// @brief 表示中のページ（メインメニュー / 設定画面）
   enum class Page { Main, Settings };
 
   /// @brief メインメニューの項目
@@ -264,6 +277,8 @@ private:
   static constexpr RC::Vector4 kMuted = {0.66f, 0.70f, 0.76f, 1.0f};
   static constexpr RC::Vector4 kDim = {0.40f, 0.44f, 0.50f, 1.0f};
 
+  /// @brief 1280x720 基準座標を実画面座標へ変換するための倍率とオフセット
+  /// @details s: 拡大率 / ox, oy: レターボックスのずれ / fs: フォント描画時の倍率（s ÷ ロード時の倍率）
   struct Layout {
     float s = 1.0f;
     float ox = 0.0f;
@@ -272,31 +287,58 @@ private:
   };
   Layout L_;
 
+  /// @brief 基準座標の X / Y を実画面座標へ変換する
+  /// @param x 基準座標の X（Y は y）
+  /// @return 実画面座標
   float X(float x) const { return L_.ox + x * L_.s; }
   float Y(float y) const { return L_.oy + y * L_.s; }
+  /// @brief 基準座標系の長さを実画面の長さへ変換する
+  /// @param v 基準座標系での長さ
+  /// @return 実画面での長さ
   float S(float v) const { return v * L_.s; }
 
+  /// @brief 色の不透明度に係数を掛けた色を作る
+  /// @param c 元の色
+  /// @param a 不透明度に掛ける係数
+  /// @return 不透明度を変えた色
   static RC::Vector4 WithAlpha(const RC::Vector4 &c, float a) { return {c.x, c.y, c.z, c.w * a}; }
+  /// @brief 終わりに向かって減速する 3 次のイージング（1 - (1 - t)^3）
+  /// @param t 進行度（0〜1 に丸める）
+  /// @return 補間後の進行度（0〜1）
   static float EaseOutCubic(float t) {
     t = std::clamp(t, 0.0f, 1.0f);
     const float u = 1.0f - t;
     return 1.0f - u * u * u;
   }
 
+  /// @brief 表示中のページに応じた行数・パネル幅・行の高さ・行の間隔を返す
+  /// @return 行数 / 基準座標での長さ（メインと設定で値が異なる）
   int RowCount() const { return (page_ == Page::Main) ? kMainCount : kSettingCount; }
   float PanelW() const { return (page_ == Page::Main) ? kMainPanelW : kSettingsPanelW; }
   float RowH() const { return (page_ == Page::Main) ? kMainRowH : kSettingsRowH; }
   float RowGap() const { return (page_ == Page::Main) ? kMainRowGap : kSettingsRowGap; }
+  /// @brief パネルの高さ（上余白 + 見出し + 全行 + 行間 + 下余白）を求める
+  /// @return パネルの高さ（基準座標）
   float PanelH() const {
     return kPanelPadTop + kHeadingBlockH + RowCount() * RowH() +
            (RowCount() - 1) * RowGap() + kPanelPadBottom;
   }
+  /// @brief 画面中央に置いたパネルの左端 / 上端を求める
+  /// @return パネルの左端 / 上端（基準座標）
   float PanelL() const { return (kDesignW - PanelW()) * 0.5f; }
   float PanelT() const { return (kDesignH - PanelH()) * 0.5f; }
+  /// @brief i 行目の上端を求める
+  /// @param i 行番号（0 始まり）
+  /// @return 行の上端（基準座標）
   float RowTop(int i) const {
     return PanelT() + kPanelPadTop + kHeadingBlockH + i * (RowH() + RowGap());
   }
-  /// @brief 行の矩形（基準座標）
+  /// @brief 行の矩形（基準座標）を求める。パネルの左右から 28px 内側に置く
+  /// @param i 行番号（0 始まり）
+  /// @param l 左端の出力先
+  /// @param t 上端の出力先
+  /// @param r 右端の出力先
+  /// @param b 下端の出力先
   void RowRect(int i, float &l, float &t, float &r, float &b) const {
     const float inset = 28.0f;
     l = PanelL() + inset;
@@ -304,7 +346,12 @@ private:
     t = RowTop(i);
     b = t + RowH();
   }
-  /// @brief 設定行のスライダー矩形（基準座標）。右寄せで数値の左に置く
+  /// @brief 設定行のスライダー矩形（基準座標）を求める。右寄せで数値の左に置く
+  /// @param i 行番号（0 始まり）
+  /// @param l 左端の出力先
+  /// @param t 上端の出力先
+  /// @param r 右端の出力先
+  /// @param b 下端の出力先（高さ 12px で行の縦中央にそろえる）
   void SliderRect(int i, float &l, float &t, float &r, float &b) const {
     float rl, rt, rr, rb;
     RowRect(i, rl, rt, rr, rb);
@@ -314,6 +361,9 @@ private:
     b = t + 12.0f;
   }
 
+  /// @brief 設定の行がスライダーで値を変える行か調べる
+  /// @param row 設定画面の行番号（SettingRow）
+  /// @return 感度・視野角・音量の行なら true（上下反転・もどるは false）
   bool IsSlider(int row) const {
     return row == kMouseSens || row == kStickSens || row == kFov ||
            row == kMasterVol || row == kBgmVol || row == kSeVol;
@@ -323,6 +373,9 @@ private:
   // 開閉
   // ------------------------------------------------------------------
 
+  /// @brief メニューを開く操作（ESC / START ボタン）がこのフレームにあったか調べる
+  /// @param in 入力
+  /// @return 開く操作があれば true
   bool WantOpen(Input *in) const {
     bool key = in->IsKeyTrigger(DIK_ESCAPE);
 #if RC_ENABLE_IMGUI
@@ -333,7 +386,9 @@ private:
     return key;
   }
 
-  /// @brief 決着がついた後（ゲームオーバー／終点到達）はリザルトへ流れるので開かない
+  /// @brief いまメニューを開いてよいか調べる
+  /// @return 開いてよければ true
+  /// @note 決着がついた後（ゲームオーバー／終点到達）はリザルトへ流れるので開かない
   bool CanOpen() const {
     Scene *scene = GetScene();
     if (!scene) return true;
@@ -345,6 +400,7 @@ private:
     return true;
   }
 
+  /// @brief ポーズを掛けてメニューを開く（メインページの先頭を選んだ状態から始める）
   void Open() {
     if (SceneContext *ctx = GetSceneContext()) ctx->gamePaused = true;
     open_ = true;
@@ -361,6 +417,7 @@ private:
     Log::Print("[PauseMenuScript] pause");
   }
 
+  /// @brief 未保存の設定を保存し、ポーズを解除してメニューを閉じる
   void Close() {
     SaveSettingsIfDirty(false);
     if (SceneContext *ctx = GetSceneContext()) ctx->gamePaused = false;
@@ -368,6 +425,8 @@ private:
     Log::Print("[PauseMenuScript] resume");
   }
 
+  /// @brief 設定に変更があれば GameSettings を保存する
+  /// @param force true なら変更が無くても保存する
   void SaveSettingsIfDirty(bool force) {
     if (!settingsDirty_ && !force) return;
     settingsDirty_ = false;
@@ -378,6 +437,8 @@ private:
   // 入力
   // ------------------------------------------------------------------
 
+  /// @brief キーボード・ゲームパッド・マウスの入力をまとめ、表示中のページの処理へ渡す
+  /// @param in 入力
   void HandleInput(Input *in) {
     // --- 決定 / 戻る ---
     bool confirm = in->IsKeyTrigger(DIK_RETURN) || in->IsKeyTrigger(DIK_SPACE);
@@ -398,6 +459,7 @@ private:
     if (in->IsKeyTrigger(DIK_LEFT) || in->IsKeyTrigger(DIK_A)) adjust -= 1;
     if (in->IsKeyTrigger(DIK_RIGHT) || in->IsKeyTrigger(DIK_D)) adjust += 1;
 
+    // ゲームパッド: 十字キーはトリガー、スティックは倒した瞬間だけ 1 回（前フレームと比べる）
     int stickX = 0;
     if (in->IsXInputConnected()) {
       if (in->IsXInputButtonTrigger(XINPUT_GAMEPAD_DPAD_UP)) move -= 1;
@@ -418,7 +480,8 @@ private:
       prevStickX_ = stickX;
     }
 
-    // 長押しリピート（キー・十字キー・スティックのどれでも）
+    // 長押しリピート（キー・十字キー・スティックのどれでも）。
+    // 同じ向きを kRepeatDelay 秒押し続けたら、以後 kRepeatInterval 秒ごとに 1 刻み動かす
     int heldDir = 0;
     if (leftHeld || (in->IsXInputConnected() && in->IsXInputButtonPressed(XINPUT_GAMEPAD_DPAD_LEFT)) || stickX < 0) heldDir = -1;
     if (rightHeld || (in->IsXInputConnected() && in->IsXInputButtonPressed(XINPUT_GAMEPAD_DPAD_RIGHT)) || stickX > 0) heldDir = 1;
@@ -454,6 +517,7 @@ private:
     const bool mouseDragSlider = in->IsMousePressed(0) && page_ == Page::Settings &&
                                  IsSlider(selected_) && (mouseClick || draggingSlider_);
 
+    // 上下移動は端で反対側へ回り込む
     if (move != 0) {
       const int n = RowCount();
       SetSelected((selected_ + move + n) % n);
@@ -467,6 +531,9 @@ private:
     if (!in->IsMousePressed(0)) draggingSlider_ = false;
   }
 
+  /// @brief メインページの決定・戻るを処理する（再開 / 設定へ / はじめから / タイトル・セレクトへ）
+  /// @param confirm 決定操作（キー・ボタン・クリック）があったか
+  /// @param back 戻る操作があったか（メインでは再開）
   void HandleMain(bool confirm, bool back) {
     if (back) {
       Close();
@@ -493,9 +560,17 @@ private:
     }
   }
 
+  /// @brief 設定ページの操作を処理する（値の増減・スライダーのドラッグ・上下反転の切り替え・もどる）
+  /// @param confirm キー・ボタンでの決定操作があったか
+  /// @param mouseClick このフレームに行をクリックしたか
+  /// @param back 戻る操作があったか
+  /// @param adjust 左右の値の増減（-1 / 0 / +1。長押しリピート込み）
+  /// @param dragSlider マウスでスライダーを操作中か
+  /// @param mouseX マウスの X（実画面座標）。スライダーの値の計算に使う
   void HandleSettings(bool confirm, bool mouseClick, bool back, int adjust, bool dragSlider, float mouseX) {
     GameSettings &gs = GameSettings::Get();
 
+    // もどる: 変更を保存してメインページの「設定」へ戻る
     if (back || ((confirm || mouseClick) && selected_ == kBack)) {
       SaveSettingsIfDirty(false);
       page_ = Page::Main;
@@ -520,6 +595,7 @@ private:
           *v = std::round(*v / step) * step;
           changed = true;
         }
+        // ドラッグ中はマウス X のバー上の位置を値の範囲へ割り当て、刻みに丸める
         if (dragSlider) {
           float l, t, r, b;
           SliderRect(selected_, l, t, r, b);
@@ -544,7 +620,12 @@ private:
     }
   }
 
-  /// @brief 設定行に対応する GameSettings の値と範囲
+  /// @brief 設定行に対応する GameSettings の値と範囲を取得する
+  /// @param row 設定画面の行番号（SettingRow）
+  /// @param minV 最小値の出力先
+  /// @param maxV 最大値の出力先
+  /// @param step 1 刻みの量の出力先
+  /// @return 対応する GameSettings の値へのポインタ。スライダーの行でなければ nullptr（範囲はすべて 0）
   static float *SliderTarget(int row, float &minV, float &maxV, float &step) {
     GameSettings &gs = GameSettings::Get();
     switch (row) {
@@ -576,6 +657,7 @@ private:
   static constexpr const char *kTriggerExit = "pause_exit";   ///< 遷移表のきっかけ名（タイトル／セレクトへ）
 
   /// @brief 遷移表に従って遷移を要求する
+  /// @param trigger 遷移表のきっかけ名（kTriggerRetry / kTriggerExit）
   void RequestChange(const char *trigger) {
     // ポーズは掛けたまま抜ける（フェード中に敵が動かないように）。
     // gamePaused は OnExit → OnDestroy で必ず下ろされる。
@@ -614,7 +696,9 @@ private:
   static constexpr float kSinkRetrySeconds = 1.5f;  ///< 遷移が通らないときに素の遷移へ倒すまで
   static constexpr int kSinkBubbles = 18;            ///< 沈むあいだに昇る泡の数
 
-  /// @brief 沈みきったら Dive 遷移を要求する（ポーズ中なので ctx.deltaTime の実時間で進める）
+  /// @brief 沈む幕の時間を進め、沈みきったら Dive 遷移を要求する
+  /// @param dt 実時間の経過（秒）。ポーズ中なので ctx.deltaTime を渡す
+  /// @note Dive 遷移が kSinkRetrySeconds 通らなければ素の遷移を試し、それも通らなければメニューへ戻す
   void UpdateSink(float dt) {
     sinkTime_ += dt;
     if (sinkTime_ < kSinkTime || sinkRequested_) return;
@@ -634,8 +718,9 @@ private:
     }
   }
 
-  /// @brief 深海色の幕と、下から昇って消えていく泡
+  /// @brief 深海色の幕と、下から昇って消えていく泡を描く
   void DrawSink() const {
+    // 幕の濃さ a は経過時間を smoothstep で 0〜1 にしたもの
     float screenW = 1280.0f, screenH = 720.0f;
     auto &rc = RC::GetRenderContext();
     if (rc.Ctx() && rc.Ctx()->app) {
@@ -657,6 +742,7 @@ private:
     const float bubbleA = 0.7f * (1.0f - a * a);
     if (bubbleA <= 0.01f) return;
     for (int i = 0; i < kSinkBubbles; ++i) {
+      // fract(sin(i * a) * b) 型の擬似乱数で、番号ごとに固定の横位置・大きさ・速さを作る
       const float h1 = std::fmod(std::sin(i * 12.9898f) * 43758.5453f, 1.0f);
       const float h2 = std::fmod(std::sin(i * 78.233f) * 12345.678f, 1.0f);
       const float fx = std::fabs(h1);
@@ -671,6 +757,8 @@ private:
     }
   }
 
+  /// @brief 選択中の行を変え、変わったときは明滅をやり直して枠を弾ませる
+  /// @param index 新しく選ぶ行番号
   void SetSelected(int index) {
     if (index == selected_) return;
     selected_ = index;
@@ -678,7 +766,10 @@ private:
     bump_ = 1.0f;
   }
 
-  /// @brief マウス座標（ゲーム解像度基準）がどの行の上か。無ければ -1
+  /// @brief マウス座標（ゲーム解像度基準）がどの行の上か調べる
+  /// @param mx マウスの X（実画面座標）
+  /// @param my マウスの Y（実画面座標）
+  /// @return 行番号。どの行の上でもなければ -1
   int HitTestRows(float mx, float my) const {
     for (int i = 0; i < RowCount(); ++i) {
       float l, t, r, b;
@@ -692,6 +783,14 @@ private:
   // 描画
   // ------------------------------------------------------------------
 
+  /// @brief 右下に 2px ずらした影付きで文字列を描く
+  /// @param font フォントハンドル（負なら何もしない）
+  /// @param text 描く文字列（空なら何もしない）
+  /// @param x 描画位置の X（実画面座標）
+  /// @param y 描画位置の Y（実画面座標。文字の上端）
+  /// @param color 文字色（影の濃さもこの不透明度に比例する）
+  /// @param align 横方向のそろえ
+  /// @param scale ロードしたサイズに対する倍率
   void Text(int font, const std::string &text, float x, float y, const RC::Vector4 &color,
             TextAlign align = TextAlign::Left, float scale = 1.0f) const {
     if (font < 0 || text.empty()) return;
@@ -700,11 +799,16 @@ private:
     RC::DrawString(font, text, {x + sh, y + sh}, {0.0f, 0.02f, 0.05f, 0.55f * color.w}, sc, align);
     RC::DrawString(font, text, {x, y}, color, sc, align);
   }
+  /// @brief フォントの 1 行の高さ（実画面座標）を求める
+  /// @param font フォントハンドル
+  /// @param scale ロードしたサイズに対する倍率
+  /// @return 行の高さ。フォントが無ければ kItemPx を基準にした概算値
   float LineH(int font, float scale = 1.0f) const {
     return (font >= 0) ? RC::GetFontLineHeight(font, scale * L_.fs) : S(kItemPx) * scale;
   }
 
-  /// @brief 墨のパネル（二重の細枠 ＋ 四隅の飾り。Result と同じ意匠）
+  /// @brief 墨のパネル（二重の細枠 ＋ 四隅の飾り。Result と同じ意匠）を描く
+  /// @param a 開くアニメーションの不透明度（0〜1）
   void DrawPanel(float a) const {
     const RC::Vector2 tl = {X(PanelL()), Y(PanelT())};
     const RC::Vector2 br = {X(PanelL() + PanelW()), Y(PanelT() + PanelH())};
@@ -714,6 +818,7 @@ private:
     RC::DrawBox({tl.x + in1, tl.y + in1}, {br.x - in1, br.y - in1}, WithAlpha(kInk, 0.55f * a), kWire);
     RC::DrawBox({tl.x + in2, tl.y + in2}, {br.x - in2, br.y - in2}, WithAlpha(kInk, 0.22f * a), kWire);
 
+    // 四隅に長さ arm の L 字をアクセント色で描く（左上・右上・左下・右下の順に 2 本ずつ）
     const float arm = S(22.0f);
     const float th = (std::max)(1.0f, S(2.0f));
     const RC::Vector4 c = WithAlpha(accentColor, 0.9f * a);
@@ -728,6 +833,10 @@ private:
     RC::DrawLine({br.x - o, br.y - o}, {br.x - o, br.y - o - arm}, c, th);
   }
 
+  /// @brief パネル上部に見出し・下線・欧文の副題を描く
+  /// @param title 見出しの文字列
+  /// @param sub 副題（欧文）の文字列
+  /// @param a 開くアニメーションの不透明度（0〜1）
   void DrawHeading(const char *title, const char *sub, float a) const {
     const float cx = X(kDesignW * 0.5f);
     const float top = Y(PanelT() + kPanelPadTop);
@@ -751,6 +860,7 @@ private:
       const float borderA = (0.55f + 0.45f * pulse) * a;
       RC::DrawBox(tl, br, WithAlpha(accentColor, 0.12f * a));
       RC::DrawBox(tl, br, WithAlpha(accentColor, borderA), kWire);
+      // 選び直した直後は外側にもう 1 本枠を出し、bump_ の減衰に合わせて縮める
       const float o = S(3.0f) * bump_;
       if (o > 0.0f) {
         RC::DrawBox({tl.x - o, tl.y - o}, {br.x + o, br.y + o}, WithAlpha(accentColor, 0.5f * borderA), kWire);
@@ -764,6 +874,8 @@ private:
     }
   }
 
+  /// @brief メインページ（パネル・見出し・各項目・操作説明）を描く
+  /// @param a 開くアニメーションの不透明度（0〜1）
   void DrawMain(float a) const {
     DrawPanel(a);
     DrawHeading("一時停止", "PAUSE", a);
@@ -780,6 +892,8 @@ private:
     DrawHint("↑↓ 選択　　Enter / Space 決定　　ESC 再開", a);
   }
 
+  /// @brief 設定ページ（各行の項目名・スライダー・ON/OFF・数値と操作説明）を描く
+  /// @param a 開くアニメーションの不透明度（0〜1）
   void DrawSettings(float a) const {
     DrawPanel(a);
     DrawHeading("設定", "SETTINGS", a);
@@ -845,6 +959,9 @@ private:
     DrawHint("↑↓ 選択　　←→ 変更　　ESC もどる", a);
   }
 
+  /// @brief パネルの下に操作説明を描く
+  /// @param text 表示する操作説明
+  /// @param a 開くアニメーションの不透明度（0〜1）
   void DrawHint(const char *text, float a) const {
     Text(labelFont_, text, X(kDesignW * 0.5f), Y(PanelT() + PanelH() + kHintGap),
          WithAlpha(kMuted, 0.8f * a), TextAlign::Center, 0.9f);

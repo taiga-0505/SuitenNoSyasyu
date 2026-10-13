@@ -6,17 +6,20 @@
 /// @brief サンプル用: 毎フレーム回転するスクリプト
 class TestRotatorScript : public ScriptableEntity {
 protected:
+    /// @brief アタッチされたことをコンソールへ出力する
     void OnCreate() override {
         std::cout << "[TestRotatorScript] OnCreate: アタッチされました！\n";
     }
 
+    /// @brief Y 軸まわりに毎秒約 1 ラジアン回転させる
+    /// @param deltaTime 前フレームからの経過時間（秒）
     void OnUpdate(float deltaTime) override {
         if (auto* tr = GetComponent<TransformComponent>()) {
-            // Y軸を中心に回転させる (1秒間に約1ラジアン)
             tr->rotation.y += 1.0f * deltaTime;
         }
     }
 
+    /// @brief 破棄されたことをコンソールへ出力する
     void OnDestroy() override {
         std::cout << "[TestRotatorScript] OnDestroy: 破棄されました！\n";
     }

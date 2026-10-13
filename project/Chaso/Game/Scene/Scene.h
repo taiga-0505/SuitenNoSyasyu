@@ -62,10 +62,12 @@ public:
   virtual void UpdateAudio(SceneContext &) {}
 
   /// @brief シーンに属するエンティティのリストを取得
+  /// @return エンティティ一覧（pendingEntities_ にある未マージ分は含まない）
   const std::vector<std::shared_ptr<Entity>>& GetEntities() const { return entities_; }
 
   /// @brief 新しいエンティティを生成してシーンに追加する
   /// @param name エンティティの名前
+  /// @return 生成したエンティティ
   /// @details UpdateEntities のループ中に呼び出しても安全。
   ///          エンティティは pendingEntities_ に追加され、FlushPendingEntities() で
   ///          entities_ にマージされる。
@@ -98,6 +100,8 @@ public:
   }
 
   /// @brief 破棄マークされたエンティティを実際に除去する
+  /// @details 除去するエンティティのランタイムリソースも ReleaseDynamicEntityRuntime で解放する。
+  ///          スクリプトの DestroyAllScripts は呼ばない点が RemoveDeadEntities と異なる。
   void CleanupDestroyedEntities() {
       broadphase_.MarkDirty();
       entities_.erase(
@@ -145,6 +149,7 @@ public:
   void RestoreEntitiesSnapshot(const nlohmann::json& snapshot) {
       if (!snapshot.is_array()) return;
 
+      // 既存エンティティを「スクリプト通知 → ランタイム解放」の順で後始末して空にする
       for (auto& e : entities_) {
           if (!e) continue;
           if (auto* nsc = e->GetComponent<NativeScriptComponent>()) {
@@ -158,6 +163,7 @@ public:
       pendingEntities_.clear();
       broadphase_.MarkDirty();
 
+      // スナップショットからエンティティを作り直し、全員そろってからランタイムを初期化する
       for (auto& ej : snapshot) {
           auto entity = std::make_shared<Entity>();
           entity->Deserialize(ej);
@@ -182,20 +188,24 @@ public:
   /// @param selectedEntityId 選択中のエンティティID（0なら描画しない）
   void DrawColliderGizmos(uint32_t selectedEntityId = 0);
 
-  /// @brief 選択中のエンティティIDを設定する
+  /// @brief 選択中のエンティティIDを設定・取得する
+  /// @param id 選択するエンティティID（0 は未選択）
+  /// @return 選択中のエンティティID
   void SetSelectedEntityId(uint32_t id) { selectedEntityId_ = id; }
-  /// @brief 選択中のエンティティIDを取得する
   uint32_t GetSelectedEntityId() const { return selectedEntityId_; }
 
-  /// @brief 全コライダーのデバッグ描画フラグを設定する
+  /// @brief 全コライダーのデバッグ描画フラグを設定・取得する
+  /// @param show true で全コライダーを描画する
+  /// @return 全コライダーを描画するなら true
   void SetShowColliderGizmos(bool show) { showColliderGizmos_ = show; }
-  /// @brief 全コライダーのデバッグ描画フラグを取得する
   bool GetShowColliderGizmos() const { return showColliderGizmos_; }
 
   /// @brief GameModeの取得
+  /// @return このシーンの GameMode（所有権は Scene が持つ）
   GameModeBase* GetGameMode() const { return gameMode_.get(); }
 
   /// @brief 現在のSceneContextを取得する
+  /// @return 現在フレームの SceneContext（未設定なら nullptr）
   SceneContext* GetContext() const { return currentContext_; }
 
   // ============================================================
@@ -229,6 +239,7 @@ public:
                                 float maxStep = 0.1f, float skin = 0.05f);
 
   /// @brief box と重なる可能性のある「有効なコライダーを持つエンティティ」を列挙する（BVH による粗い判定）
+  /// @tparam Callback void(Entity*) として呼べる関数オブジェクト
   /// @param box 調べる範囲（ワールド座標の AABB）
   /// @param cb void(Entity*)。重なる「可能性がある」物なので、正確な判定は呼び出し側で行うこと
   /// @details 全エンティティを走査して当たり判定する代わりに使う（弾の当たり判定など）。
@@ -278,7 +289,8 @@ protected:
   ///          同期は 1 体あたりコンポーネント検索 4 回＋箱の比較で、動いていない物は BVH を触らない。
   ColliderBroadphase broadphase_;
 
-  /// @brief Update all active entities
+  /// @brief アクティブな全エンティティを更新する
+  /// @param deltaTime 前フレームからの経過時間（秒）
   /// @details インデックスベースループを使用し、ループ中の entities_ push_back による
   ///          イテレータ無効化を回避する（新規エンティティは pendingEntities_ 経由で追加される）
   void UpdateEntities(float deltaTime) {
@@ -294,10 +306,10 @@ protected:
     FlushPendingEntities();
   }
 
-  /// @brief Resolve physics collisions among entities
+  /// @brief エンティティ同士の衝突を検出し、押し出しとコールバック通知を行う
   void ResolveCollisions();
 
-  /// @brief Remove entities marked for destruction
+  /// @brief 破棄マークされたエンティティ（および null）を除去し、後始末する
   void RemoveDeadEntities() {
     // 破棄予定のエンティティを先に別の入れ物へ退避して参照を残しておく。
     // entities_ から消しながら解放すると、スクリプトの OnDestroy から
@@ -334,8 +346,10 @@ protected:
     doomed.clear();
   }
 
-  /// @brief Destroy entity by name
-  /// @return true if found and marked
+  /// @brief 名前・IDで最初に一致したエンティティに破棄マークを付ける
+  /// @param name 破棄するエンティティの名前
+  /// @param id 破棄するエンティティのID
+  /// @return 見つかって破棄マークを付けたら true
   bool DestroyEntityByName(const std::string& name) {
     for (auto& e : entities_) {
       if (e && e->Name() == name) { e->Destroy(); return true; }
@@ -343,8 +357,6 @@ protected:
     return false;
   }
 
-  /// @brief Destroy entity by ID
-  /// @return true if found and marked
   bool DestroyEntityById(uint32_t id) {
     for (auto& e : entities_) {
       if (e && e->Id() == id) { e->Destroy(); return true; }
@@ -353,8 +365,9 @@ protected:
   }
 
 public:
-  /// @brief Find entity by name
-  /// @return Pointer to entity, or nullptr
+  /// @brief 名前でエンティティを検索する
+  /// @param name 検索するエンティティの名前
+  /// @return 最初に一致したエンティティ。見つからなければ nullptr
   /// @note スクリプト側（ScriptableEntity 派生）から名前でエンティティを引くために
   ///       public にしている。protected のままだと Scene の派生クラス以外から
   ///       呼べず、T-20 のルート分岐がタグ参照先を辿れない。
@@ -365,7 +378,11 @@ public:
     return nullptr;
   }
 
-  /// @brief Find entity by ID
+  /// @brief ID・GUID でエンティティを検索する
+  /// @param id 検索するエンティティのID（実行時ID）
+  /// @param guid 検索するエンティティの GUID（保存データ上の永続ID）
+  /// @return 一致したエンティティ。見つからなければ nullptr
+  /// @note pendingEntities_ にある未マージのエンティティは対象外
   std::shared_ptr<Entity> FindEntityById(uint32_t id) {
     for (auto& e : entities_) {
       if (e && e->Id() == id) return e;
@@ -373,7 +390,6 @@ public:
     return nullptr;
   }
 
-  /// @brief Find entity by GUID
   std::shared_ptr<Entity> FindEntityByGuid(uint64_t guid) {
     for (auto& e : entities_) {
       if (e && e->Guid() == guid) return e;
@@ -381,7 +397,9 @@ public:
     return nullptr;
   }
 
-  /// @brief Destroy an entity and all its children recursively
+  /// @brief エンティティとその子孫すべてに再帰的に破棄マークを付ける
+  /// @param entity 破棄するエンティティ（nullptr なら何もしない）
+  /// @note 子は ParentGuid が entity の GUID と一致するものを entities_ から探す
   void DestroyEntityRecursive(std::shared_ptr<Entity> entity) {
     if (!entity) return;
     entity->Destroy();

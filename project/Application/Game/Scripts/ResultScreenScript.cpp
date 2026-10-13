@@ -111,6 +111,8 @@ public:
   WaterCameraFx::DescendParams descend; ///< Ascend 遷移（ステージクリアで空へ抜けたとき）で入ってきたときの降下
   UnderwaterLook::Params look;
 
+  /// @brief 設定項目を JSON に書き出す
+  /// @return 文言・表示・色（SerializeBase）に、演出パラメータ dive / rise / descend / underwater を加えた JSON
   nlohmann::json Serialize() override {
     nlohmann::json j = SerializeBase();
     j["uiFadeTime"] = uiFadeTime;
@@ -121,6 +123,8 @@ public:
     return j;
   }
 
+  /// @brief 文言・フォント・表示切り替え・色の設定項目を JSON にする
+  /// @return 演出パラメータを除いた設定項目の JSON
   nlohmann::json SerializeBase() const {
     auto v4 = [](const RC::Vector4 &c) { return nlohmann::json{c.x, c.y, c.z, c.w}; };
     return {
@@ -144,7 +148,10 @@ public:
     };
   }
 
+  /// @brief JSON から設定項目を読み込む
+  /// @param j 読み込み元の JSON（存在し型が合うキーだけ反映する）
   void Deserialize(const nlohmann::json &j) override {
+    // キーが存在し型が一致する場合だけ上書きするヘルパー（数値 / 真偽値 / 文字列 / RGBA 配列）
     auto readF = [&](const char *key, float &out) {
       if (j.contains(key) && j[key].is_number()) out = j[key].get<float>();
     };
@@ -187,6 +194,7 @@ public:
   }
 
 protected:
+  /// @brief フォント・ボタン・泡を用意し、入ってきた遷移（Dive / Ascend）に応じて浮上・降下の演出を始める
   void OnCreate() override {
     // 前のシーン（Game）の障害物が水面の定数バッファに残っていると、
     // ここの水面にも岩の反射波が出てしまう。障害物は無いので空にする。
@@ -230,6 +238,7 @@ protected:
     buttonFont_ = load(fontPath, kButtonPx, 1024);
     labelFont_ = load(fontPath, kLabelPx, 1024);
 
+    // 演出の時刻・ボタン・選択を初期化する（animate が false なら最初から確定表示）
     anim_ = animate ? 0.0f : kAnimEnd;
     BuildChoices();
     selected_ = 0;
@@ -268,6 +277,8 @@ protected:
     }
   }
 
+  /// @brief 浮上・降下、UI のフェードイン、成績の演出を進め、決定後は退出処理、それ以外は入力を処理する
+  /// @param deltaTime 前フレームからの経過時間（秒）
   void OnUpdate(float deltaTime) override {
     if (deltaTime <= 0.0f) return; // 一時停止・編集中は演出も入力も止める
     pulse_ += deltaTime;
@@ -280,6 +291,7 @@ protected:
       uiAlpha_ = WaterCameraFx::Smooth01(uiFadeIn_ / (std::max)(uiFadeTime, 1e-3f));
       if (uiAlpha_ >= 1.0f) { uiAlpha_ = 1.0f; uiFadeIn_ = -1.0f; }
     }
+    // 演出の時刻を kAnimEnd まで進め、選択切替の弾みを減衰させる
     if (anim_ < kAnimEnd) anim_ = (std::min)(anim_ + deltaTime, kAnimEnd);
     if (bump_ > 0.0f) bump_ = (std::max)(0.0f, bump_ - deltaTime / kBumpTime);
 
@@ -292,6 +304,7 @@ protected:
     }
   }
 
+  /// @brief 演出中なら終わらせ、泡とフォントを解放する
   void OnDestroy() override {
     // 飛び込みの途中でエディタから停止された場合はカメラと画面を戻す
     if (dive_.IsActive()) dive_.End(/*restoreCamera=*/true);
@@ -311,6 +324,7 @@ protected:
     unload(labelFont_);
   }
 
+  /// @brief レイアウトを実解像度に合わせ、パネル・見出し・成績・ボタン・操作説明を描く
   void OnRender() override {
     if (uiAlpha_ <= 0.0f) return; // 飛び込みに入ったら UI は描かない
     float screenW = 1280.0f;
@@ -352,6 +366,8 @@ private:
     const char *what;       ///< 遷移表のきっかけ名（ログにも使う）
   };
   std::vector<Choice> choices_;
+  /// @brief 並べるボタンの数を返す
+  /// @return ボタンの数
   int ChoiceCount() const { return static_cast<int>(choices_.size()); }
 
   /// @brief どこから来たか・クリアしたかでボタンを組み立てる
@@ -392,7 +408,8 @@ private:
   static constexpr float kRowsTop = 250.0f;  ///< パネル上端から成績の行が始まるまで
   static constexpr float kRowH = 46.0f;      ///< 成績 1 行の高さ
   static constexpr float kButtonGap = 72.0f; ///< パネル下端からボタン中心までの距離
-  /// @brief パネル下端（行数で伸び縮みする）
+  /// @brief パネル下端（行数で伸び縮みする）を求める
+  /// @return パネル下端の Y（基準座標）
   float PanelBottom() const {
     // 撃破数 / 宝箱 / 被ダメージ ＋ 任意で得点
     const float rows = showScore ? 4.0f : 3.0f;
@@ -425,6 +442,7 @@ private:
   static constexpr RC::Vector4 kShu = {0.80f, 0.19f, 0.13f, 1.0f};     ///< 朱（被弾・未クリアの一言）
   static constexpr RC::Vector4 kGold = {0.88f, 0.74f, 0.38f, 1.0f};    ///< 金（終点到達の芯）
 
+  /// @brief 1280x720 基準座標を実画面座標へ変換するための倍率とオフセット
   struct Layout {
     float s = 1.0f;  ///< 基準 → 実ピクセルの倍率
     float ox = 0.0f; ///< 左右の余白（レターボックス）
@@ -433,26 +451,58 @@ private:
   };
   Layout L_;
 
+  /// @brief 基準座標の X / Y を実画面座標へ変換する
+  /// @param x 基準座標の X（Y は y）
+  /// @return 実画面座標
   float X(float x) const { return L_.ox + x * L_.s; }
   float Y(float y) const { return L_.oy + y * L_.s; }
+  /// @brief 基準座標系の長さを実画面の長さへ変換する
+  /// @param v 基準座標系での長さ
+  /// @return 実画面での長さ
   float S(float v) const { return v * L_.s; }
+  /// @brief 基準座標の点を実画面座標の点へ変換する
+  /// @param x 基準座標の X
+  /// @param y 基準座標の Y
+  /// @return 実画面座標の点
   RC::Vector2 P(float x, float y) const { return {X(x), Y(y)}; }
 
+  /// @brief 色の不透明度に係数を掛けた色を作る
+  /// @param c 元の色
+  /// @param a 不透明度に掛ける係数
+  /// @return 不透明度を変えた色
   static RC::Vector4 WithAlpha(const RC::Vector4 &c, float a) { return {c.x, c.y, c.z, c.w * a}; }
+  /// @brief 値を 0〜1 に丸める
+  /// @param v 元の値
+  /// @return 0〜1 に収めた値
   static float Clamp01(float v) { return (std::min)(1.0f, (std::max)(0.0f, v)); }
+  /// @brief 終わりに向かって減速する 3 次のイージング（1 - (1 - t)^3）
+  /// @param t 進行度（0〜1 に丸める）
+  /// @return 補間後の進行度（0〜1）
   static float EaseOutCubic(float t) {
     t = Clamp01(t);
     const float u = 1.0f - t;
     return 1.0f - u * u * u;
   }
-  /// @brief start から dur 秒かけて 0→1 になる進行度
+  /// @brief 演出の時刻 anim_ における、start から dur 秒かけて 0→1 になる進行度を求める
+  /// @param start 進み始める時刻（秒）
+  /// @param dur 0→1 にかける時間（秒。0 以下なら start を境に 0 / 1 を切り替える）
+  /// @return 進行度（0〜1）
   float Phase(float start, float dur) const {
     if (dur <= 0.0f) return anim_ >= start ? 1.0f : 0.0f;
     return Clamp01((anim_ - start) / dur);
   }
+  /// @brief ボタンの操作を受け付けてよいか調べる
+  /// @return ボタンが出始める時刻 kButtonStart を過ぎていれば true
   bool InputReady() const { return anim_ >= kButtonStart; }
 
   /// @brief 文字を 1px の影付きで描く（水面の上でも読めるように）
+  /// @param font フォントハンドル（負なら何もしない）
+  /// @param text 描く文字列（空なら何もしない）
+  /// @param x 描画位置の X（実画面座標）
+  /// @param y 描画位置の Y（実画面座標。文字の上端）
+  /// @param color 文字色（影の濃さもこの不透明度に比例する）
+  /// @param align 横方向のそろえ
+  /// @param scale ロードしたサイズに対する倍率
   void Text(int font, const std::string &text, float x, float y, const RC::Vector4 &color,
             TextAlign align = TextAlign::Left, float scale = 1.0f) const {
     if (font < 0 || text.empty()) return;
@@ -461,9 +511,18 @@ private:
     UiString(font, text, {x + sh, y + sh}, {0.0f, 0.02f, 0.05f, 0.55f * color.w}, sc, align);
     UiString(font, text, {x, y}, color, sc, align);
   }
+  /// @brief フォントの 1 行の高さ（実画面座標）を求める
+  /// @param font フォントハンドル
+  /// @param scale ロードしたサイズに対する倍率
+  /// @return 行の高さ。フォントが無ければ kLabelPx を基準にした概算値
   float LineH(int font, float scale = 1.0f) const {
     return (font >= 0) ? RC::GetFontLineHeight(font, scale * L_.fs) : S(kLabelPx) * scale;
   }
+  /// @brief 文字列の描画幅（実画面座標）を求める
+  /// @param font フォントハンドル
+  /// @param text 測る文字列
+  /// @param scale ロードしたサイズに対する倍率
+  /// @return 描画幅。フォントが無ければ 0
   float TextW(int font, const std::string &text, float scale = 1.0f) const {
     return (font >= 0) ? RC::MeasureString(font, text, scale * L_.fs).x : 0.0f;
   }
@@ -472,7 +531,7 @@ private:
   // 描画
   // ------------------------------------------------------------------
 
-  /// @brief 墨のパネル（二重の細枠 ＋ 四隅の飾り）
+  /// @brief 墨のパネル（二重の細枠 ＋ 四隅の飾り）を描く
   void DrawPanel() const {
     const RC::Vector2 tl = P(kPanelL, kPanelT);
     const RC::Vector2 br = P(kPanelR, PanelBottom());
@@ -498,7 +557,8 @@ private:
     UiLine({br.x - o, br.y - o}, {br.x - o, br.y - o - arm}, c, th);
   }
 
-  /// @brief 見出し（戦果）と欧文、クリア／未クリアの一言。パネルの上に置く
+  /// @brief 見出し（戦果）と欧文、クリア／未クリアの一言を描く。パネルの上に置く
+  /// @param session 今回のプレイ結果（クリアしたか）
   void DrawHeading(const GameSession &session) const {
     const float cx = X(kDesignW * 0.5f);
 
@@ -534,7 +594,8 @@ private:
     Text(labelFont_, line, cx, Y(kPanelT + 22.0f), col, TextAlign::Center, 1.05f);
   }
 
-  /// @brief ウェイポイント達成率：ラベル・大きな％・通過数・航路ゲージ
+  /// @brief ウェイポイント達成率（ラベル・大きな％・通過数・航路ゲージ）を、カウントアップしながら描く
+  /// @param session 今回のプレイ結果（通過数・総数・達成率）
   void DrawWaypointBlock(const GameSession &session) const {
     const float left = X(kPanelL + kPanelPad);
     const float right = X(kPanelR - kPanelPad);
@@ -581,6 +642,7 @@ private:
     const float thick = (std::max)(1.0f, S(4.0f));
     UiLine({gx0, gy}, {gx1, gy}, WithAlpha(kDim, 0.55f), thin);
 
+    // 塗る割合は通過数 / 総数（総数が無ければ達成率）に演出の進行度を掛けたもの
     const float fill = (total > 0) ? (static_cast<float>(reached) / static_cast<float>(total)) * t
                                    : rate * t;
     if (fill > 0.0f) {
@@ -618,7 +680,8 @@ private:
     }
   }
 
-  /// @brief 撃破数・宝箱・被ダメージ（・得点）の行
+  /// @brief 撃破数・宝箱・被ダメージ（・得点）の行を、1 行ずつ遅らせてフェードインしながら描く
+  /// @param session 今回のプレイ結果
   void DrawStatRows(const GameSession &session) const {
     const float left = X(kPanelL + kPanelPad);
     const float right = X(kPanelR - kPanelPad);
@@ -626,10 +689,12 @@ private:
     float rowY = Y(kPanelT + kRowsTop);
     int rowIndex = 0;
 
+    // index 行目の不透明度（kRowStart から kRowStep ずつ遅れて kRowFade 秒でフェードイン）
     auto rowAlpha = [&](int index) {
       return EaseOutCubic(Phase(kRowStart + kRowStep * static_cast<float>(index), kRowFade));
     };
 
+    // 行の下の薄い罫線
     auto drawRule = [&](float y, float a) {
       UiLine({left, y}, {right, y}, WithAlpha(kInk, 0.18f * a), (std::max)(1.0f, S(1.0f)));
     };
@@ -690,6 +755,7 @@ private:
 
       // HP のコマ：残った分は浅葱、削られた分は朱。maxHp が分からなければ出さない
       if (maxHp > 0 && maxHp <= 40) {
+        // コマの列は数値の左に 20px 空けて右詰めで並べる
         const float pipW = S(12.0f), pipH = S(16.0f), gap = S(4.0f);
         const int lost = (std::min)(damage, maxHp);
         float px = valueLeft - S(20.0f) - (pipW + gap) * static_cast<float>(maxHp) + gap;
@@ -723,8 +789,14 @@ private:
     }
   }
 
-  /// @brief ボタンの矩形（基準座標）
+  /// @brief ボタンの矩形（基準座標）を求める
+  /// @param index ボタンの番号（0 始まり、左から）
+  /// @param l 左端の出力先
+  /// @param t 上端の出力先
+  /// @param r 右端の出力先
+  /// @param b 下端の出力先
   void ButtonRect(int index, float &l, float &t, float &r, float &b) const {
+    // ボタンが 3 つ以上なら幅と間隔を詰め、全体を画面の横中央にそろえる
     const int n = (std::max)(1, ChoiceCount());
     const float w = (n >= 3) ? 220.0f : 240.0f, h = 54.0f, gap = (n >= 3) ? 34.0f : 56.0f;
     const float span = w * n + gap * (n - 1);
@@ -736,11 +808,12 @@ private:
     b = cy + h * 0.5f;
   }
 
-  /// @brief 「もう一度」「タイトルへ」
+  /// @brief 下段のボタン（次のステージへ / もう一度 / セレクトへ / タイトルへ のうち BuildChoices で並べたもの）を描く
   void DrawButtons() const {
     const float a = EaseOutCubic(Phase(kButtonStart, kButtonFade));
     if (a <= 0.0f) return;
 
+    // pulse は kPulsePeriod 秒周期で 0〜1 を往復する明滅量
     const float pulse = 0.5f + 0.5f * std::sin(pulse_ * (6.28318530718f / kPulsePeriod));
     for (int i = 0; i < ChoiceCount(); ++i) {
       float l, t, r, b;
@@ -759,6 +832,7 @@ private:
       const RC::Vector2 tl = P(l, t);
       const RC::Vector2 br = P(r, b);
 
+      // 選択中は藍の塗り・明滅する枠・外側の浅葱の枠・左の三角マーカー、非選択は墨の塗りと鼠の枠
       if (sel) {
         UiBox(tl, br, WithAlpha(selectedColor, a));
         const float borderA = (0.6f + 0.4f * pulse) * a;
@@ -783,7 +857,7 @@ private:
     }
   }
 
-  /// @brief 操作ヒント（画面下）
+  /// @brief 画面下の操作ヒントと、新しく解放された面の知らせを描く
   void DrawHint() const {
     const float a = EaseOutCubic(Phase(kButtonStart, kButtonFade));
     if (a <= 0.0f) return;
@@ -800,12 +874,15 @@ private:
          WithAlpha(kMuted, 0.8f * a), TextAlign::Center, 0.85f);
   }
 
+  /// @brief パネル色を不透明にした色を返す（丸やコマの中を「抜いた」ように見せるのに使う）
+  /// @return 不透明度 1 のパネル色
   RC::Vector4 panelColorOpaque() const { return {panelColor.x, panelColor.y, panelColor.z, 1.0f}; }
 
   // ------------------------------------------------------------------
   // 入力
   // ------------------------------------------------------------------
 
+  /// @brief キーボード・ゲームパッド・マウスの入力から、演出のスキップ・ボタンの選択・決定を処理する
   void HandleInput() {
     SceneContext *ctx = GetSceneContext();
     if (!ctx || !ctx->input) return;
@@ -842,6 +919,7 @@ private:
           in->IsXInputButtonTrigger(XINPUT_GAMEPAD_DPAD_DOWN)) {
         move += 1;
       }
+      // スティックは倒した瞬間だけ 1 つ動かす（倒しっぱなしで連続移動しないよう前フレームと比べる）
       const SHORT lx = in->GetXInputThumbLX();
       int stickDir = 0;
       if (lx > kStickThreshold) stickDir = 1;
@@ -866,10 +944,12 @@ private:
       confirm = true;
     }
 
+    // 選択の移動は端で反対側へ回り込む
     if (move != 0 && ChoiceCount() > 0) {
       SetSelected((selected_ + move + ChoiceCount()) % ChoiceCount());
     }
 
+    // 決定: 選んだボタンの行き先へ（演出が dive なら飛び込みを挟む）
     if (!confirm || choices_.empty()) return;
     const Choice &choice = choices_[static_cast<size_t>(std::clamp(selected_, 0, ChoiceCount() - 1))];
     const std::string &target = choice.target;
@@ -899,6 +979,9 @@ private:
 
   static constexpr float kLeaveRetrySeconds = 1.0f; ///< 遷移要求が通らないとき諦めるまでの秒数
 
+  /// @brief 決定後の退出処理（UI フェード → 飛び込み → dive 遷移の要求）を進める
+  /// @param dt 前フレームからの経過時間（秒）
+  /// @note 飛び込みを始められないときは素の遷移で送り、遷移も通らなければボタン操作へ戻す
   void UpdateLeave(float dt) {
     leaveTime_ += dt;
 
@@ -943,8 +1026,12 @@ private:
     uiAlpha_ = 1.0f;
   }
 
-  // UI 描画のラッパー（決定後のフェードで全体の不透明度を下げる）
+  /// @brief 色の不透明度に UI 全体のフェード量（uiAlpha_）を掛ける
+  /// @param c 元の色
+  /// @return フェードを反映した色
   RC::Vector4 Ui(const RC::Vector4 &c) const { return {c.x, c.y, c.z, c.w * uiAlpha_}; }
+  /// @brief UI のフェードを反映して RC::DrawString / DrawBox / DrawLine / DrawCircle / DrawTriangle を呼ぶラッパー群
+  /// @note 引数は各 RC::Draw* と同じ（color だけ Ui() で不透明度を下げてから渡す）
   void UiString(int font, const std::string &text, const RC::Vector2 &pos, const RC::Vector4 &color,
                 float scale = 1.0f, TextAlign align = TextAlign::Left) const {
     RC::DrawString(font, text, pos, Ui(color), scale, align);
@@ -966,6 +1053,8 @@ private:
     RC::DrawTriangle(a, b, c, Ui(color), mode, feather);
   }
 
+  /// @brief 選択中のボタンを変え、変わったときは明滅をやり直して弾ませる
+  /// @param index 新しく選ぶボタンの番号
   void SetSelected(int index) {
     if (index == selected_) return;
     selected_ = index;
@@ -973,7 +1062,10 @@ private:
     bump_ = 1.0f;
   }
 
-  /// @brief マウス座標（ゲーム解像度基準）がどのボタンの上か。無ければ -1
+  /// @brief マウス座標（ゲーム解像度基準）がどのボタンの上か調べる
+  /// @param mx マウスの X（実画面座標）
+  /// @param my マウスの Y（実画面座標）
+  /// @return ボタンの番号。どのボタンの上でもなければ -1
   int HitTestButtons(float mx, float my) const {
     for (int i = 0; i < ChoiceCount(); ++i) {
       float l, t, r, b;

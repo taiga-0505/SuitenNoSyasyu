@@ -8,7 +8,7 @@
 ///          見せ終わったら kEnabled を false に戻すだけで元の挙動になる
 ///          （遷移表の "demo_end" の行は残っていても使われない）。
 namespace TransitionDemo {
-inline constexpr bool kEnabled = true;
+inline constexpr bool kEnabled = true; ///< デモを有効にするか（見せ終わったら false に戻す）
 inline constexpr float kDelayAfterStart = 3.0f; ///< 開始演出が終わってから沈み始めるまで（秒）
 inline constexpr const char *kTrigger = "demo_end"; ///< 遷移表のきっかけ名
 } // namespace TransitionDemo

@@ -17,8 +17,11 @@
 struct ExposureFlash {
   static constexpr float kAttack = 0.06f; ///< ピークまでの時間（秒）
 
+  /// @brief 露出フラッシュを開始する（kAttack 秒でピークへ上げ、残り時間で 0 へ戻す）
+  /// @param pp       対象の PostProcess（nullptr なら何もしない）
   /// @param ev       ピークの露出（EV。負で暗く、正で明るく。0 なら何もしない）
   /// @param duration 全体の長さ（秒）
+  /// @note duration が kAttack 以下のとき、または Dissolve が掛かっているときは何もしない。
   void Trigger(PostProcess *pp, float ev, float duration) {
     if (!pp || ev == 0.0f || duration <= kAttack) return;
     if (pp->HasEffect(PostEffectType::Dissolve)) return;
@@ -35,6 +38,9 @@ struct ExposureFlash {
   /// @details 白く飛んだ画面から開ける「空からの降下」用。シーンの OnCreate（切り替え直後、
   ///          Dissolve の幕が掛かっている間）に呼ぶ前提なので、Dissolve があっても積む。
   ///          SceneManager は OnCreate の後で Dissolve を末尾へ積み直すので、幕は必ず最後に掛かる。
+  /// @param pp       対象の PostProcess（nullptr なら何もしない）
+  /// @param ev       開始時（ピーク）の露出（EV。0 なら何もしない）
+  /// @param duration 全体の長さ（秒。kAttack 以下なら何もしない）
   void TriggerFromPeak(PostProcess *pp, float ev, float duration) {
     if (!pp || ev == 0.0f || duration <= kAttack) return;
     EnsureGrade(pp);
@@ -48,6 +54,9 @@ struct ExposureFlash {
 
   /// @brief 露出を ev で保持する（呼び出し側が毎フレーム値を決める。白へ飛ばしていく演出用）
   /// @details Update では減衰させない。止めるときは Clear。
+  /// @param pp 対象の PostProcess（nullptr なら何もしない）
+  /// @param ev 保持する露出オフセット（EV）
+  /// @note 未開始の状態で Dissolve が掛かっている場合は開始しない。
   void Hold(PostProcess *pp, float ev) {
     if (!pp) return;
     if (!active_) {
@@ -60,6 +69,10 @@ struct ExposureFlash {
     pp->SetGradeExposureOffset(ev);
   }
 
+  /// @brief 経過時間を進め、露出オフセットをカーブに沿って更新する（毎フレーム呼ぶ）
+  /// @param pp 対象の PostProcess（nullptr なら何もしない）
+  /// @param dt 経過時間（秒）
+  /// @note Hold 中は何もしない。duration を過ぎたら Clear して終了する。
   void Update(PostProcess *pp, float dt) {
     if (!active_ || !pp || holding_) return;
     timer_ += dt;
@@ -67,6 +80,8 @@ struct ExposureFlash {
       Clear(pp);
       return;
     }
+    // 立ち上がりは smoothstep で 0→1、減衰は (1-u)^2 で 1→0。
+    // 減衰を 2 次にすることで、ピーク直後に素早く戻り、終わり際はなだらかに消える。
     float k;
     if (timer_ < kAttack) {
       const float u = timer_ / kAttack;
@@ -79,6 +94,7 @@ struct ExposureFlash {
   }
 
   /// @brief 途中で止める（オフセットを 0 に戻し、自分で積んだ ColorGrade は外す）
+  /// @param pp 対象の PostProcess（nullptr でも内部状態はリセットする）
   void Clear(PostProcess *pp) {
     if (pp && active_) {
       pp->SetGradeExposureOffset(0.0f);
@@ -87,10 +103,13 @@ struct ExposureFlash {
     *this = ExposureFlash{};
   }
 
+  /// @brief フラッシュ中（または Hold 中）かどうか
+  /// @return 動作中なら true
   bool Active() const { return active_; }
 
 private:
   /// @brief ColorGrade が無ければ積む（前のシーン＝Title の色味が残っているので素通しへ戻す）
+  /// @param pp 対象の PostProcess（nullptr 不可）
   void EnsureGrade(PostProcess *pp) {
     if (pp->HasEffect(PostEffectType::ColorGrade)) return;
     pp->AddEffect(PostEffectType::ColorGrade);
@@ -115,7 +134,7 @@ private:
 /// @brief 出入水フラッシュの既定値（WaterCameraFx と RailShooterController で揃える）
 namespace ExposureFlashDefaults {
 inline constexpr float kDiveEv = -1.2f;      ///< 着水：一瞬暗く沈む
-inline constexpr float kDiveDuration = 0.35f;
+inline constexpr float kDiveDuration = 0.35f; ///< 着水フラッシュの長さ（秒）
 inline constexpr float kEmergeEv = 1.6f;     ///< 浮上：一瞬白く飛ぶ
-inline constexpr float kEmergeDuration = 0.5f;
+inline constexpr float kEmergeDuration = 0.5f; ///< 浮上フラッシュの長さ（秒）
 } // namespace ExposureFlashDefaults

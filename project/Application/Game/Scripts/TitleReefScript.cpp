@@ -88,7 +88,10 @@ public:
   RC::Vector4 rockColor = {0.42f, 0.40f, 0.36f, 1.0f};
   float hideBelowY = -2.0f;
 
+  /// @brief 設定項目を JSON に書き出す
+  /// @return 設定項目を格納した JSON（色・リストは数値配列で表す）
   nlohmann::json Serialize() override {
+    // Vector4 を [x, y, z, w] 配列に、その配列のリストを二重配列に変換するヘルパー
     auto v4 = [](const RC::Vector4 &c) { return nlohmann::json{c.x, c.y, c.z, c.w}; };
     auto list = [&](const std::vector<RC::Vector4> &src) {
       nlohmann::json a = nlohmann::json::array();
@@ -112,7 +115,11 @@ public:
     };
   }
 
+  /// @brief JSON から設定項目を読み込む
+  /// @param j 読み込み元の JSON（存在し型が合うキーだけ反映する）
   void Deserialize(const nlohmann::json &j) override {
+    // キーが存在し型が一致する場合だけ上書きするヘルパー。
+    // 色・座標は [x, y, z] または [x, y, z, w] を受け付け、w 省略時は 1 とする
     auto readF = [&](const char *key, float &out) {
       if (j.contains(key) && j[key].is_number()) out = j[key].get<float>();
     };
@@ -144,6 +151,7 @@ public:
     readList("clusters", clusters);
     readF("scaleMin", scaleMin);
     readF("scaleMax", scaleMax);
+    // 最小・最大が逆に指定されていても乱数の範囲が壊れないよう入れ替える
     if (scaleMax < scaleMin) std::swap(scaleMin, scaleMax);
     readF("maxTopY", maxTopY);
     readList("palette", palette);
@@ -152,6 +160,7 @@ public:
   }
 
 #if RC_ENABLE_IMGUI
+  /// @brief インスペクタに部品数・表示状態と各パラメータの編集 UI、再生成ボタンを表示する
   void OnImGui() override {
     ImGui::Text("Parts: %d  Visible: %s", static_cast<int>(parts_.size()), shown_ ? "yes" : "no");
     ImGui::Checkbox("Enabled", &enabled);
@@ -171,10 +180,13 @@ public:
 #endif
 
 protected:
+  /// @brief 有効なら砂地とサンゴ礁を一度だけ生成する
   void OnCreate() override {
     if (enabled) Build();
   }
 
+  /// @brief カメラの高さに応じて水底の部品全体の表示・非表示を切り替える
+  /// @param deltaTime 前フレームからの経過時間（秒）。このクラスでは使わない
   void OnUpdate(float /*deltaTime*/) override {
     if (parts_.empty()) return;
     // カメラが水底の近くまで潜ったら隠す（飛び込み・浮上でサンゴや砂地を突き抜けないように）
@@ -182,9 +194,11 @@ protected:
     if (show != shown_) SetShown(show);
   }
 
+  /// @brief 生成した部品エンティティをすべて破棄する
   void OnDestroy() override { Clear(); }
 
 private:
+  /// @brief 生成した部品 1 つ分のエンティティへの弱参照を保持する
   struct Part {
     std::weak_ptr<Entity> entity;
   };
@@ -196,9 +210,12 @@ private:
   // 生成
   // ------------------------------------------------------------------
 
+  /// @brief 砂地・砂の盛り上がり・サンゴ群生地をまとめて生成する
+  /// @note seed で乱数を初期化するので、同じ設定なら毎回同じ並びになる
   void Build() {
     Scene *scene = GetScene();
     if (!scene) return;
+    // 部品をまとめるフォルダを作り、乱数を seed で初期化する
     auto folder = scene->CreateEntity("TitleReef");
     if (folder) {
       folder->SetIsFolder(true);
@@ -232,6 +249,7 @@ private:
         const float baseY = GroundY(x, z);
         const float s = Rand(scaleMin, scaleMax);
         const std::string tag = "Reef_" + std::to_string(c) + "_" + std::to_string(i);
+        // 種類を確率で選ぶ（枝 30% / 脳 22% / テーブル 16% / チューブ 16% / 岩 16%）
         const float pick = Rand(0.0f, 1.0f);
         if (pick < 0.30f) BuildBranch(scene, tag, x, baseY, z, s);
         else if (pick < 0.52f) BuildBrain(scene, tag, x, baseY, z, s);
@@ -241,12 +259,19 @@ private:
       }
     }
 
+    // 生成直後のカメラ位置に合わせて表示状態を決める
     shown_ = true;
     SetShown(!CameraBelow(hideBelowY));
     Log::Print("[TitleReefScript] built " + std::to_string(parts_.size()) + " parts");
   }
 
-  /// @brief 枝サンゴ：根元から外へ開く円錐の束
+  /// @brief 枝サンゴ：根元から外へ開く円錐の束を生成する
+  /// @param scene 生成先のシーン
+  /// @param tag 部品エンティティ名の接頭辞
+  /// @param x 根元のワールド X 座標
+  /// @param y 根元のワールド Y 座標（地面の高さ）
+  /// @param z 根元のワールド Z 座標
+  /// @param s 大きさの倍率
   void BuildBranch(Scene *scene, const std::string &tag, float x, float y, float z, float s) {
     const RC::Vector4 col = PickColor();
     const int n = 4 + static_cast<int>(Rand(0.0f, 3.0f));
@@ -260,15 +285,28 @@ private:
     }
   }
 
-  /// @brief 脳サンゴ：潰した球
+  /// @brief 脳サンゴ：潰した球を生成する
+  /// @param scene 生成先のシーン
+  /// @param tag 部品エンティティ名の接頭辞
+  /// @param x 根元のワールド X 座標
+  /// @param y 根元のワールド Y 座標（地面の高さ）
+  /// @param z 根元のワールド Z 座標
+  /// @param s 大きさの倍率
   void BuildBrain(Scene *scene, const std::string &tag, float x, float y, float z, float s) {
     const float r = Rand(0.8f, 1.4f) * s;
+    // 高さは maxTopY を超えないよう抑える（最低 0.2m は残す）
     const float h = (std::min)(r * Rand(0.55f, 0.75f), (std::max)(maxTopY - y, 0.2f));
     AddPart(scene, tag + "_brain", PrimitiveType::Sphere, PickColor(), {x, y, z}, {0.0f, Rand(0.0f, kTwoPi), 0.0f},
             {r, h, r * Rand(0.8f, 1.0f)}, 16.0f);
   }
 
-  /// @brief テーブルサンゴ：細い柱＋平たい円盤
+  /// @brief テーブルサンゴ：細い柱＋平たい円盤を生成する
+  /// @param scene 生成先のシーン
+  /// @param tag 部品エンティティ名の接頭辞
+  /// @param x 根元のワールド X 座標
+  /// @param y 根元のワールド Y 座標（地面の高さ）
+  /// @param z 根元のワールド Z 座標
+  /// @param s 大きさの倍率
   void BuildTable(Scene *scene, const std::string &tag, float x, float y, float z, float s) {
     const RC::Vector4 col = PickColor();
     const float stem = ClampLen(y, Rand(0.6f, 1.1f) * s);
@@ -279,7 +317,13 @@ private:
             {Rand(-0.08f, 0.08f), Rand(0.0f, kTwoPi), Rand(-0.08f, 0.08f)}, {r, 0.16f * s, r * Rand(0.75f, 1.0f)}, 8.0f);
   }
 
-  /// @brief チューブ（カイメン）：立った円柱の束
+  /// @brief チューブ（カイメン）：立った円柱の束を生成する
+  /// @param scene 生成先のシーン
+  /// @param tag 部品エンティティ名の接頭辞
+  /// @param x 根元のワールド X 座標
+  /// @param y 根元のワールド Y 座標（地面の高さ）
+  /// @param z 根元のワールド Z 座標
+  /// @param s 大きさの倍率
   void BuildTube(Scene *scene, const std::string &tag, float x, float y, float z, float s) {
     const RC::Vector4 col = PickColor();
     const int n = 3 + static_cast<int>(Rand(0.0f, 3.0f));
@@ -293,7 +337,13 @@ private:
     }
   }
 
-  /// @brief 岩：暗い色の潰した球か箱
+  /// @brief 岩：暗い色の潰した球か箱（40%）を生成する
+  /// @param scene 生成先のシーン
+  /// @param tag 部品エンティティ名の接頭辞
+  /// @param x 根元のワールド X 座標
+  /// @param y 根元のワールド Y 座標（地面の高さ）
+  /// @param z 根元のワールド Z 座標
+  /// @param s 大きさの倍率
   void BuildRock(Scene *scene, const std::string &tag, float x, float y, float z, float s) {
     const bool box = Rand(0.0f, 1.0f) < 0.4f;
     const float r = Rand(0.7f, 1.5f) * s;
@@ -303,7 +353,15 @@ private:
   }
 
   /// @brief Y 軸の部品（Cone / Cylinder。どちらも高さ 1・半径 1・中心が原点）を根元から傾けて置く
-  /// @param dir  水平面上の傾ける向き（rad） / tilt 傾き（rad）
+  /// @param scene 生成先のシーン
+  /// @param name エンティティ名
+  /// @param type プリミティブの種類（Cone / Cylinder を想定）
+  /// @param color 色 RGBA
+  /// @param base 根元のワールド座標
+  /// @param dir 水平面上の傾ける向き（rad）
+  /// @param tilt 鉛直からの傾き（rad）
+  /// @param len 部品の長さ（Y 方向スケール）
+  /// @param radius 部品の半径（X/Z 方向スケール）
   void AddTilted(Scene *scene, const std::string &name, PrimitiveType type, const RC::Vector4 &color,
                  const RC::Vector3 &base, float dir, float tilt, float len, float radius) {
     // 軸 = (-cos a·sin b, cos a·cos b, sin a)。水平成分が (cos dir, sin dir) を向くよう a, b を決める
@@ -312,14 +370,25 @@ private:
     const float a = std::asin(std::clamp(hz, -1.0f, 1.0f));
     const float ca = (std::max)(std::cos(a), 1e-3f);
     const float b = std::asin(std::clamp(-hx / ca, -1.0f, 1.0f));
+    // 部品の中心が原点なので、根元から軸方向へ長さの半分ずらした位置を中心にする
     const RC::Vector3 axis = {-ca * std::sin(b), ca * std::cos(b), std::sin(a)};
     const RC::Vector3 center = {base.x + axis.x * len * 0.5f, base.y + axis.y * len * 0.5f,
                                 base.z + axis.z * len * 0.5f};
     AddPart(scene, name, type, color, center, {a, 0.0f, b}, {radius, len, radius}, 12.0f);
   }
 
+  /// @brief プリミティブの部品エンティティを 1 つ生成し、フォルダ配下に登録する
+  /// @param scene 生成先のシーン
+  /// @param name エンティティ名
+  /// @param type プリミティブの種類
+  /// @param color 色 RGBA
+  /// @param pos ワールド座標
+  /// @param rot ワールド回転（オイラー角, rad）
+  /// @param scale スケール
+  /// @param shininess 鏡面反射の鋭さ
   void AddPart(Scene *scene, const std::string &name, PrimitiveType type, const RC::Vector4 &color,
                const RC::Vector3 &pos, const RC::Vector3 &rot, const RC::Vector3 &scale, float shininess) {
+    // エンティティを作り、Transform と PrimitiveMesh を設定する
     auto e = scene->CreateEntity(name);
     if (!e) return;
     if (auto f = folder_.lock()) e->SetParentGuid(f->Guid());
@@ -341,6 +410,7 @@ private:
     parts_.push_back({e});
   }
 
+  /// @brief 生成した部品とフォルダのエンティティをすべて破棄する
   void Clear() {
     for (auto &p : parts_) {
       if (auto e = p.entity.lock()) e->Destroy();
@@ -350,6 +420,8 @@ private:
     folder_.reset();
   }
 
+  /// @brief 全部品のアクティブ状態をまとめて切り替える
+  /// @param show true で表示、false で非表示
   void SetShown(bool show) {
     shown_ = show;
     for (auto &p : parts_) {
@@ -361,7 +433,9 @@ private:
   // 補助
   // ------------------------------------------------------------------
 
-  /// @brief メインカメラが指定の高さより下にいるか
+  /// @brief メインカメラが指定の高さより下にいるかを調べる
+  /// @param y 判定に使う高さ（ワールド Y）
+  /// @return アクティブなメインカメラの Y 座標が y 未満なら true。カメラが無ければ false
   bool CameraBelow(float y) const {
     Scene *scene = GetScene();
     if (!scene) return false;
@@ -374,9 +448,13 @@ private:
     return false;
   }
 
-  /// @brief 砂の盛り上がりを考えた地面の高さ（潰した球の上面）
+  /// @brief 砂の盛り上がりを考えた地面の高さ（潰した球の上面）を求める
+  /// @param x ワールド X 座標
+  /// @param z ワールド Z 座標
+  /// @return その地点の地面の Y 座標
   float GroundY(float x, float z) const {
     float y = floorY;
+    // 楕円体の上面 h·sqrt(1 - d²) を盛り上がりごとに求め、最も高いものを採る
     for (const auto &m : mounds) {
       const float dx = x - m.x, dz = z - m.y;
       const float r = (std::max)(m.z, 0.01f);
@@ -387,18 +465,31 @@ private:
   }
 
   /// @brief 先端が maxTopY を超えないよう長さを抑える
+  /// @param baseY 根元の Y 座標
+  /// @param len 希望する長さ
+  /// @return 抑えた後の長さ（最低 0.2）
   float ClampLen(float baseY, float len) const { return (std::max)((std::min)(len, maxTopY - baseY), 0.2f); }
 
+  /// @brief パレットからサンゴの色をランダムに 1 つ選ぶ
+  /// @return 選んだ色。パレットが空なら薄いピンク
   RC::Vector4 PickColor() {
     if (palette.empty()) return {1.0f, 0.6f, 0.6f, 1.0f};
     const size_t i = static_cast<size_t>(Rand(0.0f, static_cast<float>(palette.size())));
     return palette[(std::min)(i, palette.size() - 1)];
   }
 
+  /// @brief 色の明るさを係数倍する
+  /// @param c 元の色 RGBA
+  /// @param k RGB に掛ける係数
+  /// @return RGB を k 倍して 1 で頭打ちにした色（アルファはそのまま）
   static RC::Vector4 Shade(const RC::Vector4 &c, float k) {
     return {(std::min)(c.x * k, 1.0f), (std::min)(c.y * k, 1.0f), (std::min)(c.z * k, 1.0f), c.w};
   }
 
+  /// @brief seed 付き乱数で一様分布の実数を返す
+  /// @param lo 下限
+  /// @param hi 上限
+  /// @return [lo, hi) の乱数
   float Rand(float lo, float hi) {
     std::uniform_real_distribution<float> d(lo, hi);
     return d(rng_);

@@ -67,10 +67,14 @@ public:
   // 外部から参照する状態
   // -------------------------------------------------------------------
   /// @brief 進行中のウェーブ id（0 なら非戦闘中）
+  /// @return 進行中のウェーブ id。非戦闘中は 0
   int ActiveWaveId() const { return activeWaveId_; }
   /// @brief 累計クリア数
+  /// @return これまでにクリアしたウェーブの累計数
   int ClearedCount() const { return wavesCleared_; }
 
+  /// @brief 演出と表示の設定を JSON に書き出す
+  /// @return 設定項目を格納した JSON
   nlohmann::json Serialize() override {
     return {
         {"introDuration", introDuration},
@@ -83,6 +87,8 @@ public:
     };
   }
 
+  /// @brief JSON から演出と表示の設定を読み込む
+  /// @param j 読み込み元の JSON（存在するキーだけ反映する）
   void Deserialize(const nlohmann::json &j) override {
     if (j.contains("introDuration")) introDuration = j["introDuration"].get<float>();
     if (j.contains("clearDuration")) clearDuration = j["clearDuration"].get<float>();
@@ -103,6 +109,7 @@ protected:
     Cleared,  ///< クリア表示中。終わったらレールを再開させる
   };
 
+  /// @brief 前回プレイの残りタグを消して状態を初期化し、解像度に合わせて HUD 用のフォントを読み込む
   void OnCreate() override {
     // ランタイム専用タグの消し込み。
     // タグは Entity::Serialize で JSON に往復するため、プレイ中に保存されたシーンでは
@@ -132,6 +139,7 @@ protected:
     fontScale_ = (std::min)(w / kDesignW, h / kDesignH);
     if (fontScale_ <= 0.0f) fontScale_ = 1.0f;
 
+    // 基準解像度でのサイズ（px）にスケールを掛けてフォントを読み込むヘルパー
     auto load = [&](float designPx) {
       const int handle = RC::LoadFont(fontPath, std::round(designPx * fontScale_), 1024);
       if (handle < 0) Log::Print("[WaveManagerScript] failed to load font: " + fontPath);
@@ -142,6 +150,7 @@ protected:
     labelFont_ = load(kLabelPx);
   }
 
+  /// @brief 読み込んだフォントを解放する
   void OnDestroy() override {
     auto unload = [](int &handle) {
       if (handle >= 0) { RC::UnloadFont(handle); handle = -1; }
@@ -151,6 +160,8 @@ protected:
     unload(labelFont_);
   }
 
+  /// @brief 強制クリアの処理と、状態ごとの進行（開始要求の受理・湧き終わり待ち・全滅判定・クリア後のレール再開）を行う
+  /// @param deltaTime 前フレームからの経過時間（秒）
   void OnUpdate(float deltaTime) override {
     Entity *self = GetEntity();
     if (!self) return;
@@ -169,6 +180,7 @@ protected:
 
     switch (state_) {
     case State::Idle: {
+      // レールからの開始要求を受理する（受理したら要求タグは 0 へ戻す）
       const int requested = self->GetTagInt("wave_request", 0);
       if (requested != 0) {
         self->SetTag("wave_request", 0);
@@ -204,6 +216,7 @@ protected:
     }
 
     case State::Fighting: {
+      // 生存数を数え直して HUD 用の残り数・最大数を更新し、0 になったらクリアへ
       const int alive = CountAliveEnemies(activeWaveId_);
       remainingEnemies_ = alive;
       if (alive > peakEnemies_) peakEnemies_ = alive;
@@ -236,6 +249,7 @@ protected:
     if (!showHud) return;
     if (state_ == State::Idle) return;
 
+    // 1280x720 基準のレイアウトを実解像度へ合わせる倍率と、レターボックスのオフセットを求める
     float screenW = kDesignW, screenH = kDesignH;
     auto &rc = RC::GetRenderContext();
     if (rc.Ctx() && rc.Ctx()->app) {
@@ -257,6 +271,7 @@ protected:
 
 public:
 #if RC_ENABLE_IMGUI
+  /// @brief 状態表示・パラメータ編集と、デバッグ用のウェーブ要求／強制クリアのボタンを出す
   void OnImGui() override {
     ImGui::Text("State: %s", StateName(state_));
     ImGui::Text("Active Wave: %d", activeWaveId_);
@@ -288,12 +303,18 @@ public:
 #endif
 
 private:
+  /// @brief JSON の配列から RGBA 色を読み込む
+  /// @param j 読み込み元（要素数 4 以上の配列のときだけ反映する）
+  /// @param out 書き込み先の色
   static void ReadColor(const nlohmann::json &j, RC::Vector4 &out) {
     if (j.is_array() && j.size() >= 4) {
       out = {j[0].get<float>(), j[1].get<float>(), j[2].get<float>(), j[3].get<float>()};
     }
   }
 
+  /// @brief 状態を表示用の文字列に変換する
+  /// @param s 変換する状態
+  /// @return 状態名（未知の値なら "?"）
   static const char *StateName(State s) {
     switch (s) {
     case State::Idle:     return "Idle";
@@ -305,6 +326,8 @@ private:
     return "?";
   }
 
+  /// @brief 状態を切り替えて経過時間を 0 に戻し、wave_busy タグを更新する
+  /// @param s 新しい状態
   void SetState(State s) {
     state_ = s;
     stateTimer_ = 0.0f;
@@ -317,6 +340,8 @@ private:
     }
   }
 
+  /// @brief 指定 id のウェーブを開始し、Intro 状態へ移る
+  /// @param waveId 開始するウェーブ id
   void StartWave(int waveId) {
     activeWaveId_ = waveId;
     remainingEnemies_ = 0;
@@ -331,6 +356,7 @@ private:
     Log::Print("[WaveManagerScript] wave " + std::to_string(waveId) + " start");
   }
 
+  /// @brief クリア表示の状態へ移り、敵の募集を締め切る
   void EnterCleared() {
     remainingEnemies_ = 0;
     if (Entity *self = GetEntity()) {
@@ -344,6 +370,7 @@ private:
   /// @brief 指定ウェーブを担当するスポナーが全員湧かせ終えたか
   /// @param waveId 対象ウェーブ
   /// @param spawnerCountOut 見つかったスポナーの数（0 ならデータの設定漏れ）
+  /// @return 担当スポナーが全員 spawn_done を出していれば true（担当が 0 個のときも true）。シーンが無ければ false
   bool AreSpawnersDone(int waveId, int &spawnerCountOut) {
     spawnerCountOut = 0;
     Scene *scene = GetScene();
@@ -363,6 +390,8 @@ private:
   /// @brief 指定ウェーブの生存敵数
   /// @details 撃破された敵は enemy_defeated が立ち、2 秒後に実体が消える。
   ///          どちらの状態でも生存には数えない。
+  /// @param waveId 対象ウェーブ id
+  /// @return 生存している敵の数
   int CountAliveEnemies(int waveId) {
     Scene *scene = GetScene();
     if (!scene) return 0;
@@ -379,6 +408,7 @@ private:
 
   /// @brief 残っている敵を消す（デバッグの強制クリア用）
   /// @details 通常の撃破処理を通すとスコアが加算されてしまうため、実体だけを落とす。
+  /// @param waveId 対象ウェーブ id
   void DespawnRemaining(int waveId) {
     Scene *scene = GetScene();
     if (!scene) return;
@@ -412,6 +442,7 @@ private:
   static constexpr RC::Vector4 kInk = {0.95f, 0.93f, 0.87f, 1.0f};
   static constexpr RC::Vector4 kMuted = {0.66f, 0.70f, 0.76f, 1.0f};
 
+  /// @brief 1280x720 基準の座標を実画面の座標へ変換するための倍率とオフセット
   struct Layout {
     float s = 1.0f;  ///< 1280x720 → 実解像度の倍率
     float ox = 0.0f; ///< レターボックスの横オフセット
@@ -420,11 +451,27 @@ private:
   };
   Layout L_;
 
+  /// @brief 基準座標の X を画面座標へ変換する
+  /// @param x 1280x720 基準の X
+  /// @return 画面上の X（ピクセル）
   float X(float x) const { return L_.ox + x * L_.s; }
+  /// @brief 基準座標の Y を画面座標へ変換する
+  /// @param y 1280x720 基準の Y
+  /// @return 画面上の Y（ピクセル）
   float Y(float y) const { return L_.oy + y * L_.s; }
+  /// @brief 基準の長さを画面上の長さへ変換する
+  /// @param v 1280x720 基準の長さ
+  /// @return 画面上の長さ（ピクセル）
   float S(float v) const { return v * L_.s; }
 
+  /// @brief 色のアルファに係数を掛けた色を返す
+  /// @param c 元の色
+  /// @param a アルファに掛ける係数
+  /// @return アルファだけを変えた色
   static RC::Vector4 WithAlpha(const RC::Vector4 &c, float a) { return {c.x, c.y, c.z, c.w * a}; }
+  /// @brief 3 次のイーズアウト（始めが速く終わりがゆっくり）
+  /// @param t 進み具合（0〜1 にクランプされる）
+  /// @return 補間係数（0〜1）
   static float EaseOutCubic(float t) {
     t = std::clamp(t, 0.0f, 1.0f);
     const float u = 1.0f - t;
@@ -432,6 +479,13 @@ private:
   }
 
   /// @brief 影付きテキスト（PauseMenu::Text と同じ）
+  /// @param font フォントハンドル（負なら何もしない）
+  /// @param text 描く文字列（空なら何もしない）
+  /// @param x 描画位置の X（画面座標）
+  /// @param y 描画位置の Y（画面座標）
+  /// @param color 文字色（影の濃さもこのアルファに合わせる）
+  /// @param align 文字揃え
+  /// @param scale ロード時の大きさに対する追加の拡大率
   void Text(int font, const std::string &text, float x, float y, const RC::Vector4 &color,
             TextAlign align = TextAlign::Left, float scale = 1.0f) const {
     if (font < 0 || text.empty()) return;
@@ -440,21 +494,28 @@ private:
     RC::DrawString(font, text, {x + sh, y + sh}, {0.0f, 0.02f, 0.05f, 0.55f * color.w}, sc, align);
     RC::DrawString(font, text, {x, y}, color, sc, align);
   }
+  /// @brief フォントの行の高さを画面上の大きさで取得する
+  /// @param font フォントハンドル
+  /// @param scale ロード時の大きさに対する追加の拡大率
+  /// @return 行の高さ（ピクセル）。フォントが無ければ kItemPx 相当で代用する
   float LineH(int font, float scale = 1.0f) const {
     return (font >= 0) ? RC::GetFontLineHeight(font, scale * L_.fs) : S(kItemPx) * scale;
   }
 
   /// @brief 墨のパネル（二重の細枠 ＋ 四隅の飾り。PauseMenu::DrawPanel と同じ）
   /// @param l,t,w,h 1280x720 基準の矩形
+  /// @param a 不透明度の係数（0〜1）
   void DrawPanel(float l, float t, float w, float h, float a) const {
     const RC::Vector2 tl = {X(l), Y(t)};
     const RC::Vector2 br = {X(l + w), Y(t + h)};
     RC::DrawBox(tl, br, WithAlpha(panelColor, a));
 
+    // 内側に二重の細枠
     const float in1 = S(6.0f), in2 = S(11.0f);
     RC::DrawBox({tl.x + in1, tl.y + in1}, {br.x - in1, br.y - in1}, WithAlpha(kInk, 0.55f * a), kWire);
     RC::DrawBox({tl.x + in2, tl.y + in2}, {br.x - in2, br.y - in2}, WithAlpha(kInk, 0.22f * a), kWire);
 
+    // 四隅の L 字の飾り（角ごとに横線と縦線を 1 本ずつ）
     const float arm = S(22.0f);
     const float th = (std::max)(1.0f, S(2.0f));
     const RC::Vector4 c = WithAlpha(accentColor, 0.9f * a);
@@ -479,6 +540,7 @@ private:
     const float h = kBarH * reveal;
     if (h < 2.0f) return;
 
+    // 画面上部中央にパネルと内枠を描く
     const float l = (kDesignW - kBarW) * 0.5f;
     const RC::Vector2 tl = {X(l), Y(kBarY)};
     const RC::Vector2 br = {X(l + kBarW), Y(kBarY + h)};
@@ -488,6 +550,7 @@ private:
     // 左端のアクセント帯
     RC::DrawBox(tl, {tl.x + S(6.0f), br.y}, accentColor);
 
+    // せり出しきるまでは文字を出さない
     if (reveal < 0.999f) return;
 
     char buf[32];
@@ -534,6 +597,7 @@ private:
     RC::DrawBox({0.0f, 0.0f}, {X(kDesignW) + L_.ox, Y(kDesignH) + L_.oy},
                 {0.02f, 0.03f, 0.06f, 0.30f * a});
 
+    // 画面中央にパネルを置く
     const float l = (kDesignW - kClearPanelW) * 0.5f;
     const float t = (kDesignH - kClearPanelH) * 0.5f;
     DrawPanel(l, t, kClearPanelW, kClearPanelH, a);

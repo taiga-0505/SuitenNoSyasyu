@@ -42,6 +42,8 @@ public:
   float delay = 1.6f; ///< クリアしてから跳ね上がるまで（秒。STAGE CLEAR を見せる）
   WaterCameraFx::AscendParams ascend;
 
+  /// @brief 設定項目を JSON に書き出す
+  /// @return 設定項目を格納した JSON
   nlohmann::json Serialize() override {
     return {{"enabled", enabled},
             {"delay", delay},
@@ -55,7 +57,10 @@ public:
             {"whiteEv", ascend.whiteEv}};
   }
 
+  /// @brief JSON から設定項目を読み込む
+  /// @param j 読み込み元の JSON（存在し型が合うキーだけ反映する）
   void Deserialize(const nlohmann::json &j) override {
+    // キーが存在し数値の場合だけ上書きするヘルパー
     auto f = [&](const char *k, float &o) { if (j.contains(k) && j[k].is_number()) o = j[k].get<float>(); };
     if (j.contains("enabled") && j["enabled"].is_boolean()) enabled = j["enabled"].get<bool>();
     f("delay", delay);
@@ -70,6 +75,7 @@ public:
   }
 
 #if RC_ENABLE_IMGUI
+  /// @brief インスペクタに現在の状態と各パラメータの編集 UI を表示する
   void OnImGui() override {
     static const char *kNames[] = {"idle", "wait", "ascend", "done", "off"};
     ImGui::Text("State: %s  t=%.2f  white=%.2f", kNames[static_cast<int>(phase_)], t_,
@@ -88,6 +94,7 @@ public:
 #endif
 
 protected:
+  /// @brief 状態を初期化し、前回のプレイで残った遷移担当タグを消す
   void OnCreate() override {
     phase_ = Phase::Idle;
     t_ = 0.0f;
@@ -96,11 +103,14 @@ protected:
     if (Entity *self = GetEntity()) self->ClearTag(kOwnerTag);
   }
 
+  /// @brief クリアを検知して演出を引き受け、待機→跳ね上がり→遷移要求の順に進める
+  /// @param dt 前フレームからの経過時間（秒）
   void OnUpdate(float dt) override {
     if (dt <= 0.0f || !enabled) return;
     Entity *self = GetEntity();
     if (!self) return;
 
+    // 待機中: クリアになったら遷移表を引き、演出が ascend のときだけ自分が遷移を引き受ける
     if (phase_ == Phase::Idle) {
       SceneContext *ctx = GetSceneContext();
       if (!ctx || !ctx->isPlaying()) return;
@@ -123,6 +133,7 @@ protected:
       Log::Print("[ClearAscendScript] begin -> " + target_);
     }
 
+    // 段階ごとの進行（各段階の経過時間は t_ で測り、段階が変わるたびに 0 へ戻す）
     t_ += dt;
     switch (phase_) {
     case Phase::Wait:
@@ -174,10 +185,12 @@ protected:
     }
   }
 
-  /// @brief 白い幕（ポストプロセスの後に描くので、水中の色味や輪郭線に染まらない）
+  /// @brief 跳ね上がりの後半に画面全体へ白い幕を重ねて描く
+  /// @note ポストプロセスの後に描くので、水中の色味や輪郭線に染まらない
   void OnOverlayRender() override {
     const float a = ascend_.WhiteAlpha();
     if (a <= 0.0f) return;
+    // 画面サイズはウィンドウから取得し、取れなければ 1280x720 を仮定する
     float w = 1280.0f, h = 720.0f;
     auto &rc = RC::GetRenderContext();
     if (rc.Ctx() && rc.Ctx()->app) {
@@ -188,12 +201,14 @@ protected:
     RC::DrawBox({0.0f, 0.0f}, {w, h}, {0.97f, 0.98f, 1.0f, a});
   }
 
+  /// @brief 演出中なら打ち切り、遷移担当タグを外す
   void OnDestroy() override {
     if (ascend_.IsActive()) ascend_.End(false);
     if (Entity *self = GetEntity()) self->ClearTag(kOwnerTag);
   }
 
 private:
+  /// @brief 演出の進行段階（Off は ascend 以外の遷移なので何もしない状態）
   enum class Phase { Idle = 0, Wait, Ascend, Done, Off };
   static constexpr const char *kOwnerTag = "result_transition_owner";
   static constexpr const char *kTriggerCleared = "cleared"; ///< 遷移表のきっかけ名

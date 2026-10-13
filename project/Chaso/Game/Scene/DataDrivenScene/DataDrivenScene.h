@@ -15,7 +15,7 @@
 #include "Input/Input.h"
 #include "ECS/LevelLoader.h"
 
-// All component headers (for factory registration)
+// 全コンポーネントのヘッダ（ファクトリ登録のため）
 #include "ECS/TransformComponent.h"
 #include "ECS/ModelRendererComponent.h"
 #include "ECS/SpriteRendererComponent.h"
@@ -34,7 +34,7 @@
 #include "ECS/NativeScriptComponent.h"
 #include "ECS/AudioSourceComponent.h"
 #include "ECS/AudioListenerComponent.h"
-// Light sources for Dereferencing
+// ライトハンドルから取得した実体を操作するためのライトソース
 #include "Graphics/Light/Directional/DirectionalLightSource.h"
 #include "Graphics/Light/Point/PointLightSource.h"
 #include "Graphics/Light/Spot/SpotLightSource.h"
@@ -42,15 +42,16 @@
 #include "ECS/GPUParticleComponent.h"
 
 /// @class DataDrivenScene
-/// @brief Generic Scene class that builds scenes from JSON files.
-/// @details Supports creation, saving, loading, and deletion from the editor.
+/// @brief JSON ファイルからエンティティを構築して動かす汎用シーンクラス
+/// @details エディタからの作成・保存・読み込み・削除に対応する。
 class DataDrivenScene : public Scene {
 public:
-  /// @brief Constructor
-  /// @param name Scene name (display name / transition key)
-  /// @param filePath JSON file path
+  /// @brief コンストラクタ
+  /// @param name シーン名（表示名 / 遷移キー）
+  /// @param filePath シーン JSON ファイルのパス
   DataDrivenScene(const std::string& name, const std::string& filePath)
     : sceneName_(name), filePath_(filePath) {
+    // コンポーネントファクトリの登録はプロセス全体で一度だけ行う
     static bool factoryInitialized = false;
     if (!factoryInitialized) {
       RegisterAllComponents();
@@ -58,14 +59,19 @@ public:
     }
   }
 
+  /// @brief シーン名を返す
+  /// @return シーン名
   const char* Name() const override { return sceneName_.c_str(); }
 
   /// @brief 静的コライダーエンティティ（マップの壁・穴など。レンダラーやライトを持たない）か判定
+  /// @param e 判定対象のエンティティ
+  /// @return "is_wall" か "is_hole" タグを持っていれば true
   static bool IsStaticMapCollider(const Entity& e) {
       return e.HasTag("is_wall") || e.HasTag("is_hole");
   }
 
-  /// @brief Load entities from JSON on scene enter
+  /// @brief シーン入場時に JSON からエンティティを読み込み、ランタイム資源を初期化する
+  /// @param ctx シーンコンテキスト
   void OnEnter(SceneContext& ctx) override {
     Load();
     resultTriggered_ = false;
@@ -83,7 +89,7 @@ public:
         gameMode_->OnSceneEnter(*this, ctx);
     }
 
-    // Initialize runtime handles for all loaded components
+    // 読み込んだ全コンポーネントのランタイムハンドルを生成する
     for (auto& e : entities_) {
         InitializeRuntimeResources(*e, ctx);
     }
@@ -99,7 +105,7 @@ public:
     SyncMainCamera(ctx);
   }
 
-  /// @brief Clear entities on scene exit
+  /// @brief シーン退場時にスクリプトへ破棄を通知し、全エンティティとランタイム資源を解放する
   void OnExit(SceneContext&) override {
     // 更新ループ中に生成されて未マージのエンティティも解放対象に含める。
     // ここで取り込まずに捨てると、生成済みのランタイムハンドルが回収されない。
@@ -117,6 +123,9 @@ public:
     RC::ClearEffectParticles();
   }
 
+  /// @brief 毎フレームの更新。アニメーション・Transform 同期・ライト・パーティクル・スクリプト・衝突・決着判定を行う
+  /// @param sm シーンマネージャー（未使用）
+  /// @param ctx シーンコンテキスト
   void Update(SceneManager& sm, SceneContext& ctx) override {
     (void)sm;
     // 内訳表示用。下の UpdateEntities / ResolveCollisions を除いた残りが、
@@ -213,12 +222,12 @@ public:
                     if (auto* modelTr = RC::GetModelTransformPtr(ren->modelHandle)) {
                         auto* anim = e->GetComponent<AnimationComponent>();
                         if (anim && anim->attached_ && !RC::HasModelSkinData(ren->modelHandle) && !RC::HasModelSkeleton(ren->modelHandle) && !e->GetComponent<NativeScriptComponent>()) {
-                            // Node animation case: animation controls the root transform.
-                            // Read back from modelTr to TransformComponent to keep them in sync,
-                            // and avoid overwriting the animation frame.
+                            // ノードアニメーションの場合はアニメーションがルートの Transform を動かす。
+                            // アニメーションのフレームを上書きしないよう、modelTr から
+                            // TransformComponent へ読み戻して同期する。
                             tr->SetFromTransform(*modelTr);
                         } else {
-                            // Skeletal animation or no animation: TransformComponent controls root transform.
+                            // スケルタルアニメーション、またはアニメーション無しの場合は TransformComponent がルートを決める
                             *modelTr = tr->ToTransform();
                         }
                     }
@@ -416,6 +425,7 @@ public:
     // ポーズメニューのスクリプトだけは ctx.deltaTime を直接読んで動く。
     float updateDt = ctx.isSimulating() ? ctx.deltaTime : 0.0f;
 
+    // シミュレーション中だけ GameMode を進める。BeginPlay は最初の 1 回だけ呼ぶ
     if (ctx.isSimulating()) {
         if (gameMode_ && !gameMode_->HasBegunPlay()) {
             gameMode_->BeginPlay(ctx);
@@ -517,6 +527,7 @@ public:
   /// @brief シーン内のメインカメラを CameraController へ反映する
   /// @details Update の末尾と OnEnter の両方から呼ぶ。OnEnter で呼ぶことで、
   ///          シーン遷移直後の 1 フレームに前のシーンのカメラ位置が残るのを防ぐ。
+  /// @param ctx シーンコンテキスト（camera / app が無ければ何もしない）
   void SyncMainCamera(SceneContext& ctx) {
     if (!ctx.camera || !ctx.app) return;
 
@@ -534,6 +545,8 @@ public:
     auto* camTr = target->GetComponent<TransformComponent>();
     if (!camComp || !camTr) return;
 
+    // 高さ 0（最小化中など）のときはゼロ割りを避けて 16:9 で代用する。
+    // プレイ中はカメラ揺れのオフセットを加えて反映し、編集中はデバッグカメラを使う
     const float aspect =
         (ctx.app->height > 0) ? float(ctx.app->width) / ctx.app->height : 16.0f / 9.0f;
     if (ctx.isPlaying()) {
@@ -559,6 +572,9 @@ public:
     return nullptr;
   }
 
+  /// @brief シーンを描画する（背景スプライト → 影 → 3D → 2D の順）
+  /// @param ctx シーンコンテキスト
+  /// @param cl グラフィックスコマンドリスト
   void Render(SceneContext& ctx, ID3D12GraphicsCommandList* cl) override {
     // スプライト描画（space でレイヤーを振り分ける）
     // 遅延ロードも含むので、どのパスからも同じ処理を使う
@@ -626,8 +642,9 @@ public:
     // 以前はタイルごとに全エンティティを走査し直していた（タグの文字列ハッシュ 2 回＋
     // コンポーネント検索 3 回 × 全エンティティ × 最大 kMaxSpotShadows+1 パス）。
     // 判定結果はパスの途中で変わらないので、一度集めた配列を各パスで再生するだけにする。
+    /// @brief 影キャスター 1 エンティティ分の描画対象をまとめた構造体
     struct ShadowCasterEntry {
-        uint32_t entityId = 0;
+        uint32_t entityId = 0;                   ///< 元エンティティの ID（ライト本体の除外判定に使う）
         ModelRendererComponent* ren = nullptr;   ///< 描くモデル（無ければ nullptr）
         PrimitiveMeshComponent* pm = nullptr;    ///< 描くプリミティブメッシュ（無ければ nullptr）
         TextMeshComponent* tm = nullptr;         ///< 描く 3D 文字メッシュ（無ければ nullptr）
@@ -671,6 +688,7 @@ public:
         }
     }
 
+    // 集めた影キャスターを 1 パス分描く。excludeEntityId のエンティティだけは飛ばす
     auto drawShadowCasters = [&](uint32_t excludeEntityId) {
         for (const auto& c : s_shadowCasters) {
             if (excludeEntityId != 0u && c.entityId == excludeEntityId) continue;
@@ -712,7 +730,9 @@ public:
         if (!e->IsVisible() || !e->IsActive()) continue;
         if (auto* dl = e->GetComponent<DirectionalLightComponent>()) {
             if (dl->IsEnabled() && dl->visible) {
-                // DirectionalLight用の広範囲の正射影
+                // DirectionalLight用の広範囲の正射影（±40 の範囲を near 0.1〜far 100 で覆う）。
+                // ライトの向きから pitch / yaw を求め、原点から光の逆方向へ 50 離した位置に置いた
+                // カメラの逆行列をビュー行列とする
                 float range = 40.0f;
                 RC::Matrix4x4 proj = MakeOrthographicMatrix(-range, range, range, -range, 0.1f, 100.0f);
                 RC::Vector3 dir = Normalize(dl->direction);
@@ -755,12 +775,14 @@ public:
     // 走査するのはエンジンが持っているアクティブなライト一覧で、コンポーネントに限らない。
     // スクリプトが RC::CreateSpotLight() 等で直接作ったライトにも同じように影が付く。
     // 位置・向き・角度は GPU へ転送される実ライトの値をそのまま使うのでライティングとずれない。
+    /// @brief 影を落とすライトの種類
     enum class ShadowLightKind { Spot, Point, Area };
+    /// @brief 影アトラスのタイルを割り当てる候補ライト 1 灯分の情報
     struct ShadowCandidate {
-        ShadowLightKind kind = ShadowLightKind::Spot;
-        RC::SpotLightSource* spot = nullptr;
-        RC::PointLightSource* point = nullptr;
-        RC::AreaLightSource* area = nullptr;
+        ShadowLightKind kind = ShadowLightKind::Spot; ///< ライトの種類（どのポインタが有効か）
+        RC::SpotLightSource* spot = nullptr;   ///< kind == Spot のときの実体
+        RC::PointLightSource* point = nullptr; ///< kind == Point のときの実体
+        RC::AreaLightSource* area = nullptr;   ///< kind == Area のときの実体
         uint32_t excludeEntityId = 0; ///< このライトの影を落とさないエンティティ（0 で無し）
         int priority = 0;             ///< 小さいほど優先してタイルを割り当てる
         RC::Vector3 position{};
@@ -770,6 +792,8 @@ public:
         float shadowNear = 0.05f;
         float distToCamera = 0.0f;
 
+        /// @brief kind に応じた実ライトへ影アトラスのタイル番号を設定する
+        /// @param index タイル番号（-1 で影なし）
         void SetShadowIndex(int index) const {
             switch (kind) {
             case ShadowLightKind::Spot:  if (spot)  spot->SetShadowIndex(index);  break;
@@ -906,6 +930,8 @@ public:
                          return a.distToCamera < b.distToCamera;
                      });
 
+    // 先頭から kMaxSpotShadows 灯にタイルを割り当て、ライト視点の ViewProj を定数バッファへ詰める。
+    // あふれたライトは影なし（shadowIndex = -1）にする
     SpotShadowCB spotShadowCB;
     spotShadowCB.count = 0;
     for (size_t i = 0; i < shadowCandidates.size(); ++i) {
@@ -915,7 +941,8 @@ public:
             continue;
         }
 
-        // 円錐がぴったり収まるよう少しだけ余裕を持たせた正方形の視錐台
+        // 円錐がぴったり収まるよう少しだけ余裕を持たせた正方形の視錐台（透視投影が破綻しないよう 170 度で頭打ち）。
+        // near は 0.01 以上、far の半分以下に収めて深度精度を確保する
         constexpr float kMaxShadowFov = 170.0f * (3.14159265358979323846f / 180.0f);
         const float fov = (std::min)(c.halfAngle * 2.0f * 1.02f, kMaxShadowFov);
         const float farZ = c.range;
@@ -1021,6 +1048,7 @@ public:
         }
         if (auto* ren = e->GetComponent<ModelRendererComponent>()) {
             if (ren->HasModel() && ren->visible && ren->IsEnabled()) {
+                // "Block" という名前のモデルだけはガラス表現用の 2 パス描画にする
                 if (e->Name() == "Block") {
                     RC::DrawModelGlassTwoPass(ren->modelHandle, ren->texOverride);
                 } else {
@@ -1116,6 +1144,7 @@ public:
         }
     }
 
+    // スクリプト独自のデバッグ描画。F4 で全エンティティ、それ以外は選択中のエンティティだけ
     if (showAllGizmos_) {
         for (auto& e : entities_) {
             if (!e || e->IsPendingDestroy() || !e->IsActive()) continue;
@@ -1177,7 +1206,10 @@ public:
   }
 
   /// @brief ポストプロセス後のオーバーレイ（ポーズメニュー等）。スクリプトの OnOverlayRender を呼ぶ
+  /// @param ctx シーンコンテキスト
+  /// @param cl グラフィックスコマンドリスト
   /// @details Render() と同じフレームの続きなので BeginFrame はせず、2D 用のステートだけ張り直す。
+  ///          プレイ中以外は何もしない。
   void RenderOverlay(SceneContext& ctx, ID3D12GraphicsCommandList* cl) override {
     if (!ctx.isPlaying()) return;
 
@@ -1205,10 +1237,12 @@ public:
   ~DataDrivenScene() override = default;
 
   // =================================================================
-  // Save / Load
+  // 保存 / 読み込み / バックアップ
   // =================================================================
 
-  /// @brief Save current scene state to JSON file
+  /// @brief 現在のシーン状態を JSON ファイルへ保存する
+  /// @return 書き込みに成功したら true
+  /// @note レベル／マップ由来や transient・no_save タグのエンティティは保存しない
   bool Save() override {
     FlushPendingEntities();
     nlohmann::json root;
@@ -1225,6 +1259,7 @@ public:
     }
     root["entities"] = entitiesJson;
 
+    // 保存先ディレクトリが無ければ作ってから書き出す
     std::filesystem::path p(filePath_);
     if (p.has_parent_path()) {
       std::filesystem::create_directories(p.parent_path());
@@ -1240,7 +1275,9 @@ public:
     return true;
   }
 
-  /// @brief Load entities from JSON file
+  /// @brief シーン JSON（と設定されていればレベル JSON）からエンティティを読み込む
+  /// @return 読み込みに成功したら true（ファイルが無い・開けない・パース失敗なら false）
+  /// @note 既存のエンティティは破棄し、GameMode も作り直す
   bool Load() {
     entities_.clear();
     broadphase_.Clear();
@@ -1266,6 +1303,7 @@ public:
       return false;
     }
 
+    // シーン JSON のエンティティを復元する
     if (root.contains("entities")) {
       for (auto& ej : root["entities"]) {
         auto entity = std::make_shared<Entity>();
@@ -1274,6 +1312,7 @@ public:
       }
     }
 
+    // 追加のレベルデータ（Blender 出力）があれば、そのエンティティとスポーン情報を取り込む
     if (!levelDataPath_.empty()) {
       LevelLoader loader;
       if (loader.LoadFromFile(levelDataPath_)) {
@@ -1289,7 +1328,7 @@ public:
 
         entities_.insert(entities_.end(), loaded.begin(), loaded.end());
 
-        // 自キャラに座標を反映
+        // 最初のプレイヤースポーン地点を "player" という名前のエンティティに反映
         const auto& playerSpawns = loader.GetPlayerSpawns();
         if (!playerSpawns.empty()) {
           const auto& playerData = playerSpawns[0];
@@ -1328,16 +1367,19 @@ public:
     return true;
   }
 
-  /// @brief Get JSON file path
+  /// @brief シーン JSON ファイルのパスを取得する
+  /// @return ファイルパス
   const std::string& FilePath() const { return filePath_; }
 
-  /// @brief Change scene name
+  /// @brief シーン名を変更する
+  /// @param name 新しいシーン名
   void SetSceneName(const std::string& name) { sceneName_ = name; }
 
-  /// @brief Set additional level data JSON path
+  /// @brief 追加で読み込むレベルデータ JSON のパスを設定する
+  /// @param path レベルデータ JSON のパス（空なら読み込まない）
   void SetLevelDataPath(const std::string& path) { levelDataPath_ = path; }
 
-  /// @brief Backup the current state of entities to memory
+  /// @brief 現在の全エンティティをシリアライズしてメモリへバックアップする
   void BackupState() {
       backupJson_.clear();
       for (auto& e : entities_) {
@@ -1347,7 +1389,9 @@ public:
       }
   }
 
-  /// @brief Restore the state of entities from memory
+  /// @brief メモリ上のバックアップからエンティティを復元する
+  /// @param ctx シーンコンテキスト（復元後のランタイム資源の初期化に使う）
+  /// @note バックアップが空なら何もしない
   void RestoreState(SceneContext& ctx) {
       if (backupJson_.empty()) return;
 
@@ -1366,6 +1410,7 @@ public:
       RC::ClearEffectParticles();
       gameMode_ = GameModeBase::Create(sceneName_); // GameModeのリセット（Application 側のファクトリで作る）
 
+      // バックアップから作り直し、ランタイム資源と結果判定の状態を初期化する
       for (auto& ej : backupJson_) {
           auto entity = std::make_shared<Entity>();
           entity->Deserialize(ej);
@@ -1381,6 +1426,8 @@ public:
   }
 
   /// @brief 動的に生成したエンティティのランタイムリソースを初期化する
+  /// @param e 対象エンティティ
+  /// @note Update 中に保持したコンテキストを使うため、一度も Update していなければ何もしない
   void InitDynamicEntityRuntime(Entity& e) override {
       if (currentContext_) {
           InitializeRuntimeResources(e, *currentContext_);
@@ -1388,6 +1435,7 @@ public:
   }
 
   /// @brief 動的に生成したエンティティのランタイムリソースを解放する
+  /// @param e 対象エンティティ
   void ReleaseDynamicEntityRuntime(Entity& e) override {
       ReleaseRuntimeResources(e);
   }
@@ -1397,8 +1445,8 @@ private:
   /// @details Save() の除外と、SyncMainCamera の優先判定に使う
   static constexpr const char* kLevelEntityTag = "from_level";
 
-  std::string sceneName_;
-  std::string filePath_;
+  std::string sceneName_;     ///< シーン名（遷移キー）
+  std::string filePath_;      ///< シーン JSON のパス
   std::string levelDataPath_; ///< Blenderからエクスポートした追加レベルデータのパス
   float waterTime_ = 0.0f; ///< 水面アニメーション用累積時間
   nlohmann::json backupJson_; ///< メモリ上へのバックアップ用
@@ -1412,6 +1460,7 @@ private:
   static constexpr float kResultDelay_ = 2.5f; ///< 結果確定からシーン遷移までの待機時間（秒）
 
   /// @brief TextRendererComponent のフォントを設定に合わせてロード（変更があれば差し替え）
+  /// @param txt 対象のテキストコンポーネント
   static void EnsureTextFont(TextRendererComponent& txt) {
       if (!txt.NeedsReload()) return;
       if (txt.fontHandle >= 0) {
@@ -1426,6 +1475,7 @@ private:
   }
 
   /// @brief TextMeshComponent の生成済みメッシュへマテリアル設定（色・光沢・UV 等）を書き込む
+  /// @param tm 対象の 3D 文字コンポーネント
   static void ApplyTextMeshMaterial(TextMeshComponent& tm) {
       if (!tm.HasMesh()) return;
       if (auto* mat = RC::GetPrimitiveMeshMaterialPtr(tm.meshHandle)) {
@@ -1437,6 +1487,7 @@ private:
           }
           mat->shininess = tm.shininess;
           mat->environmentCoefficient = tm.environmentCoeff;
+          // UV 変換行列: 対角成分にタイリング、平行移動成分（4 行目）にオフセットを入れる
           mat->uvTransform = MakeIdentity4x4();
           mat->uvTransform.m[0][0] = tm.uvTiling.x;
           mat->uvTransform.m[1][1] = tm.uvTiling.y;
@@ -1449,6 +1500,7 @@ private:
   }
 
   /// @brief 縁取りシェルのマテリアル（色・ライティング）を書き込む
+  /// @param tm 対象の 3D 文字コンポーネント
   static void ApplyTextMeshOutlineMaterial(TextMeshComponent& tm) {
       if (!tm.HasOutlineMesh()) return;
       if (auto* mat = RC::GetPrimitiveMeshMaterialPtr(tm.outlineMeshHandle)) {
@@ -1470,6 +1522,7 @@ private:
   /// @details 文字列・フォント・サイズ・厚さ・許容誤差・揃え・行間のいずれかが
   ///          生成時と異なる場合のみ作り直す。失敗しても builtDesc を更新するので
   ///          毎フレーム再試行はしない（設定を変えれば再度試みる）。
+  /// @param tm 対象の 3D 文字コンポーネント
   static void EnsureTextMesh(TextMeshComponent& tm) {
       const bool rebuildMain = tm.NeedsRebuild();
       if (!rebuildMain && !tm.NeedsOutlineRebuild()) return;
@@ -1586,7 +1639,8 @@ private:
     }
   }
 
-  /// @brief Register all components to ComponentFactory (called once)
+  /// @brief 全コンポーネントを型名付きで ComponentFactory に登録する
+  /// @note JSON の型名からコンポーネントを生成するために必要。コンストラクタから一度だけ呼ばれる
   static void RegisterAllComponents() {
     Entity::ComponentFactory::Register<TransformComponent>("TransformComponent");
     Entity::ComponentFactory::Register<ModelRendererComponent>("ModelRendererComponent");
@@ -1612,6 +1666,11 @@ private:
     Entity::ComponentFactory::Register<AudioListenerComponent>("AudioListenerComponent");
   }
 
+  /// @brief エンティティの各コンポーネントが使う描画・音声などのランタイム資源を生成する
+  /// @param e 対象エンティティ
+  /// @param ctx シーンコンテキスト（スプライト・パーティクルの生成に使う）
+  /// @details JSON から復元した設定値（パス・色・ライト値など）をもとにハンドルを作る。
+  ///          対になる解放処理は ReleaseRuntimeResources。
   void InitializeRuntimeResources(Entity& e, SceneContext& ctx) {
       if (auto* ren = e.GetComponent<ModelRendererComponent>()) {
           if (!ren->modelPath.empty()) ren->modelHandle = RC::LoadModel(ren->modelPath);
@@ -1634,6 +1693,7 @@ private:
               RC::UnloadPrimitiveMesh(pm->meshHandle);
               pm->meshHandle = -1;
           }
+          // 形状ごとに既定サイズのメッシュを生成する（大きさは Transform の scale で調整する）
           if (pm->meshHandle < 0 || !hasValidMesh) {
               switch (pm->type) {
                   case PrimitiveType::Sphere: pm->meshHandle = RC::GenerateSphere(1.0f, pm->texOverride); break;
@@ -1668,6 +1728,7 @@ private:
           tm->built = false;
           EnsureTextMesh(*tm);
       }
+      // ライトは生成してコンポーネントの設定値を初期値として書き込む（以降の同期は Update で行う）
       if (auto* dl = e.GetComponent<DirectionalLightComponent>()) {
           dl->lightHandle = RC::CreateDirectionalLight(RC::LightActivateMode::Add);
           if (dl->lightHandle >= 0) {
@@ -1723,6 +1784,7 @@ private:
           if (!sb->skyboxPath.empty()) sb->skyboxHandle = RC::CreateSkyBox(sb->skyboxPath);
       }
       if (auto* sd = e.GetComponent<SkydomeComponent>()) {
+          // テクスチャは texturePath を優先し、無ければ skydomePath を使う
           int initTex = -1;
           if (!sd->texturePath.empty()) initTex = RC::LoadTex(sd->texturePath);
           else if (!sd->skydomePath.empty()) initTex = RC::LoadTex(sd->skydomePath);
@@ -1770,6 +1832,7 @@ public:
   /// @details スクリプトから Play() された音の後始末、再生開始時の playOnAwake 発火、
   ///          BGM の keep-alive、3D 音響のリスナー／音源位置の更新をまとめて行う。
   ///          Update() の後に呼ばれるので、再生中に生成されたエンティティ（弾など）も同じフレームで拾える。
+  /// @param ctx シーンコンテキスト
   void UpdateAudio(SceneContext& ctx) override {
       FlushPendingEntities(); // Update を挟まずに生成されたエンティティも拾う
       const bool playing = (ctx.playState == PlayState::Playing);
@@ -1797,6 +1860,9 @@ private:
   /// @details 有効な AudioListenerComponent を持つアクティブなエンティティがあれば、最初に見つかった
   ///          1 つを使う。無ければ描画中のカメラ（編集モードならエディタカメラ）が聞き手になる。
   ///          編集モードでは速度を 0 にして、カメラを飛ばしてもドップラーがかからないようにする。
+  /// @param ctx シーンコンテキスト
+  /// @param playing プレイ中か
+  /// @param dt 前フレームからの経過時間（秒）
   void UpdateAudioListener(SceneContext& ctx, bool playing, float dt) {
       const RC::Matrix4x4* cameraView = ctx.camera ? &ctx.camera->GetView() : nullptr;
       for (auto& e : entities_) {
@@ -1820,12 +1886,16 @@ private:
   /// @brief エンティティに付いているスクリプトへ OnDestroy() を通知して破棄する
   /// @details ランタイムリソースの解放より先に呼ぶ。NativeScriptComponent 側で
   ///          scripts をクリアするため、後続の Entity 破棄で二重に呼ばれることはない。
+  /// @param e 対象エンティティ
   void NotifyScriptsDestroy(Entity& e) {
       if (auto* nsc = e.GetComponent<NativeScriptComponent>()) {
           nsc->DestroyAllScripts();
       }
   }
 
+  /// @brief エンティティの各コンポーネントが持つランタイム資源を解放し、ハンドルを -1 に戻す
+  /// @param e 対象エンティティ
+  /// @note InitializeRuntimeResources の対。スクリプトへの破棄通知（NotifyScriptsDestroy）より後に呼ぶ
   void ReleaseRuntimeResources(Entity& e) {
       if (auto* ren = e.GetComponent<ModelRendererComponent>()) {
           if (ren->modelHandle >= 0) { RC::UnloadModel(ren->modelHandle); ren->modelHandle = -1; }

@@ -47,6 +47,8 @@ public:
   float mastHeightScale = 1.0f; ///< マストと帆の高さの倍率
   float sailBillowDeg = 14.0f;  ///< 帆が風で前へはらむ角度
 
+  /// @brief 見た目のパラメータを JSON に書き出す
+  /// @return 各部位の色・片舷の大砲数・マスト高さ倍率・帆のはらみ角度を格納した JSON
   nlohmann::json Serialize() override {
     auto v4 = [](const RC::Vector4 &c) { return nlohmann::json{c.x, c.y, c.z, c.w}; };
     return {{"deckColor", v4(deckColor)},   {"trimColor", v4(trimColor)},     {"cabinColor", v4(cabinColor)},
@@ -55,7 +57,10 @@ public:
             {"mastHeightScale", mastHeightScale}, {"sailBillowDeg", sailBillowDeg}};
   }
 
+  /// @brief JSON から見た目のパラメータを読み込む
+  /// @param j 読み込み元の JSON（存在し型が合うキーだけ反映する）
   void Deserialize(const nlohmann::json &j) override {
+    // 色は要素数 4 以上の配列のときだけ反映するヘルパー
     auto readV4 = [&](const char *key, RC::Vector4 &out) {
       if (!j.contains(key)) return;
       const auto &c = j[key];
@@ -74,6 +79,8 @@ public:
   }
 
 #if RC_ENABLE_IMGUI
+  /// @brief 部位数・船体寸法を表示し、帆のはらみ角度を編集できるようにする
+  /// @note 色・大砲数・マスト高さは部位の生成時にしか反映されない（再出現で反映）
   void OnImGui() override {
     ImGui::Text("Parts: %d  Hull: %.1f x %.1f x %.1f m", static_cast<int>(parts_.size()), hull_.x, hull_.y, hull_.z);
     ImGui::DragFloat("Sail Billow##ShipVis", &sailBillowDeg, 0.5f, 0.0f, 45.0f);
@@ -82,17 +89,21 @@ public:
 #endif
 
 protected:
+  /// @brief 部位を未生成の状態にしておく（実際の生成は最初の OnUpdate で行う）
   void OnCreate() override {
     // 部位は最初の Update で作る（OnCreate の時点では本体の scale がまだ入っていないことがあるため）
     built_ = false;
   }
 
+  /// @brief 初回に部位を生成し、毎フレーム被弾色の同期と部位の配置を行う
+  /// @param deltaTime 前フレームからの経過時間（秒）。旗のなびきに使う
   void OnUpdate(float deltaTime) override {
     Scene *scene = GetScene();
     Entity *self = GetEntity();
     if (!scene || !self) return;
     auto *tr = GetComponent<TransformComponent>();
     if (!tr) return;
+    // 初回だけ部位を生成する（OnCreate の時点では本体の scale が確定していないことがあるため）
     if (!built_) Build(scene, *self, *tr);
 
     time_ += deltaTime;
@@ -100,6 +111,7 @@ protected:
     PlaceParts(*tr);
   }
 
+  /// @brief 生成した部位エンティティをすべて破棄する
   void OnDestroy() override {
     for (auto &p : parts_) {
       if (auto e = p.entity.lock()) e->Destroy();
@@ -110,8 +122,10 @@ protected:
 
 private:
   using Mat3 = PartPose::Mat3;
+  /// @brief 部位の動き方（Static: 本体に固定 / Flag: 旗としてなびかせる）
   enum class Role { Static, Flag };
 
+  /// @brief 生成した部位 1 つぶんの情報（本体ローカルでの配置と元の色）
   struct Part {
     std::weak_ptr<Entity> entity;
     RC::Vector3 offset{};  ///< 本体中心からの位置（m、本体ローカル）
@@ -121,11 +135,21 @@ private:
     Role role = Role::Static;
   };
 
+  /// @brief 部位エンティティを 1 つ生成して parts_ に登録する
+  /// @param scene 生成先のシーン
+  /// @param self 船の本体エンティティ（名前・親 GUID・初期位置の元）
+  /// @param type 部位のプリミティブ形状
+  /// @param color 部位の色（被弾色から戻すときの色にもなる）
+  /// @param offset 本体中心からの位置（m、本体ローカル）
+  /// @param scale 部位の Transform の scale（m）
+  /// @param local 本体に対する部位の向き
+  /// @param role 部位の動き方
   void AddPart(Scene *scene, Entity &self, PrimitiveType type, const RC::Vector4 &color, const RC::Vector3 &offset,
            const RC::Vector3 &scale, const Mat3 &local = PartPose::Identity(), Role role = Role::Static) {
     auto e = scene->CreateEntity(self.GetName() + "_part");
     if (!e) return;
     e->SetParentGuid(self.Guid()); // Hierarchy で船の下にまとまるように（描画上の親子ではない）
+    // PlaceParts で配置されるまで大きく映らないよう、本体の位置に極小スケールで仮置きする
     auto &ptr = e->AddComponent<TransformComponent>();
     if (auto *str = self.GetComponent<TransformComponent>()) ptr.position = str->position;
     ptr.scale = {0.01f, 0.01f, 0.01f};
@@ -134,6 +158,7 @@ private:
     pm.color = color;
     pm.shininess = 8.0f;
     scene->InitDynamicEntityRuntime(*e);
+    // 毎フレーム PlaceParts で使う本体ローカルの配置情報を記録する
     Part p;
     p.entity = e;
     p.offset = offset;
@@ -144,6 +169,10 @@ private:
     parts_.push_back(p);
   }
 
+  /// @brief 本体の寸法を基準に船首・甲板・手すり・船室・マスト・帆・旗・大砲の部位を生成する
+  /// @param scene 生成先のシーン
+  /// @param self 船の本体エンティティ
+  /// @param tr 本体の Transform（scale を船体の寸法として使う）
   void Build(Scene *scene, Entity &self, const TransformComponent &tr) {
     using namespace PartPose;
     built_ = true;
@@ -207,9 +236,12 @@ private:
     Log::Print("[ShipVisualScript] built " + std::to_string(parts_.size()) + " parts for " + self.GetName());
   }
 
+  /// @brief 全部位を本体の位置・回転に合わせて配置する（旗はなびかせる）
+  /// @param tr 本体の Transform
   void PlaceParts(const TransformComponent &tr) {
     using namespace PartPose;
     const Mat3 body = FromEngineEuler(tr.rotation);
+    // 旗は Y 軸まわりに ±0.35rad を周期的に振ってなびかせる
     const float flag = 0.35f * std::sin(time_ * 5.0f);
     for (const auto &p : parts_) {
       auto e = p.entity.lock();
@@ -218,6 +250,7 @@ private:
       if (!ptr) continue;
       Mat3 local = p.local;
       if (p.role == Role::Flag) local = MatMul(RotY(flag), local);
+      // 本体ローカルの位置・向きを本体の姿勢で回してワールドへ変換する
       ptr->position = AddV(tr.position, Apply(p.offset, body));
       ptr->rotation = ToEngineEuler(MatMul(local, body));
       ptr->scale = p.scale;
@@ -236,13 +269,16 @@ private:
     if (!pm || pm->meshHandle < 0) return;
     auto *mat = RC::GetPrimitiveMeshMaterialPtr(pm->meshHandle);
     if (!mat) return;
+    // 本体の現在色が元の船体色から閾値以上ずれていれば被弾色とみなす
     const RC::Vector4 c = mat->color;
     const float diff = std::fabs(c.x - baseHullColor_.x) + std::fabs(c.y - baseHullColor_.y) +
                        std::fabs(c.z - baseHullColor_.z);
     const bool tinted = diff > 0.05f;
+    // 状態も被弾色も前回と同じなら塗り直さない
     if (tinted == tinted_ && (!tinted || (c.x == lastTint_.x && c.y == lastTint_.y && c.z == lastTint_.z))) return;
     tinted_ = tinted;
     lastTint_ = c;
+    // 被弾中は本体と同じ色、戻ったら各部位の元の色にする
     for (const auto &p : parts_) {
       auto e = p.entity.lock();
       if (!e) continue;

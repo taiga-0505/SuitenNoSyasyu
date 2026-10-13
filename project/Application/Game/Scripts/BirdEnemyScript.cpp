@@ -46,7 +46,9 @@ namespace BirdDetail {
 constexpr float kPi = 3.14159265f;
 constexpr float kDeg = kPi / 180.0f;
 
-/// @brief シーンのメインカメラ（isMain 優先。無ければ最初のカメラ）
+/// @brief シーンのメインカメラ（isMain 優先。無ければ最初のカメラ）を探す
+/// @param scene 検索するシーン
+/// @return 見つかったカメラのエンティティ。無ければ nullptr
 inline std::shared_ptr<Entity> FindPlayerCamera(Scene *scene) {
   if (!scene) return nullptr;
   std::shared_ptr<Entity> fallback;
@@ -60,7 +62,10 @@ inline std::shared_ptr<Entity> FindPlayerCamera(Scene *scene) {
   return fallback;
 }
 
-/// @brief シーンの水面の高さ（WaterComponent の Transform.y）。無ければ false
+/// @brief シーンの水面の高さ（WaterComponent の Transform.y）を取得する
+/// @param scene 検索するシーン
+/// @param outY 見つかった水面の高さの格納先
+/// @return 水面が見つかれば true、無ければ false
 inline bool FindWaterY(Scene *scene, float &outY) {
   if (!scene) return false;
   for (const auto &e : scene->GetEntities()) {
@@ -72,16 +77,37 @@ inline bool FindWaterY(Scene *scene, float &outY) {
   return false;
 }
 
+/// @brief ベクトルの長さを求める
+/// @param v 対象のベクトル
+/// @return v の長さ
 inline float Len(const RC::Vector3 &v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); }
+/// @brief ベクトルの差 a - b を求める
+/// @param a 引かれるベクトル
+/// @param b 引くベクトル
+/// @return a - b
 inline RC::Vector3 Sub(const RC::Vector3 &a, const RC::Vector3 &b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
+/// @brief ベクトルの和 a + b を求める
+/// @param a 1 つ目のベクトル
+/// @param b 2 つ目のベクトル
+/// @return a + b
 inline RC::Vector3 Add(const RC::Vector3 &a, const RC::Vector3 &b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
+/// @brief ベクトルをスカラー倍する
+/// @param a 対象のベクトル
+/// @param s 倍率
+/// @return a * s
 inline RC::Vector3 Scale(const RC::Vector3 &a, float s) { return {a.x * s, a.y * s, a.z * s}; }
+/// @brief ベクトルを正規化する
+/// @param v 対象のベクトル
+/// @param fallback 長さがほぼ 0 で正規化できないときに返す値
+/// @return 正規化したベクトル（または fallback）
 inline RC::Vector3 Normalize(const RC::Vector3 &v, const RC::Vector3 &fallback = {0.0f, 0.0f, 1.0f}) {
   const float l = Len(v);
   return (l > 1e-5f) ? RC::Vector3{v.x / l, v.y / l, v.z / l} : fallback;
 }
 
 /// @brief 角度差を -π..π に丸める
+/// @param a 角度 (rad)
+/// @return -π..π に丸めた角度 (rad)
 inline float WrapAngle(float a) {
   while (a > kPi) a -= 2.0f * kPi;
   while (a < -kPi) a += 2.0f * kPi;
@@ -96,10 +122,15 @@ inline float WrapAngle(float a) {
 //   rotation に入れるとロールがワールド Z 軸回りになってしまうので、
 //   欲しい回転を行列で合成してから、エンジンの順序のオイラー角へ分解し直す。
 // ----------------------------------------------------------------------------
+/// @brief 3x3 回転行列（行ベクトル × 行列の規約）
 struct Mat3 {
   float m[3][3];
 };
 
+/// @brief 行列の積 a * b を求める
+/// @param a 左側の行列（行ベクトル規約なので先に適用される）
+/// @param b 右側の行列
+/// @return a * b
 inline Mat3 Mul(const Mat3 &a, const Mat3 &b) {
   Mat3 r{};
   for (int i = 0; i < 3; ++i)
@@ -107,7 +138,10 @@ inline Mat3 Mul(const Mat3 &a, const Mat3 &b) {
       r.m[i][j] = a.m[i][0] * b.m[0][j] + a.m[i][1] * b.m[1][j] + a.m[i][2] * b.m[2][j];
   return r;
 }
-// Math.cpp の MakeRotateMatrix(X/Y/Z) と同じ並び
+/// @brief X / Y / Z 軸まわりの回転行列を作る（RotX / RotY / RotZ 共通）
+/// @param t 回転角 (rad)
+/// @return 回転行列
+/// @note Math.cpp の MakeRotateMatrix(X/Y/Z) と同じ並び
 inline Mat3 RotX(float t) {
   const float c = std::cos(t), s = std::sin(t);
   return {{{1, 0, 0}, {0, c, s}, {0, -s, c}}};
@@ -121,6 +155,9 @@ inline Mat3 RotZ(float t) {
   return {{{c, s, 0}, {-s, c, 0}, {0, 0, 1}}};
 }
 /// @brief 行ベクトル v を M で変換する（v * M）
+/// @param v 変換するベクトル
+/// @param M 変換行列
+/// @return v * M
 inline RC::Vector3 Apply(const RC::Vector3 &v, const Mat3 &M) {
   return {v.x * M.m[0][0] + v.y * M.m[1][0] + v.z * M.m[2][0],
           v.x * M.m[0][1] + v.y * M.m[1][1] + v.z * M.m[2][1],
@@ -128,6 +165,8 @@ inline RC::Vector3 Apply(const RC::Vector3 &v, const Mat3 &M) {
 }
 /// @brief M = Rx(a) * Ry(b) * Rz(c) となる (a, b, c) を返す（TransformComponent::rotation に入れる値）
 /// @details 展開すると m02 = -sin b, m12 = sin a cos b, m22 = cos a cos b, m01 = sin c cos b, m00 = cos b cos c。
+/// @param M 分解する回転行列
+/// @return エンジンの回転順序でのオイラー角 (rad)
 inline RC::Vector3 ToEngineEuler(const Mat3 &M) {
   const float sb = std::clamp(-M.m[0][2], -1.0f, 1.0f);
   const float b = std::asin(sb);
@@ -142,11 +181,16 @@ inline RC::Vector3 ToEngineEuler(const Mat3 &M) {
 /// @brief 機首方位 yaw・機首上げ pitchUp・右翼上げ roll から姿勢行列を作る
 /// @details ロール→ピッチ→ヨーの順に（機体の軸で）回す。+Z が機首、+X が右翼、+Y が背中。
 ///          Rx は正の角で機首が下がる向きなので pitchUp は符号を反転して渡す。
+/// @param yaw 機首方位 (rad)
+/// @param pitchUp 機首上げ角 (rad、正で上向き)
+/// @param roll ロール角 (rad、正で右翼が上がる)
+/// @return 機体の姿勢行列
 inline Mat3 BodyMatrix(float yaw, float pitchUp, float roll) {
   return Mul(Mul(RotZ(roll), RotX(-pitchUp)), RotY(yaw));
 }
 
 /// @brief PrimitiveMesh の見た目を今の Transform に合わせる（生成直後の原点チラつき対策）
+/// @param e 対象のエンティティ
 inline void SyncPrimitive(Entity &e) {
   auto *pm = e.GetComponent<PrimitiveMeshComponent>();
   auto *tr = e.GetComponent<TransformComponent>();
@@ -158,12 +202,20 @@ inline void SyncPrimitive(Entity &e) {
   }
 }
 
+/// @brief PrimitiveMesh のマテリアル色を変更する
+/// @param e 対象のエンティティ
+/// @param c 設定する色（RGBA）
 inline void SetPrimitiveColor(Entity &e, const RC::Vector4 &c) {
   auto *pm = e.GetComponent<PrimitiveMeshComponent>();
   if (!pm || pm->meshHandle < 0) return;
   if (auto *mat = RC::GetPrimitiveMeshMaterialPtr(pm->meshHandle)) mat->color = c;
 }
 
+/// @brief 色（4 成分ベクトル）を線形補間する
+/// @param a t = 0 のときの値
+/// @param b t = 1 のときの値
+/// @param t 補間係数
+/// @return 補間結果
 inline RC::Vector4 Lerp4(const RC::Vector4 &a, const RC::Vector4 &b, float t) {
   return {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t};
 }
@@ -172,12 +224,19 @@ inline RC::Vector4 Lerp4(const RC::Vector4 &a, const RC::Vector4 &b, float t) {
 /// @details 粒の動きは InkParticleScript（kind 0：縮みながら薄れる）を使い回す。
 ///          墨と違ってふわっと漂わせたいので、抵抗を強め・重力を弱めにする。
 ///          エンティティ名を "BirdPuff" にして、墨の粒（InkParticle）とは別のプールで回す。
+/// @param scene 生成先のシーン
+/// @param ctx 粒のスクリプトに渡すシーンコンテキスト（nullptr 可）
+/// @param pos 散らす中心位置
+/// @param count 粒の数
+/// @param size 粒の基準の大きさ
+/// @param color 粒の色（w は初期の不透明度）
 inline void SpawnFeatherPuff(Scene *scene, SceneContext *ctx, const RC::Vector3 &pos, int count, float size,
                              const RC::Vector4 &color) {
   if (!scene || count <= 0) return;
   static std::mt19937 rng{20260928u}; // 見た目だけなので固定シードで十分
   std::uniform_real_distribution<float> U(0.0f, 1.0f);
 
+  // "Effects" フォルダと、再利用できる非アクティブな "BirdPuff" を必要数まで集める
   uint64_t folder = 0;
   std::vector<std::shared_ptr<Entity>> pool;
   for (const auto &e : scene->GetEntities()) {
@@ -205,6 +264,7 @@ inline void SpawnFeatherPuff(Scene *scene, SceneContext *ctx, const RC::Vector3 
     const float s = size * (0.5f + U(rng) * 0.6f);
     const float life = 0.8f + U(rng) * 0.7f;
 
+    // プールに残りがあれば使い回し、足りない分だけ新規に作る
     std::shared_ptr<Entity> e;
     const bool isNew = (i >= static_cast<int>(pool.size()));
     if (!isNew) {
@@ -229,6 +289,7 @@ inline void SpawnFeatherPuff(Scene *scene, SceneContext *ctx, const RC::Vector3 
     }
     pm->color = color;
 
+    // InkParticleScript へ動きのパラメータをタグで渡す（タグは int なので 1000 倍の固定小数）
     e->SetTag("no_shadow", 1);
     e->SetTag("ink_kind", 0);
     e->SetTag("ink_vx", toTag(vel.x));
@@ -280,9 +341,11 @@ public:
   int damage = 1;            ///< 命中時のダメージ
   float spinSpeed = 14.0f;   ///< 軸まわりの回転 (rad/s)
   float waterY = 0.0f;       ///< これより下へ行ったら消える（水面）
-  RC::Vector3 direction = {0.0f, 0.0f, 1.0f};
+  RC::Vector3 direction = {0.0f, 0.0f, 1.0f}; ///< 進行方向（OnCreate で正規化する）
 
 protected:
+  /// @brief 羽根のパラメータを JSON へ書き出す
+  /// @return 速度・寿命・判定半径・ダメージ・回転速度・水面高さ・向きを格納した json
   nlohmann::json Serialize() override {
     return {
         {"speed", speed},
@@ -296,6 +359,8 @@ protected:
     };
   }
 
+  /// @brief JSON から羽根のパラメータを読み込む（含まれる項目だけ上書きする）
+  /// @param j 読み込み元の json（鳥が発射時に pendingData として渡す）
   void Deserialize(const nlohmann::json &j) override {
     auto f = [&](const char *k, float &o) { if (j.contains(k) && j[k].is_number()) o = j[k].get<float>(); };
     f("speed", speed);
@@ -310,6 +375,7 @@ protected:
     }
   }
 
+  /// @brief 進行方向を正規化し、基準スケールを保存して初期の向きを付ける
   void OnCreate() override {
     direction = BirdDetail::Normalize(direction);
     elapsed_ = 0.0f;
@@ -319,6 +385,8 @@ protected:
     }
   }
 
+  /// @brief 直進させ、自機への命中・水面への落下・自機の弾による撃ち落としを判定する
+  /// @param dt 前フレームからの経過秒数
   void OnUpdate(float dt) override {
     if (done_ || dt <= 0.0f) return;
     auto *tr = GetComponent<TransformComponent>();
@@ -328,6 +396,7 @@ protected:
     elapsed_ += dt;
     if (elapsed_ >= lifetime) { Finish(); return; }
 
+    // 自機（カメラ）を取得する。キャッシュが無効になったときだけ探し直す
     std::shared_ptr<Entity> cam = target_.lock();
     if (!cam || cam->IsPendingDestroy() || !cam->IsActive()) {
       cam = BirdDetail::FindPlayerCamera(scene);
@@ -374,6 +443,11 @@ protected:
   }
 
 private:
+  /// @brief 線分 ab と点 p の最短距離の 2 乗を求める
+  /// @param a 線分の始点
+  /// @param b 線分の終点
+  /// @param p 点
+  /// @return 最短距離の 2 乗
   static float SegmentPointDistSq(const RC::Vector3 &a, const RC::Vector3 &b, const RC::Vector3 &p) {
     const RC::Vector3 ab = BirdDetail::Sub(b, a);
     const float l2 = ab.x * ab.x + ab.y * ab.y + ab.z * ab.z;
@@ -387,6 +461,7 @@ private:
   }
 
   /// @brief 羽根の軸（ローカル +Z）を進行方向へ向け、軸まわりに回す
+  /// @param tr 書き込み先の Transform
   void ApplyOrientation(TransformComponent &tr) {
     const float yaw = std::atan2(direction.x, direction.z);
     const float horiz = std::sqrt(direction.x * direction.x + direction.z * direction.z);
@@ -397,6 +472,7 @@ private:
     tr.scale = {baseScale_.x * wob, baseScale_.y, baseScale_.z};
   }
 
+  /// @brief 羽根を終了させて自身を破棄する（以降の更新は行わない）
   void Finish() {
     done_ = true;
     if (Entity *self = GetEntity()) self->Destroy();
@@ -414,8 +490,11 @@ REGISTER_SCRIPT(FeatherScript)
 // 鳥本体
 // ============================================================================
 
+/// @brief 鳥の行動状態（待機 → 接近 → ため → 投擲 → 立て直し）
 enum class BirdState { Wait, Approach, Windup, Throw, Recover };
 
+/// @brief 鳥の敵。自機の前方上空に陣取り、ためてから羽根を扇状に放つ
+/// @details 状態遷移・飛行（arrive 操舵）・姿勢と羽ばたき・部位エンティティの姿勢合成・撃破後の落下を担う。
 class BirdEnemyScript : public EnemyBaseScript {
 public:
   // --- 索敵・位置取り ---
@@ -432,7 +511,7 @@ public:
   float arriveRadius = 10.0f;   ///< 目標までこの距離を切ると減速を始める
   float turnRate = 3.5f;        ///< 機首の向きを変える速さ (rad/s)
   float bankFactor = 1.0f;      ///< 旋回時の傾きの強さ（1 で横加速度どおり）
-  float maxBankDeg = 45.0f;
+  float maxBankDeg = 45.0f;     ///< 旋回時の傾きの上限（度）
 
   // --- 羽ばたき ---
   float flapFrequency = 2.6f;   ///< 巡航時の羽ばたき (Hz)
@@ -463,6 +542,8 @@ public:
   RC::Vector4 windupColor = {1.0f, 0.55f, 0.15f, 1.0f};    ///< ため時に明滅する色（予兆）
 
 protected:
+  /// @brief 基底の体力に加えて、鳥のパラメータを JSON へ書き出す
+  /// @return 全パラメータを格納した json
   nlohmann::json Serialize() override {
     nlohmann::json j = EnemyBaseScript::Serialize();
     auto c4 = [](const RC::Vector4 &c) { return nlohmann::json::array({c.x, c.y, c.z, c.w}); };
@@ -503,6 +584,8 @@ protected:
     return j;
   }
 
+  /// @brief JSON から基底の体力と鳥のパラメータを読み込む（含まれる項目だけ上書きする）
+  /// @param j 読み込み元の json
   void Deserialize(const nlohmann::json &j) override {
     EnemyBaseScript::Deserialize(j);
     auto f = [&](const char *k, float &o) { if (j.contains(k) && j[k].is_number()) o = j[k].get<float>(); };
@@ -550,6 +633,7 @@ protected:
     c4("windupColor", windupColor);
   }
 
+  /// @brief 鳥としての既定値（HP・撃破演出時間・泡なし）を設定し、陣取る側と羽ばたきの位相を決める
   void OnCreate() override {
     EnemyBaseScript::OnCreate();
     // 空中の敵なので、撃破時の泡（水中向けの演出）は出さない。代わりに羽毛を散らす
@@ -572,6 +656,7 @@ protected:
     fireCooldown_ = firstFireDelay;
   }
 
+  /// @brief 生成した部位エンティティをまとめて破棄する
   void OnDestroy() override {
     for (auto &p : parts_) {
       if (auto e = p.entity.lock()) e->Destroy();
@@ -579,6 +664,8 @@ protected:
     parts_.clear();
   }
 
+  /// @brief 状態ごとの行動、姿勢・羽ばたきの更新、部位の姿勢書き込みを行う
+  /// @param dt 前フレームからの経過秒数
   void OnUpdate(float dt) override {
     EnemyBaseScript::OnUpdate(dt);
     if (dt <= 0.0f) return;
@@ -588,6 +675,7 @@ protected:
     if (!tr || !scene) return;
     time_ += dt;
 
+    // 水面の高さは最初に一度だけ調べる（飛行高度と落下時の着水判定に使う）
     if (!waterChecked_) {
       hasWater_ = BirdDetail::FindWaterY(scene, waterY_);
       waterChecked_ = true;
@@ -614,6 +702,7 @@ protected:
       return;
     }
 
+    // 自機（カメラ）を取得する。探し直したときは前フレーム位置が別物になるので速度推定をやり直す
     std::shared_ptr<Entity> cam = target_.lock();
     if (!cam || cam->IsPendingDestroy() || !cam->IsActive()) {
       cam = BirdDetail::FindPlayerCamera(scene);
@@ -720,6 +809,7 @@ protected:
     }
 
     case BirdState::Recover:
+      // 陣取る位置へ戻りながら一定時間待ち、接近状態へ戻る
       Steer(tr, home, camVel_, maxSpeed, dt);
       stateTimer_ += dt;
       if (stateTimer_ >= recoverDuration) state_ = BirdState::Approach;
@@ -731,6 +821,8 @@ protected:
     UpdateParts(tr->position);
   }
 
+  /// @brief 基底の被ダメージ処理に加え、羽毛を散らし、撃破なら錐もみ落下、ため中ならひるませる
+  /// @param damage 受けるダメージ量
   void TakeDamage(int damage) override {
     const bool wasCharging = (state_ == BirdState::Windup || state_ == BirdState::Throw);
     EnemyBaseScript::TakeDamage(damage);
@@ -757,6 +849,7 @@ protected:
   }
 
 public:
+  /// @brief インスペクタに状態表示・各パラメータの編集欄・即時投擲ボタンを表示する
   void OnImGui() override {
     EnemyBaseScript::OnImGui();
 #if RC_ENABLE_IMGUI
@@ -799,26 +892,30 @@ private:
   // ------------------------------------------------------------------
   // 部位
   // ------------------------------------------------------------------
+  /// @brief 部位の種類
   enum class PartKind { Head, Beak, Tail, WingInner, WingOuter };
 
+  /// @brief 生成した部位 1 つぶんの情報（エンティティと、胴基準の大きさ・位置・色）
   struct Part {
     std::weak_ptr<Entity> entity;
     PartKind kind;
     float side;             ///< 翼の左右（+1 右 / -1 左）。翼以外は 0
     RC::Vector3 size;       ///< 胴の長さ u を 1 とした大きさ
     RC::Vector3 offset;     ///< 胴の中心からの位置（u 単位・胴のローカル）
-    RC::Vector4 color;
+    RC::Vector4 color;      ///< 部位の元の色（フラッシュ・明滅から戻すときに使う）
   };
 
   /// @brief 頭・くちばし・尾・翼を生成する
   /// @details 大きさは胴（スポナーが作る球）の z スケール u を基準にしているので、
   ///          スポナーの enemyScale を変えれば鳥全体の大きさが変わる。
   ///          当たり判定は胴の球だけ（翼には付けない：翼の端に当たるのは見た目より判定が大きく感じるため）。
+  /// @param scene 部位を生成するシーン
   void BuildParts(Scene *scene) {
     partsBuilt_ = true;
     Entity *self = GetEntity();
     if (!scene || !self) return;
 
+    /// @brief 部位 1 つぶんの生成仕様（種類・左右・形状・大きさ・位置・色）
     struct Spec { PartKind kind; float side; PrimitiveType type; RC::Vector3 size; RC::Vector3 offset; RC::Vector4 color; };
     const std::array<Spec, 7> specs = {{
         // size は「直径（球）／辺の長さ（箱）」、offset は胴の中心から。どちらも胴の半長 u を 1 とする
@@ -831,6 +928,7 @@ private:
         {PartKind::WingOuter, -1.0f, PrimitiveType::Box, {1.25f, 0.06f, 0.6f}, {0.0f, 0.0f, -0.12f}, wingTipColor},
     }};
 
+    // 仕様どおりに部位を生成する。位置・大きさは UpdateParts で毎フレーム書き込むので仮の値でよい
     auto *selfTr = self->GetComponent<TransformComponent>();
     for (const Spec &sp : specs) {
       auto e = scene->CreateEntity(self->GetName() + "_part");
@@ -849,6 +947,8 @@ private:
   }
 
   /// @brief 部位の姿勢を胴に合わせて書き込む
+  /// @param bodyPos 胴（自身）のワールド位置
+  /// @note 外側の翼は内側の翼の外端を基準にするため、内側の翼を先に処理する。
   void UpdateParts(const RC::Vector3 &bodyPos) {
     const float u = (std::max)(std::fabs(baseScale_.z), 0.05f);
     const BirdDetail::Mat3 body = BirdDetail::BodyMatrix(yaw_, pitchUp_, roll_);
@@ -900,6 +1000,11 @@ private:
     if (auto *tr = GetComponent<TransformComponent>()) tr->rotation = BirdDetail::ToEngineEuler(body);
   }
 
+  /// @brief 部位エンティティにワールド位置・回転・大きさを書き込む
+  /// @param p 対象の部位
+  /// @param worldPos 部位中心のワールド位置
+  /// @param rot 部位のワールド回転行列
+  /// @param u 大きさの基準（胴の z スケール）
   void Place(const Part &p, const RC::Vector3 &worldPos, const BirdDetail::Mat3 &rot, float u) {
     auto e = p.entity.lock();
     if (!e) return;
@@ -913,6 +1018,8 @@ private:
   }
 
   /// @brief 胴と全部位の色を元の色から tint へ amount だけ寄せる（0 で元どおり）
+  /// @param tint 寄せる先の色
+  /// @param amount 寄せる度合い（0..1）
   void TintAll(const RC::Vector4 &tint, float amount) {
     if (amount <= 0.0f) RestoreColor();
     else ApplyColor(BirdDetail::Lerp4(originalColor, tint, amount));
@@ -928,6 +1035,8 @@ private:
   /// @brief 自機の進行方向と速度（OctopusEnemyScript と同じ取り方）
   /// @details 視点操作で向きが揺れても陣取る位置がぶれないよう、カメラの回転ではなく移動方向を使う。
   ///          ウェーブ中はレールが止まるので、最後に動いていた向きをそのまま使い続ける。
+  /// @param camTr 自機（カメラ）の Transform
+  /// @param dt 前フレームからの経過秒数
   void UpdatePlayerMotion(const TransformComponent &camTr, float dt) {
     if (hasLastCamPos_) {
       const float vx = (camTr.position.x - lastCamPos_.x) / dt;
@@ -954,6 +1063,11 @@ private:
   }
 
   /// @brief 目標へ向かう（arrive 操舵）。目標が baseVel で動いているならそれも足す
+  /// @param tr 移動させる自身の Transform
+  /// @param target 目標位置
+  /// @param baseVel 目標自体の移動速度
+  /// @param topSpeed 目標へ向かう成分の最高速
+  /// @param dt 前フレームからの経過秒数
   void Steer(TransformComponent *tr, const RC::Vector3 &target, const RC::Vector3 &baseVel, float topSpeed, float dt) {
     const RC::Vector3 to = BirdDetail::Sub(target, tr->position);
     const float d = BirdDetail::Len(to);
@@ -971,6 +1085,9 @@ private:
     Integrate(tr, dt);
   }
 
+  /// @brief 速度を上限で抑えて位置を進め、天井と水面の間に収める
+  /// @param tr 移動させる自身の Transform
+  /// @param dt 前フレームからの経過秒数
   void Integrate(TransformComponent *tr, float dt) {
     const float sp = BirdDetail::Len(velocity_);
     const float cap = maxSpeed * 1.5f; // 自機の速度を足すぶん少し余裕を持たせる
@@ -983,6 +1100,8 @@ private:
   }
 
   /// @brief 機首方位・ピッチ・バンクを速度と状態から決める
+  /// @param toCam 自身から自機（カメラ）へのベクトル
+  /// @param dt 前フレームからの経過秒数
   void UpdateAttitude(const RC::Vector3 &toCam, float dt) {
     const float horiz = std::sqrt(velocity_.x * velocity_.x + velocity_.z * velocity_.z);
     const bool facePlayer = (state_ == BirdState::Windup || state_ == BirdState::Throw) || horiz < 2.0f;
@@ -1013,7 +1132,8 @@ private:
     roll_ += (targetRoll - roll_) * (std::min)(1.0f, dt * 4.0f);
   }
 
-  /// @brief 羽ばたきの角度を決める
+  /// @brief 羽ばたきの角度（内側・外側の翼）を決める
+  /// @param dt 前フレームからの経過秒数
   void UpdateFlap(float dt) {
     const float amp = flapAmplitudeDeg * BirdDetail::kDeg;
     const float dihedral = dihedralDeg * BirdDetail::kDeg;
@@ -1045,8 +1165,11 @@ private:
   }
 
   /// @brief 撃破後：翼が止まって錐もみしながら落ち、水面に落ちたらゆっくり沈む
+  /// @param tr 自身の Transform
+  /// @param dt 前フレームからの経過秒数
   void UpdateDeath(TransformComponent *tr, float dt) {
     const bool inWater = hasWater_ && tr->position.y <= waterY_;
+    // 空中：重力で落としつつ水平速度を減衰させ、ロールで錐もみ・機首を下げる
     if (!inWater) {
       velocity_.y -= 9.8f * dt;
       velocity_.x *= std::exp(-0.8f * dt);
@@ -1056,6 +1179,7 @@ private:
       innerAngle_ = 15.0f * BirdDetail::kDeg + std::sin(time_ * 25.0f) * 10.0f * BirdDetail::kDeg;
       outerAngle_ = 35.0f * BirdDetail::kDeg;
     } else {
+      // 着水：初回だけしぶきを出し、一定速度で沈めながら翼を畳む
       if (!splashed_) {
         splashed_ = true;
         BirdDetail::SpawnFeatherPuff(GetScene(), GetSceneContext(), tr->position, 8,
@@ -1074,8 +1198,12 @@ private:
   ///          tan(角度差) × 距離 だけずれた点」を狙う。放つ位置は翼の端から端へ並べるが、
   ///          狙い点は羽根ごとに計算するので、翼の幅ぶん外れることはない。
   ///          止まっていれば真ん中の 1 枚だけが当たり、左右へ逃げると脇の羽根に当たる。
+  /// @param scene 羽根を生成するシーン
+  /// @param tr 自身の Transform（放つ位置の基準）
+  /// @param targetPos 狙う自機（カメラ）の位置
   void ThrowFeathers(Scene *scene, const TransformComponent &tr, const RC::Vector3 &targetPos) {
     if (!scene) return;
+    // 着弾までの時間 × 自機の速度 × featherLead だけ先を狙う（偏差撃ち）
     const float flight = BirdDetail::Len(BirdDetail::Sub(targetPos, tr.position)) / (std::max)(featherSpeed, 1.0f);
     const float lead = std::clamp(featherLead, 0.0f, 1.0f);
     const RC::Vector3 aim = {targetPos.x + camVel_.x * flight * lead, targetPos.y, targetPos.z + camVel_.z * flight * lead};
@@ -1098,6 +1226,7 @@ private:
       const RC::Vector3 goal = BirdDetail::Add(aim, BirdDetail::Scale(side, std::tan(offsetDeg * BirdDetail::kDeg) * aimDist));
       const RC::Vector3 dir = BirdDetail::Normalize(BirdDetail::Sub(goal, spawn));
 
+      // 羽根エンティティを生成し、FeatherScript へ速度・ダメージ・水面高さ・向きを pendingData で渡す
       auto f = scene->CreateEntity("Feather");
       if (!f) continue;
       auto &ftr = f->AddComponent<TransformComponent>();
@@ -1127,6 +1256,9 @@ private:
     Log::Print("[BirdEnemyScript] Threw feathers!");
   }
 
+  /// @brief 状態の表示名を返す（ImGui 表示用）
+  /// @param s 状態
+  /// @return 状態名の文字列
   static const char *StateName(BirdState s) {
     switch (s) {
     case BirdState::Wait: return "Wait";

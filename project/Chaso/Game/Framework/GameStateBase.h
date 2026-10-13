@@ -25,21 +25,24 @@ public:
     void ResetElapsedTime() { elapsedTime_ = 0.0f; }
 
     /// @brief 毎フレームの更新処理
-    /// @param deltaTime 経過時間
+    /// @param deltaTime 前フレームからの経過時間（秒）
     virtual void Tick(float deltaTime) {
         elapsedTime_ += deltaTime;
     }
 
-    /// @brief 経過時間の取得
+    /// @brief 経過時間を取得する
+    /// @return BeginPlay（またはリセット）からの経過時間（秒）
     float GetElapsedTime() const { return elapsedTime_; }
 
-    /// @brief スコアの加算
+    /// @brief スコアを加算する
+    /// @param score 加算する値
     void AddScore(int score) { score_ += score; }
-    
-    /// @brief 現在のスコアの取得
+
+    /// @brief 現在のスコアを取得する
+    /// @return 現在のスコア
     int GetScore() const { return score_; }
 
 protected:
-    float elapsedTime_ = 0.0f;
-    int score_ = 0;
+    float elapsedTime_ = 0.0f; ///< 経過時間（秒）
+    int score_ = 0;            ///< スコア
 };

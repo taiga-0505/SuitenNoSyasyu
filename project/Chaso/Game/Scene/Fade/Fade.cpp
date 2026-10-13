@@ -18,6 +18,7 @@ void Fade::Init(SceneContext &ctx, float width, float height) {
     return;
   }
 
+  // 1x1 のスプライトを画面サイズまで拡大し、透明な黒で待機させる
   Transform t{};
   t.scale = {width_, height_, 1.0f};
   t.rotation = {0.0f, 0.0f, 0.0f};
@@ -43,6 +44,7 @@ void Fade::Start(Status status, float duration, float alpha) {
   if (fadeSpriteHandle_ < 0)
     return;
 
+  // 開始時点の不透明度をフェードの種類に合わせて設定する
   switch (status_) {
   case Status::FadeIn:
     RC::SetSpriteColor(fadeSpriteHandle_, Vector4(0, 0, 0, 1));
@@ -72,6 +74,7 @@ void Fade::Update() {
     break;
 
   case Status::FadeIn:
+    // deltaTime を使わず 60FPS 固定で経過時間を進める
     counter_ += 1.0f / 60.0f;
     if (counter_ >= dur)
       counter_ = dur;

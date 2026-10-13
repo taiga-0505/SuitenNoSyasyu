@@ -15,16 +15,20 @@
 #include <cstdlib>
 
 /// @brief プレイヤー移動用スクリプト
-/// WASD、矢印キー、またはコントローラーで移動を行う
+/// @details WASD、矢印キー、またはコントローラーで XZ 平面上を移動し、
+///          移動中はインタラクティブ水面に波源を追加して波紋を立てる。
 class MoveCollider : public ScriptableEntity {
 public:
-    float speed = 5.0f; // 移動スピード
+    float speed = 5.0f; ///< 移動速度（m/秒）
 
 protected:
+    /// @brief アタッチされたことをコンソールへ出力する
     void OnCreate() override {
         std::cout << "[MoveCollider] OnCreate: アタッチされました！\n";
     }
 
+    /// @brief 入力から移動量を求めて位置を更新し、移動中は水面に波源を追加する
+    /// @param deltaTime 前フレームからの経過時間（秒）
     void OnUpdate(float deltaTime) override {
         auto* tr = GetComponent<TransformComponent>();
         if (!tr) return;
@@ -54,7 +58,7 @@ protected:
             SHORT thumbX = input->GetXInputThumbLX();
             SHORT thumbY = input->GetXInputThumbLY();
             
-            // デッドゾーンを設けて正規化
+            // デッドゾーンを設けて -1〜1 に正規化（32767 は SHORT の最大値）
             const float deadZone = 8000.0f;
             if (abs(thumbX) > deadZone) {
                 moveX += static_cast<float>(thumbX) / 32767.0f;
@@ -63,7 +67,7 @@ protected:
                 moveZ += static_cast<float>(thumbY) / 32767.0f; // Y軸スティックでZ移動
             }
 
-            // D-Pad
+            // 十字キー（D-Pad）
             if (input->IsXInputButtonPressed(XINPUT_GAMEPAD_DPAD_UP)) {
                 moveZ += 1.0f;
             }
@@ -88,7 +92,7 @@ protected:
         tr->position.x += moveX * speed * deltaTime;
         tr->position.z += moveZ * speed * deltaTime;
 
-        // 水面シミュレーションへの波源追加
+        // 水面シミュレーションへの波源追加（速度に比例した強さで、前位置をへこませ現在位置を押し上げる）
         if (moveX != 0.0f || moveZ != 0.0f) {
             float velocity = std::sqrt(moveX * moveX + moveZ * moveZ) * speed;
 
@@ -106,7 +110,7 @@ protected:
             // WaterPlaneのワールドサイズ(100m幅)でワールド座標からUVへ変換
             source.uv = RC::Vector2((tr->position.x / 100.0f) + 0.5f, (tr->position.z / 100.0f) + 0.5f);
             source.radius = 0.03f; // UV空間での半径 (100m平面上で3m程度の範囲)
-            source.strength = velocity * 0.03f; // 波紋の強さを倍増
+            source.strength = velocity * 0.03f; // 波紋の強さ（速度に比例）
             RC::AddWaveSource(source);
 
         }
@@ -115,21 +119,22 @@ protected:
         firstUpdate_ = false;
     }
 
+    /// @brief 破棄されたことをコンソールへ出力する
     void OnDestroy() override {
         std::cout << "[MoveCollider] OnDestroy: 破棄されました！\n";
     }
 
 public:
+    /// @brief エディタ（インスペクタ）上で移動速度を調整できるようにする
     void OnImGui() override {
 #if RC_ENABLE_IMGUI
-        // エディタ（インスペクタ）上で速度を調整できるようにする
         ImGui::DragFloat("Move Speed (移動速度)##MoveCollider", &speed, 0.1f, 0.1f, 100.0f);
 #endif
     }
 
 private:
-    RC::Vector3 prevPosition_ = {0.0f, 0.0f, 0.0f};
-    bool firstUpdate_ = true;
+    RC::Vector3 prevPosition_ = {0.0f, 0.0f, 0.0f}; ///< 1 フレーム前の位置（へこみの波源に使う）
+    bool firstUpdate_ = true;                       ///< まだ一度も更新していないか（前位置が無効）
 };
 
 REGISTER_SCRIPT(MoveCollider)
