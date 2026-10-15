@@ -50,6 +50,14 @@ public:
   /// @details Use this for 2D drawing (DrawBox, DrawCircle, etc.)
   virtual void OnRender() {}
 
+  /// @brief メイン 3D パス中に呼ばれる（再生中のみ・1 フレーム 1 回）
+  /// @details エンティティを作らずに 3D の物を描きたいスクリプト用
+  ///          （雨筋などの大量の粒を RC::DrawModelBatchColored でまとめて描く等）。
+  ///          ここで積んだ 3D コマンドは深度テスト付きで描かれるので、
+  ///          ロゴや船など手前の物に正しく隠れる。影パス・マスクパスでは呼ばれない。
+  ///          2D 描画（DrawBox / DrawString 等）や状態の更新は行わないこと。
+  virtual void OnRender3D() {}
+
   /// @brief ポストプロセスの後（最終画像の上）に呼ばれる 2D 描画
   /// @details 輪郭・水中・ビネット・ディゾルブなどの画面効果を受けたくない UI
   ///          （ポーズメニュー、設定画面など）はここで描く。OnRender で描いた HUD は

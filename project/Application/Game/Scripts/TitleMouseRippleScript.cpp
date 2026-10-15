@@ -9,6 +9,7 @@
 #include "RenderCommon.h"
 #include "Engine/Render/RenderContext.h"
 #include "Framework/App.h"
+#include "Game/Framework/TitleBlackboard.h"
 #include "Scene.h"
 
 #if RC_ENABLE_IMGUI
@@ -33,6 +34,8 @@
 //     ゲーム中には付けない方針。付けたければ Game.json に同じエンティティを足すだけ。
 //   - 波紋の UV 写像はワールド 100m 四方固定（Water.VS.hlsl と同じ）。画面外へ出た／
 //     範囲外（±50m）は AddWaveSourceAtWorld が捨てる。
+//   - カーソルの水面上の位置・速さ・クリックを TitleBlackboard に書く
+//     （船・漂流物が揺れる、小魚が逃げる、タコが反応する のに使う）。
 // ============================================================================
 
 /// @class TitleMouseRippleScript
@@ -134,6 +137,9 @@ protected:
   /// @param deltaTime 前フレームからの経過時間（秒）。カーソル速度の計算に使う
   void OnUpdate(float deltaTime) override {
     // 無効時・入力が無いとき・再生中限定で非再生時は、軌跡を切って何もしない
+    TitleBlackboard::State &bb = TitleBlackboard::Get();
+    bb.cursorValid = false;
+    bb.cursorClicked = false;
     SceneContext *ctx = GetSceneContext();
     if (!enabled || !ctx || !ctx->input) {
       prevValid_ = false;
@@ -171,6 +177,19 @@ protected:
 
     lastCount_ = 0;
 
+    // ---- 掲示板へ：水面上の位置となめらかにした速さ・クリック ----
+    {
+      RC::Vector3 raw{0.0f, 0.0f, 0.0f};
+      if (prevValid_) raw = {(hx - prevX_) / dt, 0.0f, (hz - prevZ_) / dt};
+      const float k = (std::min)(1.0f, dt * 12.0f);
+      smoothVel_.x += (raw.x - smoothVel_.x) * k;
+      smoothVel_.z += (raw.z - smoothVel_.z) * k;
+      bb.cursorValid = true;
+      bb.cursorPos = {hx, FindWaterY(), hz};
+      bb.cursorVel = smoothVel_;
+      bb.cursorClicked = ctx->input->IsMouseTrigger(0);
+    }
+
     // ---- クリック：1 発大きめ ----
     if (clickEnabled && ctx->input->IsMouseTrigger(0)) {
       const float s = pushDown ? -clickStrength : clickStrength;
@@ -207,7 +226,13 @@ protected:
   }
 
   /// @brief 破棄時に前フレームの交点を無効化する
-  void OnDestroy() override { prevValid_ = false; }
+  void OnDestroy() override {
+    prevValid_ = false;
+    TitleBlackboard::State &bb = TitleBlackboard::Get();
+    bb.cursorValid = false;
+    bb.cursorClicked = false;
+    bb.cursorVel = {0.0f, 0.0f, 0.0f};
+  }
 
 private:
   static constexpr float kMinMove = 0.02f; ///< これ未満の動き（m）は「止まっている」扱い
@@ -250,6 +275,7 @@ private:
   }
 
   bool prevValid_ = false;
+  RC::Vector3 smoothVel_{0.0f, 0.0f, 0.0f}; ///< 掲示板へ出すカーソルの速さ（なめらかにしたもの）
   float prevX_ = 0.0f;
   float prevZ_ = 0.0f;
   float lastSpeed_ = 0.0f;

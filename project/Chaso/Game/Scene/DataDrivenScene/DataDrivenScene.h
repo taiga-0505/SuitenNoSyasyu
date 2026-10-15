@@ -1103,6 +1103,18 @@ public:
     // エフェクト粒（水しぶき・泡・水柱）。種類ごとにまとめて描く（水は奥→手前）
     RC::DrawEffectParticles();
 
+    // NativeScript の OnRender3D（エンティティを持たない 3D の粒など。深度テストあり）
+    if (ctx.isPlaying()) {
+      for (auto& e : entities_) {
+        if (!e || e->IsPendingDestroy() || !e->IsActive()) continue;
+        if (auto* nsc = e->GetComponent<NativeScriptComponent>()) {
+          for (auto& entry : nsc->scripts) {
+            if (entry.instance) entry.instance->OnRender3D();
+          }
+        }
+      }
+    }
+
     // ワールド空間スプライト（深度テストありで 3D キューに積む）
     // モデルと同じキューに入るので、任意のモデルとモデルの間に挟まる
     drawSpriteLayer(SpriteSpace::World);

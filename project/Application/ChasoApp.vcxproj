@@ -208,6 +208,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClCompile Include="..\Application\Game\Scripts\TitleMouseRippleScript.cpp" />
     <ClCompile Include="..\Application\Game\Scripts\TitleReefScript.cpp" />
     <ClCompile Include="..\Application\Game\Scripts\TitleWeatherScript.cpp" />
+    <ClCompile Include="..\Application\Game\Scripts\TitleOctopusScript.cpp" />
     <ClCompile Include="..\Application\Game\Scripts\ShipVisualScript.cpp" />
     <ClCompile Include="..\Application\Game\Scripts\DeepRiseIntroScript.cpp" />
     <ClCompile Include="..\Application\Game\Scripts\DeathSinkScript.cpp" />
@@ -257,6 +258,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClInclude Include="..\Chaso\Game\Scene\DataDrivenScene\DataDrivenScene.h" />
     <ClInclude Include="..\Application\Game\Scripts\EnemyBaseScript.h" />
     <ClInclude Include="..\Application\Game\Framework\PartPose.h" />
+    <ClInclude Include="..\Application\Game\Framework\TitleBlackboard.h" />
   </ItemGroup>
   <ItemGroup>
     <!-- シェーダー (ビルドから除外 / 参照用) -->

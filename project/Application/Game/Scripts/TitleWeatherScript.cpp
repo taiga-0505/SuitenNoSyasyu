@@ -337,7 +337,10 @@ public:
     float streakTime = 0.035f;    ///< 筋の長さ（何秒ぶんの移動量を線にするか）
     float nearDepth = 3.0f;       ///< カメラからこの距離より手前には生まない
     RC::Vector4 color{0.78f, 0.86f, 0.95f, 0.38f};
-    float thickness = 1.3f;
+    float thickness = 1.3f;       ///< 筋の太さ（px）。3D 描画でも奥行きから m に換算してこの px 幅に揃える
+    /// 雨筋を 3D（深度テストあり）で描く。true ならロゴ・メニュー・船の後ろの雨は正しく隠れる。
+    /// false なら従来どおり 2D の線で画面の一番手前に描く
+    bool draw3D = true;
     bool ripples = true;
     int rippleMaxPerFrame = 16;   ///< 波紋の上限（シミュレーション全体で 64/フレームの共有枠）
     float rippleChance = 0.6f;    ///< 着水した粒が波紋を立てる確率
@@ -358,7 +361,8 @@ public:
               {"speed", speed},             {"wind", J3(wind)},
               {"stormWindScale", stormWindScale}, {"streakTime", streakTime},
               {"nearDepth", nearDepth},     {"color", J4(color)},
-              {"thickness", thickness},     {"ripples", ripples},
+              {"thickness", thickness},     {"draw3D", draw3D},
+              {"ripples", ripples},
               {"rippleMaxPerFrame", rippleMaxPerFrame}, {"rippleChance", rippleChance},
               {"rippleRadius", rippleRadius}, {"rippleStrength", rippleStrength},
               {"rings", rings},             {"ringMax", ringMax},
@@ -379,6 +383,7 @@ public:
       ReadF(j, "nearDepth", nearDepth);
       ReadV4(j, "color", color);
       ReadF(j, "thickness", thickness);
+      ReadB(j, "draw3D", draw3D);
       ReadB(j, "ripples", ripples);
       ReadI(j, "rippleMaxPerFrame", rippleMaxPerFrame);
       ReadF(j, "rippleChance", rippleChance);
@@ -748,6 +753,7 @@ public:
       ImGui::DragFloat("Near Depth", &rain.nearDepth, 0.1f, 0.2f, 40.0f);
       ImGui::ColorEdit4("Color", &rain.color.x);
       ImGui::DragFloat("Thickness", &rain.thickness, 0.05f, 0.5f, 6.0f);
+      ImGui::Checkbox("Draw 3D (depth test)", &rain.draw3D);
       ImGui::Checkbox("Ripples", &rain.ripples);
       ImGui::DragInt("Ripple Max/Frame", &rain.rippleMaxPerFrame, 1, 0, 32);
       ImGui::DragFloat("Ripple Chance", &rain.rippleChance, 0.01f, 0.0f, 1.0f);
@@ -807,6 +813,10 @@ protected:
     drops_.clear();
     flakes_.clear();
     rings_.clear();
+    // 3D の雨筋は白い単位立方体を細長く伸ばしてまとめて描く
+    rainModel_ = RC::LoadModel(kRainModelPath);
+    rainTex_ = RC::LoadTex(kWhiteTexPath);
+    rainModelLit_ = false;
     if (!rainSoundPath.empty()) rainClip_ = AudioEngine::Get().LoadClip(rainSoundPath);
     if (!thunderSoundPath.empty()) thunderClip_ = AudioEngine::Get().LoadClip(thunderSoundPath);
   }
@@ -855,6 +865,12 @@ protected:
     DrawFlash();
   }
 
+  /// @brief 雨筋を 3D パスに積む（深度テストあり。ロゴやメニューの後ろの雨は隠れる）
+  void OnRender3D() override {
+    if (!enabled || !rain.draw3D || !viewValid_ || camVisible_ <= 0.001f) return;
+    DrawRain3D();
+  }
+
   /// @brief 書き換えたシーンの値を戻し、雨音を止めてクリップを解放する
   void OnDestroy() override {
     RestoreScene();
@@ -862,6 +878,8 @@ protected:
     if (rainClip_ >= 0) AudioEngine::Get().UnloadClip(rainClip_);
     if (thunderClip_ >= 0) AudioEngine::Get().UnloadClip(thunderClip_);
     rainClip_ = thunderClip_ = -1;
+    if (rainModel_ >= 0) RC::UnloadModel(rainModel_);
+    rainModel_ = -1;
   }
 
 private:
@@ -1485,7 +1503,10 @@ private:
   void DrawRain(const RC::Matrix4x4 &view, const RC::Matrix4x4 &viewProj) {
     if (activeDrops_ <= 0 && rings_.empty()) return;
     const float vis = camVisible_;
+    // 3D で描くときは筋は OnRender3D 側。ここでは着水の輪だけ
+    const bool lines2D = !rain.draw3D;
     for (const Drop &d : drops_) {
+      if (!lines2D) break;
       if (!d.alive) continue;
       const RC::Vector3 tail =
           V3(d.pos.x - d.vel.x * rain.streakTime, d.pos.y - d.vel.y * rain.streakTime, d.pos.z - d.vel.z * rain.streakTime);
@@ -1514,6 +1535,66 @@ private:
       c.w *= vis * (1.0f - t);
       if (c.w <= 0.003f) continue;
       RC::DrawCircle(s, px, c, kWire, 1.0f);
+    }
+  }
+
+  /// @brief 雨筋 1 本の見た目（2D / 3D 共通）
+  /// @param d 雨粒
+  /// @param depth ビュー空間の奥行き
+  /// @return 不透明度の倍率（0 なら描かない）
+  float RainDropAlpha(const Drop &d, float depth) const {
+    // 生まれた直後はふわっと出す。手前ほど少し薄く（大きくぼけた粒の代わり）
+    const float fadeIn = Smooth01(d.age / 0.12f);
+    const float nearFade = Smooth01((depth - rain.nearDepth * 0.5f) / (rain.nearDepth * 1.5f));
+    return camVisible_ * fadeIn * (0.4f + 0.6f * nearFade);
+  }
+
+  /// @brief 雨筋を細長い箱のインスタンスとして 3D パスに積む
+  /// @details 筋は「streakTime 秒前の位置 → 現在位置」。太さは奥行きから m に換算して
+  ///          rain.thickness（px）に揃えるので、2D の線と同じ見た目の太さになる。
+  ///          不透明度は粒ごとに変えられない（1 回のインスタンス描画で色は 1 つ）ので、
+  ///          kAlphaBins 段階に振り分けてまとめて描く。
+  void DrawRain3D() {
+    if (activeDrops_ <= 0 || rainModel_ < 0 || !RC::IsModelReady(rainModel_)) return;
+    if (!rainModelLit_) {
+      // 雨筋は光の向きで暗くならないようにライティングを切る
+      RC::SetModelLightingMode(rainModel_, LightingMode::None);
+      rainModelLit_ = true;
+    }
+    for (auto &bin : rainBins_) bin.clear();
+    // 1px あたりのワールド長（奥行き 1m あたり）= 2 / (proj[1][1] × 画面の高さ)
+    const float pxPerDepth = 2.0f / (std::max)(proj_.m[1][1] * screenH_, 1.0f);
+    for (const Drop &d : drops_) {
+      if (!d.alive) continue;
+      const RC::Vector3 tail =
+          V3(d.pos.x - d.vel.x * rain.streakTime, d.pos.y - d.vel.y * rain.streakTime, d.pos.z - d.vel.z * rain.streakTime);
+      float vx, vy, vz, vw;
+      TransformPoint(d.pos, view_, vx, vy, vz, vw);
+      if (vz < rain.nearDepth * 0.5f) continue;
+      const float a = RainDropAlpha(d, vz);
+      if (a <= 0.01f) continue;
+      const RC::Vector3 dir = V3(d.pos.x - tail.x, d.pos.y - tail.y, d.pos.z - tail.z);
+      const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+      if (len < 1e-4f) continue;
+      // 単位立方体のローカル Y 軸を筋の向き n に合わせる（MakeAffineMatrix は X→Y→Z の順に回す）
+      //   Y 軸の行き先 = (-cos(rx)·sin(rz), cos(rx)·cos(rz), sin(rx)) なので
+      //   rx = asin(n.z), rz = atan2(-n.x, n.y)
+      const RC::Vector3 n = V3(dir.x / len, dir.y / len, dir.z / len);
+      Transform t{};
+      const float w = (std::max)(rain.thickness, 0.3f) * pxPerDepth * vz;
+      t.scale = V3(w, len, w);
+      t.rotation = V3(std::asin(std::clamp(n.z, -1.0f, 1.0f)), 0.0f, std::atan2(-n.x, n.y));
+      t.translation = V3((d.pos.x + tail.x) * 0.5f, (d.pos.y + tail.y) * 0.5f, (d.pos.z + tail.z) * 0.5f);
+      const int bin = std::clamp(static_cast<int>(a * static_cast<float>(kAlphaBins)), 0, kAlphaBins - 1);
+      rainBins_[bin].push_back(t);
+    }
+    for (int i = 0; i < kAlphaBins; ++i) {
+      if (rainBins_[i].empty()) continue;
+      RC::Vector4 c = rain.color;
+      c.w *= (static_cast<float>(i) + 0.5f) / static_cast<float>(kAlphaBins);
+      // 不透明扱い（α = 1）になると Opaque の PSO で描かれて半透明にならないので上限を付ける
+      c.w = (std::min)(c.w, 0.99f);
+      RC::DrawModelBatchColored(rainModel_, rainBins_[i], c, rainTex_, true);
     }
   }
 
@@ -1865,6 +1946,15 @@ private:
   float screenW_ = 1280.0f, screenH_ = 720.0f;
   RC::Matrix4x4 view_{};
   RC::Matrix4x4 proj_{};
+
+  // 3D の雨筋
+  static constexpr const char *kRainModelPath = "Resources/model/cube/cube.obj"; ///< 単位立方体（±0.5）
+  static constexpr const char *kWhiteTexPath = "Resources/white1x1.png";
+  static constexpr int kAlphaBins = 4; ///< 不透明度の段階数（= 1 フレームのインスタンス描画回数）
+  int rainModel_ = -1;
+  int rainTex_ = -1;
+  bool rainModelLit_ = false; ///< ライティングを切る設定を済ませたか（モデルの非同期ロード完了後に 1 回）
+  std::array<std::vector<Transform>, kAlphaBins> rainBins_;
 
   // 粒
   std::vector<Drop> drops_;

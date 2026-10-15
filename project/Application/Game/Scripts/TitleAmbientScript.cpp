@@ -13,6 +13,7 @@
 #include "Framework/App.h"
 #include "Scene.h"
 #include "Game/Framework/PartPose.h"
+#include "Game/Framework/TitleBlackboard.h"
 
 #if RC_ENABLE_IMGUI
 #include "imgui/imgui.h"
@@ -43,6 +44,13 @@
 //               サメと船は自分の航跡を拾って暴れるので波紋には乗せない（Gerstner のみ）
 //       gull  : カモメ。プリミティブの組み合わせ（BirdEnemyScript と同じ作り）で羽ばたく。群れで来ることがある
 //       ship  : 帆船。プリミティブの組み合わせ。波で揺れ、船首から航跡の波紋を出す
+//       fish  : 小魚の群れ。背中だけ水面に出して泳ぎ、カーソルが近づくと散って逃げる（驚くと跳ねる）
+//   - ぶつかり：船・漂流物はタイトル文字（TitleBlackboard 経由で位置を知る）に当たると文字を押しのけ、
+//     漂流物どうしは弾き合う。当たった瞬間に水しぶきと波紋を出す。
+//   - カーソルの波：船と漂流物は、カーソル（TitleMouseRippleScript が TitleBlackboard に書く）が
+//     近くで動くと揺れる（漂流物は押し流される）。船は自分の航跡を拾わないよう波紋の高さを読まないので、
+//     「近くでカーソルが動いた」ことを衝撃として揺れのばねに入れている。
+//   - サメはたまに水面から跳ねる（跳ぶ道筋にタイトル文字・メニューが無いときだけ）。
 //   - 水面に浮くもの（drift / ship）は、タイトル文字やメニューに重ならないよう
 //     「レーン」（ワールド Z の帯）の中だけを横切らせる。サメとカモメは画面をどの向きにも横切る
 //     （サメは文字の下に潜り、カモメは文字の上を飛ぶので重なっても破綻しない）。
@@ -216,6 +224,43 @@ public:
   RC::Vector4 shipHullColor = {0.36f, 0.22f, 0.12f, 1.0f};
   RC::Vector4 shipSailColor = {0.96f, 0.94f, 0.88f, 1.0f};
 
+  // ---- サメのジャンプ ----
+  bool sharkJump = true;           ///< たまに水面から跳ねる
+  float sharkJumpChance = 0.35f;   ///< 画面の内側にいるあいだ、1 秒あたりに跳ぶ確率
+  float sharkJumpHeight = 2.2f;    ///< 跳ぶ高さ（m。全長 4m のとき。全長に比例）
+  float sharkJumpDuration = 1.3f;  ///< 水を出てから戻るまでの秒数
+  float sharkJumpCooldown = 4.0f;  ///< 跳んだあと次に跳べるまでの秒数
+  int sharkJumpMax = 1;            ///< 1 回の横断で跳ぶ最大回数
+  float sharkJumpSplash = 1.0f;    ///< 跳ぶ・落ちるときの水しぶきの量の倍率
+
+  // ---- 小魚の群れ ----
+  KindParams fish = MakeFish();
+  int fishCount = 10;              ///< 1 群れの数（プールを作るときに使う）
+  float fishSpread = 1.6f;         ///< 群れの広がり（半径 m）
+  float fishFleeRadius = 4.0f;     ///< カーソルがこの距離に入ると逃げる（m）
+  float fishFleeSpeed = 5.5f;      ///< 逃げるときの最高速度（m/s）
+  float fishJumpChance = 0.5f;     ///< 驚いたときに跳ねる確率（1 匹ごと）
+  float fishIdleJumpChance = 0.03f; ///< 驚いていなくても跳ねる確率（1 秒・1 匹あたり）
+  float fishJumpHeight = 0.6f;     ///< 跳ねる高さ（m）
+  float fishSink = 0.03f;          ///< 体の中心を水面からどれだけ沈めるか（m）。背中だけ出る
+  RC::Vector4 fishColor = {0.16f, 0.22f, 0.30f, 1.0f};
+
+  // ---- ぶつかり（船・漂流物 ⇔ タイトル文字 / 漂流物どうし）----
+  bool contactEnabled = true;       ///< ぶつかりを有効にする
+  float contactLetterShake = 0.14f; ///< 船が文字に当たった瞬間の文字の揺れ（rad）
+  float contactSplash = 1.0f;       ///< ぶつかったときの水しぶきの量の倍率（0 で出さない）
+  float contactRipple = 0.12f;      ///< ぶつかったときの波紋の強さ（m）
+  float driftRestitution = 0.45f;   ///< 漂流物の跳ね返り係数（0: くっつく / 1: 完全に弾む）
+
+  // ---- カーソルの波で揺れる（船・漂流物）----
+  bool cursorRock = true;           ///< カーソルの動きで船・漂流物を揺らす
+  float cursorRockRadius = 5.0f;    ///< カーソルの波が届く距離（m）
+  float cursorRockStrength = 1.4f;  ///< 揺れの強さ（角加速度 rad/s²。カーソル 10 m/s・距離 0 のとき）
+  float cursorClickRock = 0.5f;     ///< クリックした瞬間の揺れ（角速度 rad/s。距離 0 のとき）
+  float cursorPush = 0.6f;          ///< 漂流物をカーソルの波で押し流す強さ（m/s²）
+  float rockFrequency = 0.55f;      ///< 揺れの固有振動数（Hz）
+  float rockDamping = 0.18f;        ///< 揺れの減衰比（小さいほど長く揺れる）
+
   /// @brief 全設定を JSON にする（種類ごとの設定は "shark" / "drift" / "gull" / "ship" のオブジェクト）
   /// @return JSON オブジェクト
   nlohmann::json Serialize() override {
@@ -259,6 +304,13 @@ public:
     js["wake"] = sharkWake;
     js["wakeLength"] = sharkWakeLength;
     js["foam"] = sharkFoam;
+    js["jump"] = sharkJump;
+    js["jumpChance"] = sharkJumpChance;
+    js["jumpHeight"] = sharkJumpHeight;
+    js["jumpDuration"] = sharkJumpDuration;
+    js["jumpCooldown"] = sharkJumpCooldown;
+    js["jumpMax"] = sharkJumpMax;
+    js["jumpSplash"] = sharkJumpSplash;
     j["shark"] = js;
 
     nlohmann::json jd = WriteKind(drift);
@@ -286,6 +338,31 @@ public:
     jp["hullColor"] = {shipHullColor.x, shipHullColor.y, shipHullColor.z, shipHullColor.w};
     jp["sailColor"] = {shipSailColor.x, shipSailColor.y, shipSailColor.z, shipSailColor.w};
     j["ship"] = jp;
+
+    nlohmann::json jf = WriteKind(fish);
+    jf["count"] = fishCount;
+    jf["spread"] = fishSpread;
+    jf["fleeRadius"] = fishFleeRadius;
+    jf["fleeSpeed"] = fishFleeSpeed;
+    jf["jumpChance"] = fishJumpChance;
+    jf["idleJumpChance"] = fishIdleJumpChance;
+    jf["jumpHeight"] = fishJumpHeight;
+    jf["sink"] = fishSink;
+    jf["color"] = {fishColor.x, fishColor.y, fishColor.z, fishColor.w};
+    j["fish"] = jf;
+
+    j["contact"] = {{"enabled", contactEnabled},
+                    {"letterShake", contactLetterShake},
+                    {"splash", contactSplash},
+                    {"ripple", contactRipple},
+                    {"driftRestitution", driftRestitution}};
+    j["cursorRock"] = {{"enabled", cursorRock},
+                       {"radius", cursorRockRadius},
+                       {"strength", cursorRockStrength},
+                       {"click", cursorClickRock},
+                       {"push", cursorPush},
+                       {"frequency", rockFrequency},
+                       {"damping", rockDamping}};
     return j;
   }
 
@@ -333,6 +410,13 @@ public:
       ReadB(js, "wake", sharkWake);
       ReadF(js, "wakeLength", sharkWakeLength);
       ReadF(js, "foam", sharkFoam);
+      ReadB(js, "jump", sharkJump);
+      ReadF(js, "jumpChance", sharkJumpChance);
+      ReadF(js, "jumpHeight", sharkJumpHeight);
+      ReadF(js, "jumpDuration", sharkJumpDuration);
+      ReadF(js, "jumpCooldown", sharkJumpCooldown);
+      ReadI(js, "jumpMax", sharkJumpMax);
+      ReadF(js, "jumpSplash", sharkJumpSplash);
     }
     if (j.contains("drift") && j["drift"].is_object()) {
       const auto &jd = j["drift"];
@@ -362,6 +446,38 @@ public:
       ReadF(jp, "foam", shipFoam);
       ReadVec4(jp, "hullColor", shipHullColor);
       ReadVec4(jp, "sailColor", shipSailColor);
+    }
+    if (j.contains("fish") && j["fish"].is_object()) {
+      const auto &jf = j["fish"];
+      ReadKind(jf, fish);
+      ReadI(jf, "count", fishCount);
+      ReadF(jf, "spread", fishSpread);
+      ReadF(jf, "fleeRadius", fishFleeRadius);
+      ReadF(jf, "fleeSpeed", fishFleeSpeed);
+      ReadF(jf, "jumpChance", fishJumpChance);
+      ReadF(jf, "idleJumpChance", fishIdleJumpChance);
+      ReadF(jf, "jumpHeight", fishJumpHeight);
+      ReadF(jf, "sink", fishSink);
+      ReadVec4(jf, "color", fishColor);
+      fishCount = std::clamp(fishCount, 1, 24);
+    }
+    if (j.contains("contact") && j["contact"].is_object()) {
+      const auto &jc = j["contact"];
+      ReadB(jc, "enabled", contactEnabled);
+      ReadF(jc, "letterShake", contactLetterShake);
+      ReadF(jc, "splash", contactSplash);
+      ReadF(jc, "ripple", contactRipple);
+      ReadF(jc, "driftRestitution", driftRestitution);
+    }
+    if (j.contains("cursorRock") && j["cursorRock"].is_object()) {
+      const auto &jr = j["cursorRock"];
+      ReadB(jr, "enabled", cursorRock);
+      ReadF(jr, "radius", cursorRockRadius);
+      ReadF(jr, "strength", cursorRockStrength);
+      ReadF(jr, "click", cursorClickRock);
+      ReadF(jr, "push", cursorPush);
+      ReadF(jr, "frequency", rockFrequency);
+      ReadF(jr, "damping", rockDamping);
     }
   }
 
@@ -438,6 +554,15 @@ public:
     ImGui::SameLine();
     ImGui::DragFloat("Len (m)##SharkWake", &sharkWakeLength, 0.1f, 0.5f, 30.0f);
     ImGui::DragFloat("Foam x##Shark", &sharkFoam, 0.01f, 0.0f, 5.0f);
+    ImGui::Checkbox("Jump##Shark", &sharkJump);
+    ImGui::SameLine();
+    if (ImGui::Button("Jump Now##Shark")) ForceSharkJump();
+    ImGui::DragFloat("Jump Chance /s##Shark", &sharkJumpChance, 0.01f, 0.0f, 5.0f);
+    ImGui::DragFloat("Jump Height##Shark", &sharkJumpHeight, 0.05f, 0.2f, 8.0f);
+    ImGui::DragFloat("Jump Duration##Shark", &sharkJumpDuration, 0.02f, 0.3f, 4.0f);
+    ImGui::DragFloat("Jump Cooldown##Shark", &sharkJumpCooldown, 0.1f, 0.0f, 30.0f);
+    ImGui::DragInt("Jump Max##Shark", &sharkJumpMax, 1, 0, 5);
+    ImGui::DragFloat("Jump Splash x##Shark", &sharkJumpSplash, 0.05f, 0.0f, 5.0f);
     kindUi("Drift", Kind::Drift, drift);
     ImGui::DragFloat("Tilt##Drift", &driftTiltScale, 0.05f, 0.0f, 2.0f);
     ImGui::DragFloat("Float Bias##Drift", &driftFloatBias, 0.01f, -1.0f, 1.0f);
@@ -453,7 +578,29 @@ public:
     ImGui::SameLine();
     ImGui::DragFloat("Len (m)##ShipWake", &shipWakeLength, 0.1f, 0.5f, 30.0f);
     ImGui::DragFloat("Foam x##Ship", &shipFoam, 0.01f, 0.0f, 5.0f);
-    ImGui::TextDisabled("poolSize / modelPath / lanes are applied on scene reload");
+    kindUi("Fish", Kind::Fish, fish);
+    ImGui::DragFloat("Spread (m)##Fish", &fishSpread, 0.05f, 0.3f, 6.0f);
+    ImGui::DragFloat("Flee Radius##Fish", &fishFleeRadius, 0.1f, 0.0f, 15.0f);
+    ImGui::DragFloat("Flee Speed##Fish", &fishFleeSpeed, 0.1f, 0.5f, 15.0f);
+    ImGui::DragFloat("Jump Chance (scared)##Fish", &fishJumpChance, 0.01f, 0.0f, 1.0f);
+    ImGui::DragFloat("Jump Chance (idle) /s##Fish", &fishIdleJumpChance, 0.005f, 0.0f, 1.0f);
+    ImGui::DragFloat("Jump Height##Fish", &fishJumpHeight, 0.02f, 0.05f, 3.0f);
+    ImGui::DragFloat("Sink##Fish", &fishSink, 0.005f, -0.2f, 0.5f);
+    ImGui::SeparatorText("Contact (ship / drift vs letters, drift vs drift)");
+    ImGui::Checkbox("Enabled##Contact", &contactEnabled);
+    ImGui::DragFloat("Letter Shake (rad)##Contact", &contactLetterShake, 0.005f, 0.0f, 0.3f);
+    ImGui::DragFloat("Splash x##Contact", &contactSplash, 0.05f, 0.0f, 5.0f);
+    ImGui::DragFloat("Ripple (m)##Contact", &contactRipple, 0.005f, 0.0f, 0.6f);
+    ImGui::DragFloat("Drift Restitution##Contact", &driftRestitution, 0.01f, 0.0f, 1.0f);
+    ImGui::SeparatorText("Cursor Rock (ship / drift)");
+    ImGui::Checkbox("Enabled##Rock", &cursorRock);
+    ImGui::DragFloat("Radius (m)##Rock", &cursorRockRadius, 0.1f, 0.5f, 20.0f);
+    ImGui::DragFloat("Strength##Rock", &cursorRockStrength, 0.02f, 0.0f, 10.0f);
+    ImGui::DragFloat("Click##Rock", &cursorClickRock, 0.01f, 0.0f, 3.0f);
+    ImGui::DragFloat("Drift Push##Rock", &cursorPush, 0.02f, 0.0f, 5.0f);
+    ImGui::DragFloat("Frequency (Hz)##Rock", &rockFrequency, 0.01f, 0.1f, 3.0f);
+    ImGui::DragFloat("Damping##Rock", &rockDamping, 0.01f, 0.01f, 1.0f);
+    ImGui::TextDisabled("poolSize / modelPath / lanes / fish count are applied on scene reload");
   }
 #endif
 
@@ -498,6 +645,9 @@ protected:
       if (!a.active) continue;
       UpdateActor(a, deltaTime);
     }
+    // カーソルの波で揺らす → ぶつかりを解く（どちらも次のフレームの姿勢に効く）
+    ApplyCursorWaves(deltaTime);
+    ResolveContacts(deltaTime);
 
     // 出現の間隔を数え、切れたら重み付きで抽選して出す
     if (!enabled || !view_.valid) return;
@@ -531,9 +681,11 @@ protected:
 
 private:
   using Mat3 = TitleAmbientDetail::Mat3;
+  static constexpr float kSharkJumpBoost = 1.6f; ///< 跳んでいるあいだの速さの倍率（勢いをつけて跳ぶ）
+  static constexpr float kRockMax = 0.4f;        ///< 揺れの上限（rad）
 
   /// @brief 出てくるものの種類
-  enum class Kind { Shark = 0, Drift, Gull, Ship, Count };
+  enum class Kind { Shark = 0, Drift, Gull, Ship, Fish, Count };
   /// @brief 部位の役割（固定 / 翼の内側 / 翼の外側 / 旗）。役割ごとに動かし方を変える
   enum class Role { Static, WingInner, WingOuter, Flag };
 
@@ -552,6 +704,21 @@ private:
     RC::Vector3 pos{};
     RC::Vector3 right{};
     float dist = 0.0f;
+  };
+
+  /// @brief 小魚 1 匹の状態（群れ = Actor 1 つが fish に持つ）
+  struct FishState {
+    RC::Vector3 pos{};        ///< 位置（xz。y は跳ねた高さだけ使う）
+    RC::Vector3 vel{};        ///< 速度（xz、m/s）
+    RC::Vector3 slot{};       ///< 群れの中での持ち場（群れの中心からの xz、進行方向ローカル）
+    float yaw = 0.0f;         ///< 向き（rad）
+    float wag = 0.0f;         ///< 尾びれの位相
+    float scare = 0.0f;       ///< 驚き（1 で全力で逃げる。だんだん 0 へ）
+    bool jumping = false;     ///< 跳ねている最中か
+    float jumpT = 0.0f;       ///< 跳ねてからの秒数
+    float jumpDur = 0.5f;     ///< 跳ねている秒数
+    float jumpH = 0.5f;       ///< 跳ねる高さ（m）
+    float rippleTimer = 0.0f; ///< 次に小さな波紋を出すまでの秒数
   };
 
   /// @brief 画面を横切るもの 1 体（プールの 1 要素）の状態
@@ -586,6 +753,29 @@ private:
     bool gliding = false;
     float glideTimer = 0.0f;
     float roll = 0.0f;
+
+    // 外から受けた動き（ぶつかり・カーソルの波）。船・漂流物
+    RC::Vector3 knock{};        ///< 進行とは別の xz 速度（m/s）。だんだん 0 へ戻る
+    float rockRoll = 0.0f;      ///< 揺れのロール（rad。右が上がると正）
+    float rockRollVel = 0.0f;   ///< その角速度（rad/s）
+    float rockPitch = 0.0f;     ///< 揺れのピッチ（rad。前が上がると正）
+    float rockPitchVel = 0.0f;  ///< その角速度（rad/s）
+    float spinKick = 0.0f;      ///< 漂流物：ぶつかって加わった自転（rad/s）
+    float slow = 0.0f;          ///< 船：ぶつかって落ちた速さの割合（0〜1）
+    float contactCooldown = 0.0f; ///< 漂流物どうしの水しぶきを連発しないための待ち（秒）
+    uint32_t letterContact = 0; ///< 前フレームに触れていた文字（ビット）。触れ始めの瞬間を知るため
+
+    // サメのジャンプ
+    bool jumping = false;
+    float jumpT = 0.0f;         ///< 跳んでからの秒数
+    float jumpDur = 1.3f;       ///< 跳んでいる秒数
+    float jumpH = 2.0f;         ///< 跳ぶ高さ（m）
+    float jumpCooldown = 0.0f;  ///< 次に跳べるまでの秒数
+    int jumps = 0;              ///< この横断で跳んだ回数
+
+    // 小魚の群れ
+    std::vector<FishState> fish;
+    int fishTarget = 0;         ///< プールを作り終えたときの数（作り終えるまで出さない）
   };
 
   /// @brief 真上視点の画面範囲（水面の高さでの半幅・半高さ）
@@ -630,7 +820,7 @@ private:
   static KindParams MakeDrift() {
     KindParams p;
     p.weight = 0.6f;
-    p.maxActive = 1;
+    p.maxActive = 2; // 2 つ同じ帯に入ると、向きによってはぶつかって弾き合う
     p.poolSize = 3; // 木箱・樽・流木を 1 つずつ
     p.speedMin = 0.6f;
     p.speedMax = 1.0f;
@@ -664,7 +854,21 @@ private:
     p.speedMax = 1.8f;
     p.scaleMin = 0.9f;
     p.scaleMax = 1.0f;
-    p.lanes = {{-2.8f, 1.2f}}; // 文字とメニューの間の帯（帆の幅 2m を含めて収まる）
+    // 文字とメニューの間の帯。上側は文字の足元に少しかかる（たまに文字を押しのけて進む）
+    p.lanes = {{-2.8f, 2.4f}};
+    return p;
+  }
+  /// @brief 小魚の群れの既定設定
+  /// @return 種類ごとの設定
+  static KindParams MakeFish() {
+    KindParams p;
+    p.weight = 0.9f;
+    p.maxActive = 1;
+    p.poolSize = 1;
+    p.speedMin = 1.3f;
+    p.speedMax = 2.0f;
+    p.scaleMin = 0.9f; // 1 で全長 ≒ 0.4m
+    p.scaleMax = 1.15f;
     return p;
   }
 
@@ -762,6 +966,7 @@ private:
     case Kind::Shark: return shark;
     case Kind::Drift: return drift;
     case Kind::Gull: return gull;
+    case Kind::Fish: return fish;
     default: return ship;
     }
   }
@@ -920,6 +1125,11 @@ private:
     for (int i = 0; i < (std::max)(drift.poolSize, 0); ++i) buildQueue_.push_back({Kind::Drift, i % 3});
     for (int i = 0; i < (std::max)(gull.poolSize, 0); ++i) buildQueue_.push_back({Kind::Gull, 0});
     for (int i = 0; i < (std::max)(ship.poolSize, 0); ++i) buildQueue_.push_back({Kind::Ship, 0});
+    // 小魚は 1 フレーム 1 匹ずつ（群れ全部を 1 フレームで作ると止まる）。variant = 群れの中の番号
+    const int nFish = std::clamp(fishCount, 1, 24);
+    for (int i = 0; i < (std::max)(fish.poolSize, 0); ++i) {
+      for (int k = 0; k < nFish; ++k) buildQueue_.push_back({Kind::Fish, k});
+    }
     buildMsTotal_ = 0.0;
     buildMsMax_ = 0.0;
   }
@@ -934,6 +1144,16 @@ private:
     case Kind::Shark: actors_.push_back(BuildShark(scene)); break;
     case Kind::Drift: actors_.push_back(BuildDrift(scene, b.variant)); break;
     case Kind::Gull: actors_.push_back(BuildGull(scene)); break;
+    case Kind::Fish:
+      // 群れの 1 匹目で群れ（Actor）を作り、以降は最後の群れへ足す
+      if (b.variant == 0 || actors_.empty() || actors_.back().kind != Kind::Fish) {
+        Actor school;
+        school.kind = Kind::Fish;
+        school.fishTarget = std::clamp(fishCount, 1, 24);
+        actors_.push_back(school);
+      }
+      AddFish(scene, actors_.back());
+      break;
     default: actors_.push_back(BuildShip(scene)); break;
     }
     // 1 体ぶんの生成時間を計測し、全部作り終えたらログに出す
@@ -1153,6 +1373,7 @@ private:
   /// @param a 対象
   /// @return 出してよければ true（サメ以外は常に true）
   static bool IsReady(const Actor &a) {
+    if (a.kind == Kind::Fish) return a.fishTarget > 0 && static_cast<int>(a.fish.size()) >= a.fishTarget;
     if (a.kind != Kind::Shark) return true;
     if (a.parts.empty()) return false;
     auto e = a.parts[0].entity.lock();
@@ -1215,14 +1436,28 @@ private:
       a->extent = 3.0f * a->scale;
       a->laneRadius = 1.1f * a->scale;
       break;
+    case Kind::Fish:
+      a->extent = fishSpread + 3.0f; // 逃げて群れから離れた魚が画面内で消えないよう広めに
+      a->laneRadius = fishSpread;
+      break;
     default:
       break;
     }
+    // 外から受けた動き・ジャンプの状態を戻す
+    a->knock = {0.0f, 0.0f, 0.0f};
+    a->rockRoll = a->rockRollVel = a->rockPitch = a->rockPitchVel = 0.0f;
+    a->spinKick = a->slow = a->contactCooldown = 0.0f;
+    a->letterContact = 0;
+    a->jumping = false;
+    a->jumpT = 0.0f;
+    a->jumpCooldown = 1.0f;
+    a->jumps = 0;
 
     if (!PlacePath(*a, p, view_.waterY)) {
       spawnFail_ = "lane busy (drift/ship already in every lane, or lane narrower than laneRadius)";
       return false;
     }
+    if (k == Kind::Fish) PlaceSchool(*a);
     Activate(*a);
     return true;
   }
@@ -1285,6 +1520,8 @@ private:
     for (const auto &o : actors_) {
       if (!o.active || &o == &self) continue;
       if (o.kind != Kind::Drift && o.kind != Kind::Ship) continue;
+      // 漂流物どうしは同じ帯に入ってよい（ぶつかって弾き合う）
+      if (contactEnabled && o.kind == Kind::Drift && self.kind == Kind::Drift) continue;
       if (std::fabs(o.pos.z - z) < o.laneRadius + self.laneRadius) return false;
     }
     return true;
@@ -1379,6 +1616,7 @@ private:
     case Kind::Drift: UpdateDrift(a, dt); break;
     case Kind::Gull: UpdateGull(a, dt); break;
     case Kind::Ship: UpdateShip(a, dt); break;
+    case Kind::Fish: UpdateFish(a, dt); break;
     default: break;
     }
     if (dt > 0.0f && IsGone(a)) Deactivate(a);
@@ -1574,21 +1812,32 @@ private:
     }
   }
 
-  /// @brief サメを蛇行・尾振りさせながら泳がせ、水面の高さに合わせて置き、頭から航跡を出す
+  /// @brief サメを蛇行・尾振りさせながら泳がせ、水面の高さに合わせて置き、頭から航跡を出す。たまに跳ねる
   /// @param a 対象
   /// @param dt 経過秒
   void UpdateShark(Actor &a, float dt) {
     using namespace TitleAmbientDetail;
-    // 進路：基準方位のまわりをゆっくり蛇行
+    // 跳ぶかどうか（画面の内側・待ち明け・跳ぶ道筋に文字やメニューが無い）
+    if (dt > 0.0f) {
+      a.jumpCooldown -= dt;
+      if (sharkJump && !a.jumping && a.jumps < sharkJumpMax && a.jumpCooldown <= 0.0f && a.t > 1.5f &&
+          Rand01() < sharkJumpChance * dt && CanSharkJump(a)) {
+        StartSharkJump(a);
+      }
+    }
+
+    // 進路：基準方位のまわりをゆっくり蛇行。跳んでいるあいだは踏み切った向きのまままっすぐ
     const float sway = sharkSwayDeg * kDeg * std::sin(a.t * kTwoPi / (std::max)(sharkSwayPeriod, 0.5f) + a.phase);
-    const float moveYaw = a.heading + sway;
+    const float moveYaw = a.jumping ? a.yaw : a.heading + sway;
+    const float speed = a.speed * (a.jumping ? kSharkJumpBoost : 1.0f);
     const RC::Vector3 f = Forward(moveYaw);
-    a.pos.x += f.x * a.speed * dt;
-    a.pos.z += f.z * a.speed * dt;
+    a.pos.x += f.x * speed * dt;
+    a.pos.z += f.z * speed * dt;
     a.yaw = moveYaw;
 
-    // 尾振り：頭寄りの点を軸に体を振る（頭はあまり動かず尾が大きく振れる）
-    const float wag = sharkWagDeg * kDeg * std::sin(a.t * kTwoPi * sharkWagFrequency + a.phase * 1.7f);
+    // 尾振り：頭寄りの点を軸に体を振る（頭はあまり動かず尾が大きく振れる）。空中では小さく
+    const float wagAmp = a.jumping ? 0.35f : 1.0f;
+    const float wag = wagAmp * sharkWagDeg * kDeg * std::sin(a.t * kTwoPi * sharkWagFrequency + a.phase * 1.7f);
     const float visYaw = moveYaw + wag;
     const float pivot = 0.3f * a.scale;
     const RC::Vector3 fv = Forward(visYaw);
@@ -1597,11 +1846,28 @@ private:
 
     const float base = hasWater_ ? water_.baseHeight : view_.waterY;
     const float h = WaterHeight(center.x, center.z);
-    const float y = base + (h - base) * sharkWaveFollow - sharkSink;
+    float y = base + (h - base) * sharkWaveFollow - sharkSink;
+
+    // ジャンプ：放物線で水面から出て戻る。上り坂は頭を上げ、下りは頭から落ちる
+    float pitchUp = 0.0f, roll = 0.0f;
+    if (a.jumping) {
+      a.jumpT += dt;
+      const float dur = (std::max)(a.jumpDur, 0.1f);
+      const float u = std::clamp(a.jumpT / dur, 0.0f, 1.0f);
+      const float rise = a.jumpH + sharkSink;
+      y += rise * 4.0f * u * (1.0f - u);
+      const float vy = rise * 4.0f * (1.0f - 2.0f * u) / dur;
+      pitchUp = std::atan2(vy, (std::max)(speed, 0.5f)) * 0.9f;
+      roll = 0.22f * std::sin(kPi * u) * ((a.phase > kPi) ? 1.0f : -1.0f); // 少しひねる
+      if (u >= 1.0f) {
+        a.jumping = false;
+        SharkSplash({center.x + fv.x * 0.3f * a.scale, 0.0f, center.z + fv.z * 0.3f * a.scale}, a.scale, true);
+      }
+    }
 
     if (!a.parts.empty()) {
       const Part &p = a.parts[0];
-      const Mat3 rot = MatMul(RotY(sharkModelYawOffsetDeg * kDeg), RotY(visYaw));
+      const Mat3 rot = MatMul(RotY(sharkModelYawOffsetDeg * kDeg), BodyMatrix(visYaw, pitchUp, roll));
       auto e = p.entity.lock();
       if (e) {
         if (auto *tr = e->GetComponent<TransformComponent>()) {
@@ -1613,7 +1879,8 @@ private:
       }
     }
 
-    if (sharkWake && dt > 0.0f) {
+    // 空中では航跡を出さない（着水して泳ぎ出したらまた出す）
+    if (sharkWake && dt > 0.0f && !a.jumping) {
       const float nose = 0.45f * a.scale;
       // 尾は頭と反対側へ同じくらい。水面に出ているのは背中と背ビレだけなので幅は細め
       const RC::Vector3 tail = {center.x - fv.x * nose, 0.0f, center.z - fv.z * nose};
@@ -1630,10 +1897,12 @@ private:
     const RC::Vector3 f = Forward(a.heading);
     // 波に揺られて速さが少し揺らぐ
     const float surge = 1.0f + 0.25f * std::sin(a.t * 0.9f + a.phase);
-    a.pos.x += f.x * a.speed * surge * dt;
-    a.pos.z += f.z * a.speed * surge * dt;
-    a.spin += a.turn * dt;
+    // 進行 ＋ ぶつかり・カーソルの波で受けた速さ（knock）
+    a.pos.x += (f.x * a.speed * surge + a.knock.x) * dt;
+    a.pos.z += (f.z * a.speed * surge + a.knock.z) * dt;
+    a.spin += (a.turn + a.spinKick) * dt;
     a.yaw = a.heading; // 退場判定は進行方向で行う
+    StepReactions(a, dt);
 
     // 形ごとの浮かせ量と、水面を引く前後・左右の距離（木箱 / 樽 / 流木）
     float floatOffset = 0.1f, halfLen = 0.45f, halfWid = 0.45f;
@@ -1647,7 +1916,8 @@ private:
     WaterPose(a.pos, a.spin, halfLen, halfWid, y, pitch, roll, /*ripple=*/true);
     // ぷかぷか：波とは別に小さく上下
     y += floatOffset * a.scale + driftFloatBias + 0.04f * std::sin(a.t * 2.1f + a.phase);
-    const Mat3 body = BodyMatrix(a.spin, pitch * driftTiltScale, roll * driftTiltScale);
+    const Mat3 body =
+        BodyMatrix(a.spin, pitch * driftTiltScale + a.rockPitch, roll * driftTiltScale + a.rockRoll);
     PlaceRigid(a, {a.pos.x, y, a.pos.z}, body);
   }
 
@@ -1715,14 +1985,20 @@ private:
   void UpdateShip(Actor &a, float dt) {
     using namespace TitleAmbientDetail;
     const RC::Vector3 f = Forward(a.heading);
-    a.pos.x += f.x * a.speed * dt;
-    a.pos.z += f.z * a.speed * dt;
+    // 文字にぶつかると少し減速する（slow）。押された分（knock）も足す
+    const float slowF = 1.0f - 0.6f * std::clamp(a.slow, 0.0f, 1.0f);
+    a.pos.x += (f.x * a.speed * slowF + a.knock.x) * dt;
+    a.pos.z += (f.z * a.speed * slowF + a.knock.z) * dt;
     a.yaw = a.heading;
+    StepReactions(a, dt);
 
     float y = 0.0f, pitch = 0.0f, roll = 0.0f;
     WaterPose(a.pos, a.heading, 2.0f * a.scale, 0.8f * a.scale, y, pitch, roll);
     const float sway = 0.03f * std::sin(a.t * 0.7f + a.phase); // 波とは別の小さな横揺れ
-    const Mat3 body = BodyMatrix(a.heading, pitch * shipTiltScale, roll * shipTiltScale + sway);
+    // 揺れ（rock）はカーソルの波・ぶつかりで入る。上下も少し連動させる（傾くと沈む側がある）
+    y -= 0.25f * a.scale * (std::fabs(a.rockRoll) + std::fabs(a.rockPitch));
+    const Mat3 body =
+        BodyMatrix(a.heading, pitch * shipTiltScale + a.rockPitch, roll * shipTiltScale + sway + a.rockRoll);
     const float flag = 0.35f * std::sin(a.t * 5.0f + a.phase);
     PlaceRigid(a, {a.pos.x, y, a.pos.z}, body, flag);
 
@@ -1733,6 +2009,583 @@ private:
       const RC::Vector3 stern = {a.pos.x - f.x * sternOff, 0.0f, a.pos.z - f.z * sternOff};
       Wake(a, {a.pos.x + f.x * bow, 0.0f, a.pos.z + f.z * bow}, f, shipWakeLength, stern, 0.8f * a.scale, shipFoam,
            dt);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // 外から受けた動き（揺れ・押され・ぶつかり）
+  // ------------------------------------------------------------------
+
+  /// @brief 揺れのばねを 1 ステップ進め、押された速さ・自転・減速を少しずつ戻す
+  /// @param a 対象（船・漂流物）
+  /// @param dt 経過秒
+  void StepReactions(Actor &a, float dt) {
+    if (dt <= 0.0f) return;
+    using namespace TitleAmbientDetail;
+    // 減衰付きのばね：θ'' = -ω²θ - 2ζωθ'（半陰的オイラー。ω ≒ 3.5 rad/s なら 60fps で十分安定）
+    const float w = kTwoPi * (std::max)(rockFrequency, 0.05f);
+    const float c = 2.0f * std::clamp(rockDamping, 0.0f, 2.0f) * w;
+    a.rockRollVel += (-w * w * a.rockRoll - c * a.rockRollVel) * dt;
+    a.rockPitchVel += (-w * w * a.rockPitch - c * a.rockPitchVel) * dt;
+    a.rockRoll = std::clamp(a.rockRoll + a.rockRollVel * dt, -kRockMax, kRockMax);
+    a.rockPitch = std::clamp(a.rockPitch + a.rockPitchVel * dt, -kRockMax, kRockMax);
+    const float kd = std::exp(-1.4f * dt);
+    a.knock = {a.knock.x * kd, 0.0f, a.knock.z * kd};
+    a.spinKick *= std::exp(-1.0f * dt);
+    a.slow *= std::exp(-1.2f * dt);
+    a.contactCooldown = (std::max)(0.0f, a.contactCooldown - dt);
+  }
+
+  /// @brief 船・漂流物の今の速度（xz、m/s）
+  /// @param a 対象
+  /// @return 速度
+  RC::Vector3 ActorVelocity(const Actor &a) const {
+    const RC::Vector3 f = TitleAmbientDetail::Forward(a.heading);
+    float sp = a.speed;
+    if (a.kind == Kind::Ship) sp *= 1.0f - 0.6f * std::clamp(a.slow, 0.0f, 1.0f);
+    return {f.x * sp + a.knock.x, 0.0f, f.z * sp + a.knock.z};
+  }
+
+  /// @brief 当たり判定の円（真上から見た船体・漂流物を円いくつかで覆う）
+  struct Circle {
+    float x = 0.0f, z = 0.0f, r = 0.0f;
+  };
+
+  /// @brief 船・漂流物を覆う円を求める
+  /// @param a 対象
+  /// @param out 円の書き込み先（最大 3 つ）
+  /// @return 円の数（船・漂流物以外は 0）
+  int HullCircles(const Actor &a, Circle out[3]) const {
+    using namespace TitleAmbientDetail;
+    if (a.kind == Kind::Ship) {
+      // 船体 前後 ±2.0・左右 ±0.8、帆の幅 2.0（scale 1）を 3 つの円で覆う
+      const RC::Vector3 f = Forward(a.heading);
+      for (int k = 0; k < 3; ++k) {
+        const float o = static_cast<float>(k - 1) * 1.6f * a.scale;
+        out[k] = {a.pos.x + f.x * o, a.pos.z + f.z * o, 0.95f * a.scale};
+      }
+      return 3;
+    }
+    if (a.kind == Kind::Drift) {
+      if (a.variant == 2) {
+        // 流木は細長いので軸に沿って 2 つ。円柱の軸は本体ローカル X（自転 spin で回る）
+        const float c = std::cos(a.spin), s = std::sin(a.spin);
+        const float o = 0.55f * a.scale;
+        out[0] = {a.pos.x + c * o, a.pos.z - s * o, 0.32f * a.scale};
+        out[1] = {a.pos.x - c * o, a.pos.z + s * o, 0.32f * a.scale};
+        return 2;
+      }
+      out[0] = {a.pos.x, a.pos.z, (a.variant == 1 ? 0.5f : 0.55f) * a.scale};
+      return 1;
+    }
+    return 0;
+  }
+
+  /// @brief ぶつかった場所に小さな水しぶき・波紋・白波を出す
+  /// @param x ワールド X
+  /// @param z ワールド Z
+  /// @param power 強さ（1 で船が文字に当たったくらい）
+  void ContactSplash(float x, float z, float power) {
+    if (contactSplash > 0.0f) {
+      const int n = std::clamp(static_cast<int>(6.0f * power * contactSplash + 0.5f), 0, 24);
+      for (int i = 0; i < n; ++i) {
+        RC::EffectParticleSpawn sp;
+        sp.kind = RC::EffectParticleKind::Wake;
+        sp.position = {x + Rand(-0.2f, 0.2f), view_.waterY + 0.05f, z + Rand(-0.2f, 0.2f)};
+        sp.scale = Rand(0.05f, 0.11f) * std::sqrt((std::max)(power, 0.1f));
+        sp.color = {0.88f, 0.94f, 1.0f, 0.9f};
+        RC::SpawnEffectParticle(sp);
+      }
+    }
+    if (contactRipple > 0.0f) RC::AddWaveSourceAtWorld(x, z, 0.012f, -contactRipple * power);
+    RC::AddCrestFoamSourceAtWorld(x, z, 0.008f, 0.5f * power);
+  }
+
+  /// @brief カーソル（TitleBlackboard）が近くで動いた・クリックしたときに、船・漂流物を揺らす（漂流物は押し流す）
+  /// @param dt 経過秒
+  /// @details 船は自分の航跡を拾って暴れるので波紋の高さを読まない（WaterHeight 参照）。
+  ///          代わりに「カーソルの波が来た」ことを揺れのばねへの衝撃として入れる。
+  ///          カーソル側の舷（前後）が先に持ち上がる向きに入れ、あとはばねで揺り返す。
+  void ApplyCursorWaves(float dt) {
+    const TitleBlackboard::State &bb = TitleBlackboard::Get();
+    if (!cursorRock || !bb.cursorValid || dt <= 0.0f) return;
+    using namespace TitleAmbientDetail;
+    const float R = (std::max)(cursorRockRadius, 0.1f);
+    const float cs = std::sqrt(bb.cursorVel.x * bb.cursorVel.x + bb.cursorVel.z * bb.cursorVel.z);
+    const float move = std::clamp(cs / 10.0f, 0.0f, 1.5f); // 10 m/s で 1
+    for (auto &a : actors_) {
+      if (!a.active || (a.kind != Kind::Ship && a.kind != Kind::Drift)) continue;
+      const float dx = a.pos.x - bb.cursorPos.x;
+      const float dz = a.pos.z - bb.cursorPos.z;
+      const float d = std::sqrt(dx * dx + dz * dz);
+      const float reach = R + (a.kind == Kind::Ship ? 2.0f : 0.5f) * a.scale;
+      if (d >= reach) continue;
+      float fall = 1.0f - d / reach;
+      fall *= fall;
+      const float facing = (a.kind == Kind::Drift) ? a.spin : a.heading;
+      const RC::Vector3 f = Forward(facing);
+      const RC::Vector3 r = {f.z, 0.0f, -f.x};
+      // カーソル → 本体 の向き（真上にいるときは前から来たことにする）
+      const float nx = (d > 1e-3f) ? dx / d : -f.x;
+      const float nz = (d > 1e-3f) ? dz / d : -f.z;
+      const float side = nx * r.x + nz * r.z; // 正 = カーソルが左舷側
+      const float fore = nx * f.x + nz * f.z; // 正 = カーソルが後ろ
+      const float light = (a.kind == Kind::Ship) ? 1.0f : 2.2f; // 軽い物ほどよく揺れる
+      const float acc = cursorRockStrength * move * fall * light;
+      // カーソル側が先に持ち上がる：右舷側（side < 0）なら右が上がる（roll 正）
+      a.rockRollVel += -side * acc * dt;
+      a.rockPitchVel += -fore * acc * dt;
+      if (bb.cursorClicked) {
+        const float imp = cursorClickRock * fall * light;
+        a.rockRollVel += -side * imp;
+        a.rockPitchVel += -fore * imp;
+      }
+      if (a.kind == Kind::Drift) {
+        // 漂流物は波に押されて流れる（カーソルから離れる向き）
+        float push = cursorPush * move * fall * dt;
+        if (bb.cursorClicked) {
+          push += cursorPush * 1.5f * fall;
+          a.spinKick += Rand(-1.0f, 1.0f) * fall;
+        }
+        a.knock.x += nx * push;
+        a.knock.z += nz * push;
+      }
+    }
+  }
+
+  /// @brief 船・漂流物 ⇔ タイトル文字、漂流物 ⇔ 漂流物・船 のぶつかりを解く
+  /// @param dt 経過秒
+  /// @details 文字の位置は TitleScreenScript が TitleBlackboard に書いたもの。
+  ///          船は重いので文字を押しのける（文字はばねで戻る）。漂流物は軽いので自分が跳ね返り、
+  ///          文字はわずかに押されるだけ。触れ始めた瞬間だけ水しぶき・揺れを出す。
+  void ResolveContacts(float dt) {
+    if (!contactEnabled || dt <= 0.0f) return;
+    using namespace TitleAmbientDetail;
+    const TitleBlackboard::State &bb = TitleBlackboard::Get();
+    const bool lettersOn = bb.lettersInteractive;
+    const size_t letterCount = (std::min)(bb.letters.size(), static_cast<size_t>(32));
+    const float e = std::clamp(driftRestitution, 0.0f, 1.0f);
+
+    // ---- 文字 ----
+    for (auto &a : actors_) {
+      if (!a.active || (a.kind != Kind::Ship && a.kind != Kind::Drift)) continue;
+      Circle cs[3];
+      const int nc = HullCircles(a, cs);
+      uint32_t touching = 0;
+      for (size_t i = 0; lettersOn && i < letterCount; ++i) {
+        const TitleBlackboard::Letter &L = bb.letters[i];
+        if (!L.visible) continue;
+        // いちばん深くめり込んでいる円を採る
+        float best = 0.0f;
+        RC::Vector3 bestN{};
+        int bestC = -1;
+        for (int k = 0; k < nc; ++k) {
+          RC::Vector3 n{};
+          float depth = 0.0f;
+          if (TitleBlackboard::CircleVsLetter(L, cs[k].x, cs[k].z, cs[k].r, n, depth) && depth > best) {
+            best = depth;
+            bestN = n;
+            bestC = k;
+          }
+        }
+        if (bestC < 0) continue;
+        const uint32_t bit = 1u << i;
+        touching |= bit;
+        const bool first = (a.letterContact & bit) == 0;
+        const float cx = cs[bestC].x - bestN.x * cs[bestC].r;
+        const float cz = cs[bestC].z - bestN.z * cs[bestC].r;
+        const RC::Vector3 f = Forward(a.kind == Kind::Drift ? a.spin : a.heading);
+        const RC::Vector3 r = {f.z, 0.0f, -f.x};
+        if (a.kind == Kind::Ship) {
+          // 船は進路を変えない。文字をめり込んだぶんだけ押しのける
+          TitleBlackboard::PushLetter(i, {-bestN.x * best, 0.0f, -bestN.z * best}, first ? contactLetterShake : 0.0f);
+          if (first) {
+            ContactSplash(cx, cz, 1.0f);
+            a.slow = (std::max)(a.slow, 0.6f);
+            // 当たった舷と反対へ傾き、船首なら頭が下がる
+            a.rockRollVel += (bestN.x * r.x + bestN.z * r.z) * 0.25f;
+            a.rockPitchVel -= std::fabs(bestN.x * f.x + bestN.z * f.z) * 0.12f;
+          }
+        } else {
+          // 漂流物はほとんど自分が動く（文字は少しだけ）
+          a.pos.x += bestN.x * best * 0.85f;
+          a.pos.z += bestN.z * best * 0.85f;
+          TitleBlackboard::PushLetter(i, {-bestN.x * best * 0.15f, 0.0f, -bestN.z * best * 0.15f},
+                                      first ? contactLetterShake * 0.3f : 0.0f);
+          const RC::Vector3 v = ActorVelocity(a);
+          const float vn = v.x * bestN.x + v.z * bestN.z;
+          if (vn < 0.0f) {
+            a.knock.x -= bestN.x * vn * (1.0f + e);
+            a.knock.z -= bestN.z * vn * (1.0f + e);
+          }
+          if (first) {
+            ContactSplash(cx, cz, 0.5f);
+            a.spinKick += Rand(-1.0f, 1.0f) * 0.9f;
+            a.rockRollVel += (bestN.x * r.x + bestN.z * r.z) * 0.5f;
+          }
+        }
+      }
+      a.letterContact = touching;
+    }
+
+    // ---- 漂流物 ⇔ 漂流物 / 漂流物 ⇔ 船 ----
+    for (size_t i = 0; i < actors_.size(); ++i) {
+      Actor &A = actors_[i];
+      if (!A.active || (A.kind != Kind::Ship && A.kind != Kind::Drift)) continue;
+      for (size_t j = i + 1; j < actors_.size(); ++j) {
+        Actor &B = actors_[j];
+        if (!B.active || (B.kind != Kind::Ship && B.kind != Kind::Drift)) continue;
+        if (A.kind == Kind::Ship && B.kind == Kind::Ship) continue;
+        Circle ca[3], cb[3];
+        const int na = HullCircles(A, ca);
+        const int nb = HullCircles(B, cb);
+        float pen = 0.0f, nx = 0.0f, nz = 0.0f, px = 0.0f, pz = 0.0f;
+        for (int p = 0; p < na; ++p) {
+          for (int q = 0; q < nb; ++q) {
+            const float dx = ca[p].x - cb[q].x;
+            const float dz = ca[p].z - cb[q].z;
+            const float d = std::sqrt(dx * dx + dz * dz);
+            const float o = ca[p].r + cb[q].r - d;
+            if (o <= pen) continue;
+            pen = o;
+            nx = (d > 1e-4f) ? dx / d : 1.0f; // B → A
+            nz = (d > 1e-4f) ? dz / d : 0.0f;
+            px = cb[q].x + nx * cb[q].r;
+            pz = cb[q].z + nz * cb[q].r;
+          }
+        }
+        if (pen <= 0.0f) continue;
+
+        // 押し出し：船は動かさない。漂流物どうしは半分ずつ
+        const float wa = (A.kind == Kind::Ship) ? 0.0f : (B.kind == Kind::Ship ? 1.0f : 0.5f);
+        const float wb = 1.0f - wa;
+        A.pos.x += nx * pen * wa;
+        A.pos.z += nz * pen * wa;
+        B.pos.x -= nx * pen * wb;
+        B.pos.z -= nz * pen * wb;
+
+        // 速度：近づく向きの成分を跳ね返す（重さは「船 ＝ 無限大」「漂流物どうし ＝ 等しい」）
+        const RC::Vector3 va = ActorVelocity(A);
+        const RC::Vector3 vb = ActorVelocity(B);
+        const float vrel = (va.x - vb.x) * nx + (va.z - vb.z) * nz;
+        if (vrel < 0.0f) {
+          const float jimp = -(1.0f + e) * vrel;
+          A.knock.x += nx * jimp * wa;
+          A.knock.z += nz * jimp * wa;
+          B.knock.x -= nx * jimp * wb;
+          B.knock.z -= nz * jimp * wb;
+        }
+
+        if (A.contactCooldown <= 0.0f && B.contactCooldown <= 0.0f) {
+          ContactSplash(px, pz, 0.6f);
+          // 正面衝突で押し合ったまま止まらないよう、帯の上下（z）へ少し逃がす
+          const float sideSign = (A.pos.z >= B.pos.z) ? 1.0f : -1.0f;
+          A.knock.z += sideSign * 0.3f * wa;
+          B.knock.z -= sideSign * 0.3f * wb;
+          for (Actor *x : {&A, &B}) {
+            if (x->kind != Kind::Drift) continue;
+            x->spinKick += Rand(-1.2f, 1.2f);
+            x->rockRollVel += Rand(-0.6f, 0.6f);
+            x->rockPitchVel += Rand(-0.4f, 0.4f);
+            x->contactCooldown = 0.4f;
+          }
+        }
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // サメのジャンプ
+  // ------------------------------------------------------------------
+
+  /// @brief 今跳んでよいか（画面の内側で、跳ぶ道筋と着水点に文字・メニューが無い）
+  /// @param a サメ
+  /// @return 跳んでよければ true
+  bool CanSharkJump(const Actor &a) const {
+    using namespace TitleAmbientDetail;
+    if (!view_.valid) return false;
+    const RC::Vector3 f = Forward(a.yaw);
+    const float len = a.speed * kSharkJumpBoost * (std::max)(sharkJumpDuration, 0.1f);
+    const float hw = view_.halfW - 2.0f, hh = view_.halfH - 2.0f;
+    const TitleBlackboard::State &bb = TitleBlackboard::Get();
+    const float r = 0.35f * a.scale + 0.6f;
+    for (int k = 0; k <= 4; ++k) {
+      const float t = static_cast<float>(k) / 4.0f;
+      const float x = a.pos.x + f.x * len * t;
+      const float z = a.pos.z + f.z * len * t;
+      // 踏み切りから着水まで画面の内側（跳ぶところが見えるように）
+      if (std::fabs(x - view_.cx) > hw || std::fabs(z - view_.cz) > hh) return false;
+      RC::Vector3 n{};
+      float depth = 0.0f;
+      for (const auto &L : bb.letters) {
+        if (L.visible && TitleBlackboard::CircleVsLetter(L, x, z, r, n, depth)) return false;
+      }
+      for (const auto &L : bb.menu) {
+        if (L.visible && TitleBlackboard::CircleVsLetter(L, x, z, r, n, depth)) return false;
+      }
+    }
+    return true;
+  }
+
+  /// @brief サメを跳ばせる（踏み切りの水しぶきを出す）
+  /// @param a サメ
+  void StartSharkJump(Actor &a) {
+    using namespace TitleAmbientDetail;
+    a.jumping = true;
+    a.jumpT = 0.0f;
+    a.jumpDur = (std::max)(sharkJumpDuration, 0.3f) * Rand(0.9f, 1.1f);
+    a.jumpH = sharkJumpHeight * (a.scale / 4.0f) * Rand(0.85f, 1.15f);
+    ++a.jumps;
+    a.jumpCooldown = sharkJumpCooldown + a.jumpDur;
+    const RC::Vector3 f = Forward(a.yaw);
+    SharkSplash({a.pos.x + f.x * 0.3f * a.scale, 0.0f, a.pos.z + f.z * 0.3f * a.scale}, a.scale, false);
+  }
+
+  /// @brief デバッグ用：出ているサメをすぐ跳ばせる（いなければ出す）
+  void ForceSharkJump() {
+    for (auto &a : actors_) {
+      if (a.active && a.kind == Kind::Shark) {
+        if (!a.jumping) StartSharkJump(a);
+        spawnNote_ = "Shark: jump";
+        return;
+      }
+    }
+    spawnNote_ = view_.valid && TrySpawn(Kind::Shark) ? "Shark: spawned (press again to jump)" : "Shark: " + spawnFail_;
+  }
+
+  /// @brief サメが水を出る・落ちるときの水しぶき・波紋・泡
+  /// @param p 位置（xz）
+  /// @param scale サメの全長（m）
+  /// @param landing 着水なら true（踏み切りより大きい）
+  void SharkSplash(const RC::Vector3 &p, float scale, bool landing) {
+    const float s = std::clamp(scale / 4.0f, 0.5f, 2.0f) * (std::max)(sharkJumpSplash, 0.0f);
+    if (s <= 0.0f) return;
+    const int n = std::clamp(static_cast<int>((landing ? 22.0f : 12.0f) * s + 0.5f), 0, 64);
+    for (int i = 0; i < n; ++i) {
+      RC::EffectParticleSpawn sp;
+      sp.kind = RC::EffectParticleKind::Splash;
+      sp.position = {p.x + Rand(-0.3f, 0.3f), view_.waterY + 0.05f, p.z + Rand(-0.3f, 0.3f)};
+      sp.scale = Rand(0.12f, 0.26f) * std::sqrt(s);
+      sp.color = {0.88f, 0.94f, 1.0f, 0.85f};
+      sp.impactFactor = landing ? Rand(0.35f, 0.55f) : Rand(0.25f, 0.4f);
+      RC::SpawnEffectParticle(sp);
+    }
+    if (landing) {
+      RC::EffectParticleSpawn col;
+      col.kind = RC::EffectParticleKind::HeavySplash;
+      col.position = {p.x, view_.waterY, p.z};
+      col.scale = 0.7f * s;
+      col.color = {0.9f, 0.95f, 1.0f, 1.0f};
+      col.impactFactor = 0.12f; // 水柱の高さ ≒ 1.8m
+      RC::SpawnEffectParticle(col);
+    }
+    RC::AddWaveSourceAtWorld(p.x, p.z, 0.03f, -(landing ? 0.4f : 0.25f) * s);
+    RC::AddFoamSourceAtWorld(p.x, p.z, 0.02f, 1.2f * s);
+    RC::AddCrestFoamSourceAtWorld(p.x, p.z, 0.015f, 1.0f * s);
+  }
+
+  // ------------------------------------------------------------------
+  // 小魚の群れ
+  // ------------------------------------------------------------------
+
+  /// @brief 群れに小魚を 1 匹足す（胴の楕円球 ＋ 尾びれの板。最初は非アクティブ）
+  /// @param scene 対象のシーン
+  /// @param school 足す先の群れ
+  void AddFish(Scene *scene, Actor &school) {
+    using namespace TitleAmbientDetail;
+    const RC::Vector4 tailColor = {fishColor.x * 0.8f, fishColor.y * 0.8f, fishColor.z * 0.8f, fishColor.w};
+    // +Z が頭。scale 1 で全長 ≒ 0.4m（球は半径）
+    const size_t before = school.parts.size();
+    AddPrimitive(scene, school, "AmbientFish", PrimitiveType::Sphere, fishColor, {0, 0, 0}, {0.06f, 0.045f, 0.2f});
+    AddPrimitive(scene, school, "AmbientFish_tail", PrimitiveType::Box, tailColor, {0, 0, -0.22f},
+                 {0.16f, 0.02f, 0.1f}, Identity(), Role::Flag);
+    // 部位は「胴・尾」の 2 つ組で並べる（UpdateFish が i*2, i*2+1 で引く）。片方だけ作れたら捨てて 1 匹減らす
+    if (school.parts.size() != before + 2) {
+      while (school.parts.size() > before) {
+        if (auto e = school.parts.back().entity.lock()) e->Destroy();
+        school.parts.pop_back();
+      }
+      school.fishTarget = (std::max)(0, school.fishTarget - 1);
+      return;
+    }
+    FishState fs;
+    // 持ち場：半径 1 の円の中（群れの広がり fishSpread を掛けて使う）。進行方向に少し長い楕円
+    const float ang = Rand(0.0f, kTwoPi);
+    const float rad = std::sqrt(Rand01());
+    fs.slot = {std::cos(ang) * rad * 0.8f, 0.0f, std::sin(ang) * rad * 1.2f};
+    fs.wag = Rand(0.0f, kTwoPi);
+    school.fish.push_back(fs);
+  }
+
+  /// @brief 群れを出現位置（Actor.pos のまわり）へ並べる
+  /// @param a 群れ
+  void PlaceSchool(Actor &a) {
+    using namespace TitleAmbientDetail;
+    const RC::Vector3 f = Forward(a.heading);
+    const RC::Vector3 r = {f.z, 0.0f, -f.x};
+    for (auto &s : a.fish) {
+      s.pos = {a.pos.x + (r.x * s.slot.x + f.x * s.slot.z) * fishSpread, 0.0f,
+               a.pos.z + (r.z * s.slot.x + f.z * s.slot.z) * fishSpread};
+      s.vel = {f.x * a.speed, 0.0f, f.z * a.speed};
+      s.yaw = a.heading;
+      s.scare = 0.0f;
+      s.jumping = false;
+      s.rippleTimer = Rand(0.0f, 0.3f);
+    }
+  }
+
+  /// @brief 小魚を跳ねさせる（水面の小さな水しぶき）
+  /// @param s 小魚
+  void StartFishJump(FishState &s) {
+    s.jumping = true;
+    s.jumpT = 0.0f;
+    s.jumpDur = Rand(0.35f, 0.55f);
+    s.jumpH = fishJumpHeight * Rand(0.6f, 1.2f);
+    FishSplash(s.pos.x, s.pos.z);
+  }
+
+  /// @brief 小魚が水を出入りするときの小さな水しぶきと波紋
+  /// @param x ワールド X
+  /// @param z ワールド Z
+  void FishSplash(float x, float z) {
+    for (int i = 0; i < 3; ++i) {
+      RC::EffectParticleSpawn sp;
+      sp.kind = RC::EffectParticleKind::Wake;
+      sp.position = {x, view_.waterY + 0.03f, z};
+      sp.scale = Rand(0.03f, 0.06f);
+      sp.color = {0.9f, 0.95f, 1.0f, 0.9f};
+      RC::SpawnEffectParticle(sp);
+    }
+    RC::AddWaveSourceAtWorld(x, z, 0.006f, -0.04f);
+  }
+
+  /// @brief 群れを進め、1 匹ずつ「持ち場へ向かう・仲間を避ける・文字の下を避ける・カーソルから逃げる」を混ぜて泳がせる
+  /// @param a 群れ
+  /// @param dt 経過秒（0 なら姿勢の書き込みだけ）
+  void UpdateFish(Actor &a, float dt) {
+    using namespace TitleAmbientDetail;
+    // 群れの中心はまっすぐ進む（退場判定はこの中心で行う）
+    const RC::Vector3 f = Forward(a.heading);
+    const RC::Vector3 r = {f.z, 0.0f, -f.x};
+    a.pos.x += f.x * a.speed * dt;
+    a.pos.z += f.z * a.speed * dt;
+    a.yaw = a.heading;
+
+    const TitleBlackboard::State &bb = TitleBlackboard::Get();
+    const float cs = std::sqrt(bb.cursorVel.x * bb.cursorVel.x + bb.cursorVel.z * bb.cursorVel.z);
+    const bool cursorStirs = bb.cursorValid && (cs > 1.0f || bb.cursorClicked);
+    const float fleeR = (std::max)(fishFleeRadius, 0.01f);
+    const float k = (dt > 0.0f) ? 1.0f : 0.0f; // dt = 0（出現の瞬間）は動かさない
+
+    for (size_t i = 0; i < a.fish.size(); ++i) {
+      FishState &s = a.fish[i];
+      // 持ち場（群れの中心 ＋ 進行方向ローカルのずれ）へ向かう
+      const float tx = a.pos.x + (r.x * s.slot.x + f.x * s.slot.z) * fishSpread;
+      const float tz = a.pos.z + (r.z * s.slot.x + f.z * s.slot.z) * fishSpread;
+      float dx = f.x * a.speed + (tx - s.pos.x) * 1.2f;
+      float dz = f.z * a.speed + (tz - s.pos.z) * 1.2f;
+
+      // カーソルから逃げる（近くで動いた・クリックした瞬間に驚き、驚きが残っているあいだ逃げる）
+      if (bb.cursorValid) {
+        const float ox = s.pos.x - bb.cursorPos.x;
+        const float oz = s.pos.z - bb.cursorPos.z;
+        const float d = std::sqrt(ox * ox + oz * oz);
+        if (cursorStirs && d < fleeR && dt > 0.0f) {
+          const bool fresh = s.scare < 0.3f;
+          s.scare = 1.0f;
+          if (fresh && !s.jumping && Rand01() < fishJumpChance) StartFishJump(s);
+        }
+        if (s.scare > 0.01f && d < fleeR * 1.6f) {
+          const float inv = 1.0f / (std::max)(d, 0.1f);
+          const float w = fishFleeSpeed * s.scare * (1.0f - d / (fleeR * 1.6f)) * 2.0f;
+          dx += ox * inv * w;
+          dz += oz * inv * w;
+        }
+      }
+      // 文字・メニューの下には入らない（よける）
+      RC::Vector3 n{};
+      float depth = 0.0f;
+      for (const auto &L : bb.letters) {
+        if (L.visible && TitleBlackboard::CircleVsLetter(L, s.pos.x, s.pos.z, 0.6f, n, depth)) {
+          dx += n.x * 3.0f;
+          dz += n.z * 3.0f;
+        }
+      }
+      for (const auto &L : bb.menu) {
+        if (L.visible && TitleBlackboard::CircleVsLetter(L, s.pos.x, s.pos.z, 0.6f, n, depth)) {
+          dx += n.x * 3.0f;
+          dz += n.z * 3.0f;
+        }
+      }
+      // 仲間とぶつからない
+      for (size_t j = 0; j < a.fish.size(); ++j) {
+        if (j == i) continue;
+        const float ox = s.pos.x - a.fish[j].pos.x;
+        const float oz = s.pos.z - a.fish[j].pos.z;
+        const float d = std::sqrt(ox * ox + oz * oz);
+        if (d < 0.45f && d > 1e-4f) {
+          dx += ox / d * (0.45f - d) * 6.0f;
+          dz += oz / d * (0.45f - d) * 6.0f;
+        }
+      }
+      // 速さの上限（驚いているほど速く泳げる）
+      const float maxSp = a.speed * 1.6f + (std::max)(fishFleeSpeed - a.speed * 1.6f, 0.0f) * s.scare;
+      const float dl = std::sqrt(dx * dx + dz * dz);
+      if (dl > maxSp && dl > 1e-4f) {
+        dx *= maxSp / dl;
+        dz *= maxSp / dl;
+      }
+      const float steer = (std::min)(1.0f, dt * (3.0f + 5.0f * s.scare));
+      s.vel.x += (dx - s.vel.x) * steer;
+      s.vel.z += (dz - s.vel.z) * steer;
+      s.pos.x += s.vel.x * dt;
+      s.pos.z += s.vel.z * dt;
+      s.scare = (std::max)(0.0f, s.scare - dt * 0.5f);
+
+      const float sp = std::sqrt(s.vel.x * s.vel.x + s.vel.z * s.vel.z);
+      if (sp > 0.05f) {
+        const float want = std::atan2(s.vel.x, s.vel.z);
+        s.yaw = WrapAngle(s.yaw + WrapAngle(want - s.yaw) * (std::min)(1.0f, dt * 8.0f));
+      }
+      s.wag += dt * kTwoPi * (2.0f + sp * 1.5f);
+
+      // 気まぐれに跳ねる
+      if (!s.jumping && Rand01() < fishIdleJumpChance * dt) StartFishJump(s);
+
+      // 高さ：背中だけ水面に出す。跳ねているあいだは放物線
+      const float surface = WaterHeight(s.pos.x, s.pos.z, /*ripple=*/true);
+      float y = surface - fishSink * a.scale;
+      float pitch = 0.0f;
+      if (s.jumping) {
+        s.jumpT += dt;
+        const float dur = (std::max)(s.jumpDur, 0.1f);
+        const float u = std::clamp(s.jumpT / dur, 0.0f, 1.0f);
+        y = surface + s.jumpH * 4.0f * u * (1.0f - u);
+        const float vy = s.jumpH * 4.0f * (1.0f - 2.0f * u) / dur;
+        pitch = std::atan2(vy, (std::max)(sp, 1.0f)) * 0.8f;
+        if (u >= 1.0f) {
+          s.jumping = false;
+          FishSplash(s.pos.x, s.pos.z);
+        }
+      }
+
+      // 泳いだ跡の小さな波紋（全体の波源の枠を食わないよう間引く）
+      s.rippleTimer -= dt;
+      if (k > 0.0f && s.rippleTimer <= 0.0f && !s.jumping && sp > 0.8f) {
+        RC::AddWaveSourceAtWorld(s.pos.x, s.pos.z, 0.004f, -0.012f * (std::min)(sp / 3.0f, 1.5f));
+        s.rippleTimer = Rand(0.22f, 0.32f);
+      }
+
+      // 置く：胴 ＋ 尾びれ（尾びれは左右に振る）
+      const size_t bi = i * 2, ti = i * 2 + 1;
+      if (ti >= a.parts.size()) continue;
+      const Mat3 body = BodyMatrix(s.yaw, pitch, 0.0f);
+      const RC::Vector3 bodyPos = {s.pos.x, y, s.pos.z};
+      Place(a, a.parts[bi], bodyPos, body);
+      const float wagAng = (0.35f + 0.25f * s.scare) * std::sin(s.wag);
+      const Part &tail = a.parts[ti];
+      const RC::Vector3 off = ScaleV(tail.offset, a.scale);
+      Place(a, tail, AddV(bodyPos, Apply(off, body)), MatMul(RotY(wagAng), body));
     }
   }
 

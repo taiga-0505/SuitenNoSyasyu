@@ -16,6 +16,7 @@
 #include "RenderCommon.h"
 #include "Engine/Render/RenderContext.h"
 #include "Framework/App.h"
+#include "Game/Framework/TitleBlackboard.h"
 #include "Game/Framework/UnderwaterLook.h"
 #include "Game/Framework/WaterCameraFx.h"
 #include "Scene.h"
@@ -779,6 +780,15 @@ protected:
     menu_.clear();
     rings_.clear();
     splash_.reset();
+    // 掲示板に出していた文字を消す（他のスクリプトが消えた文字に触らないように）
+    {
+      TitleBlackboard::State &bb = TitleBlackboard::Get();
+      bb.letters.clear();
+      bb.menu.clear();
+      bb.letterPush.clear();
+      bb.letterShake.clear();
+      bb.lettersInteractive = false;
+    }
     // 自分が有効にした読み戻しだけ戻す（他が使っていれば触らない）
     if (readbackOwned_) {
       RC::SetInteractiveWaterReadback(false);
@@ -840,6 +850,9 @@ private:
     float introY = 0.0f;        ///< 起動演出の上下オフセット（負で水中）
     float introScale = 1.0f;    ///< 起動演出の拡大率（メニューの出現）
     bool breached = true;       ///< 起動演出で水面を抜けたか（抜けた瞬間に飛沫・波紋を出す）
+    RC::Vector3 push{};         ///< 船などに押しのけられた量（xz、m）。ばねで基準位置へ戻る
+    RC::Vector3 pushVel{};      ///< 押しのけの戻る速さ（m/s）
+    float shake = 0.0f;         ///< ぶつかったときの揺れの強さ（rad。減衰していく）
   };
 
   // ------------------------------------------------------------------
@@ -1048,7 +1061,9 @@ private:
     const bool hasWater = BuildWaterParams(params);
     const float waterTime = RC::GetWaterTime();
 
+    ConsumeLetterPushes(deltaTime);
     for (auto &f : letters_) UpdateFloater(f, params, hasWater, waterTime, deltaTime);
+    PublishLetters();
 
     // メニューは選択状態で色・大きさ・浮き上がりを変える
     const float pulse = 0.5f + 0.5f * std::sin(pulseTimer_ * (kTwoPi / kPulsePeriod));
@@ -1590,6 +1605,89 @@ private:
     }
   }
 
+  /// @brief 掲示板（TitleBlackboard）に溜まった押しのけ・揺れの要求を文字へ反映し、ばねで基準位置へ戻す
+  /// @param deltaTime 前フレームからの経過時間（秒）
+  /// @details 押しのけは「めり込んでいるぶん」を書く側が毎フレーム足し込む。ここでは
+  ///          その量をそのまま位置へ足し（＝めり込みを即座に解消）、押された向きの速さも少し与える。
+  ///          何も押していないフレームはばね（臨界減衰よりやや弱め）で基準位置へ戻る。
+  void ConsumeLetterPushes(float deltaTime) {
+    TitleBlackboard::State &bb = TitleBlackboard::Get();
+    const float dt = (std::max)(deltaTime, 0.0f);
+    for (size_t i = 0; i < letters_.size(); ++i) {
+      Floater &f = letters_[i];
+      if (i < bb.letterPush.size()) {
+        RC::Vector3 &p = bb.letterPush[i];
+        if (dt > 0.0f && (p.x != 0.0f || p.z != 0.0f)) {
+          f.push.x += p.x;
+          f.push.z += p.z;
+          // 押された向きへ少し流れる（船が離れたあとも少し滑ってから戻る）
+          f.pushVel.x = p.x / dt * 0.25f;
+          f.pushVel.z = p.z / dt * 0.25f;
+        }
+        p = {0.0f, 0.0f, 0.0f};
+      }
+      if (i < bb.letterShake.size()) {
+        f.shake = (std::max)(f.shake, (std::min)(bb.letterShake[i], kShakeMax));
+        bb.letterShake[i] = 0.0f;
+      }
+      if (dt <= 0.0f) continue;
+      // ばね：x'' = -k x - c x'
+      const float ax = -kPushSpring * f.push.x - kPushDamping * f.pushVel.x;
+      const float az = -kPushSpring * f.push.z - kPushDamping * f.pushVel.z;
+      f.pushVel.x += ax * dt;
+      f.pushVel.z += az * dt;
+      f.push.x += f.pushVel.x * dt;
+      f.push.z += f.pushVel.z * dt;
+      // 押しのけすぎない（文字同士やメニューに重ならないように）
+      const float len = std::sqrt(f.push.x * f.push.x + f.push.z * f.push.z);
+      if (len > kPushMax) {
+        f.push.x *= kPushMax / len;
+        f.push.z *= kPushMax / len;
+      }
+      f.shake *= std::exp(-kShakeDecay * dt);
+    }
+  }
+
+  /// @brief 文字の今の姿勢を掲示板（TitleBlackboard）へ書き出す
+  /// @details 船・漂流物・タコが文字に触れるために使う。起動演出・飛び込み・浮上の最中は
+  ///          lettersInteractive = false にして触らせない（文字が水中にいる／カメラが動いている）。
+  void PublishLetters() {
+    TitleBlackboard::State &bb = TitleBlackboard::Get();
+    // 決定後（遷移演出中）も触らせない
+    bb.lettersInteractive =
+        !introActive_ && !introWaitRise_ && !decided_ && !dive_.IsActive() && !rise_.IsActive();
+    if (bb.letterPush.size() != letters_.size()) bb.letterPush.assign(letters_.size(), RC::Vector3{0.0f, 0.0f, 0.0f});
+    if (bb.letterShake.size() != letters_.size()) bb.letterShake.assign(letters_.size(), 0.0f);
+    PublishFloaters(letters_, bb.letters);
+    PublishFloaters(menu_, bb.menu);
+  }
+
+  /// @brief Floater の並びを掲示板用の姿勢（真上から見た足元の長方形）へ写す
+  /// @param src 文字・メニュー項目
+  /// @param dst 書き込み先（src と同じ数にそろえる）
+  static void PublishFloaters(const std::vector<Floater> &src, std::vector<TitleBlackboard::Letter> &dst) {
+    dst.resize(src.size());
+    for (size_t i = 0; i < src.size(); ++i) {
+      const Floater &f = src[i];
+      TitleBlackboard::Letter &L = dst[i];
+      L.visible = false;
+      auto e = f.entity.lock();
+      if (!e || !e->IsActive()) continue;
+      const auto *tr = e->GetComponent<TransformComponent>();
+      if (!tr) continue;
+      const float s = f.scale * f.introScale;
+      const float zc = (f.zMin + f.zMax) * 0.5f * s; // ベースラインから見た文字の中心（文字の上方向）
+      // 文字の上方向（ローカル Y）はワールドでは (sin yaw, 0, cos yaw)
+      L.center = {tr->position.x + std::sin(f.yaw) * zc, tr->position.y, tr->position.z + std::cos(f.yaw) * zc};
+      L.halfX = f.halfW * s;
+      L.halfZ = (f.zMax - f.zMin) * 0.5f * s;
+      L.yaw = f.yaw;
+      L.rotation = tr->rotation;
+      L.topY = tr->position.y + f.depth * s * 0.5f;
+      L.visible = s > 0.05f && f.introY > -0.05f;
+    }
+  }
+
   /// @brief 文字・メニュー項目 1 つを水面の高さと法線に追従させ、Transform を更新する
   /// @param f 更新する文字・メニュー項目
   /// @param params 水面の波パラメータ
@@ -1618,6 +1716,9 @@ private:
       pos.x += std::cos(time_ * omega + f.phase) * f.drift;
       pos.z += std::sin(time_ * omega * 0.8f + f.phase) * f.drift;
     }
+    // 船などに押しのけられたぶん（TitleBlackboard 経由。ばねで戻る）
+    pos.x += f.push.x;
+    pos.z += f.push.z;
 
     // 文字は 1 枚の板なのに水面は文字の幅の中でも上下する。
     // 中心 1 点だけで高さを決めると、波の山が文字の端にかかったときに
@@ -1687,6 +1788,11 @@ private:
       b = std::asin(std::clamp(-n.x / ca, -1.0f, 1.0f));
       a *= f.tilt;
       b *= f.tilt;
+    }
+    // ぶつかった直後のぐらぐら（押された向きと関係なく前後左右に揺れて収まる）
+    if (f.shake > 1e-4f) {
+      a += f.shake * std::sin(time_ * kShakeFreq * kTwoPi + f.phase);
+      b += f.shake * 0.7f * std::cos(time_ * kShakeFreq * 0.83f * kTwoPi + f.phase);
     }
     tr->rotation = {kHalfPi + a, f.yaw, b};
     const float s = f.scale * f.introScale;
@@ -1941,6 +2047,13 @@ private:
   }
 
   static constexpr float kHalfPi = 1.57079632679f;
+  // 船などに押しのけられた文字の戻り方（TitleBlackboard 経由）
+  static constexpr float kPushSpring = 3.0f;   ///< ばね定数（1/s²）。約 0.3Hz でゆっくり戻る
+  static constexpr float kPushDamping = 2.6f;  ///< 減衰（1/s）。臨界（2√k ≒ 3.5）よりやや弱く、少し行き過ぎて戻る
+  static constexpr float kPushMax = 2.5f;      ///< 押しのけの上限（m）
+  static constexpr float kShakeMax = 0.3f;     ///< ぶつかったときの揺れの上限（rad）
+  static constexpr float kShakeDecay = 2.2f;   ///< 揺れの減衰（1/s）
+  static constexpr float kShakeFreq = 1.6f;    ///< 揺れの速さ（Hz）
   static constexpr float kTwoPi = 6.28318530718f;
   static constexpr float kPulsePeriod = 1.4f; ///< 選択中メニューの明滅周期（秒）
   static constexpr SHORT kStickThreshold = 16000; ///< 左スティックを上下に倒したとみなす閾値（最大 32767）

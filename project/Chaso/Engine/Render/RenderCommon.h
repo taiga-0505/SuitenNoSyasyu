@@ -406,10 +406,14 @@ void DrawModel(int modelHandle);
 /// @param instances インスタンスTransform配列
 /// @param color 全インスタンスに適用する乗算色
 /// @param texHandle テクスチャハンドル（-1 なら mtl のテクスチャ）
+/// @param afterWater true なら水面より後（Glass レイヤー）に描く。
+///        半透明の粒（雨筋など）を水面の上に重ねたいとき用。水面と同じ Translucent レイヤーだと
+///        PSO のハッシュ順で前後が決まり、水面に塗りつぶされることがある
 void DrawModelBatchColored(int modelHandle,
                            const std::vector<Transform> &instances,
                            const Vector4 &color,
-                           int texHandle = -1);
+                           int texHandle = -1,
+                           bool afterWater = false);
 
 // ── インスタンス描画（自動バッチ＋視錐台カリング） ──────────────────
 //

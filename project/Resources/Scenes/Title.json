@@ -306,7 +306,7 @@
                 "firstDelay": 2.0,
                 "intervalMin": 6.0,
                 "intervalMax": 12.0,
-                "maxActive": 3,
+                "maxActive": 4,
                 "screenMargin": 2.0,
                 "shark": {
                   "enabled": true,
@@ -326,12 +326,19 @@
                   "swayPeriod": 7.0,
                   "wagDeg": 7.0,
                   "wagFrequency": 1.1,
-                  "wake": true
+                  "wake": true,
+                  "jump": true,
+                  "jumpChance": 0.35,
+                  "jumpHeight": 2.2,
+                  "jumpDuration": 1.3,
+                  "jumpCooldown": 4.0,
+                  "jumpMax": 1,
+                  "jumpSplash": 1.0
                 },
                 "drift": {
                   "enabled": true,
                   "weight": 0.6,
-                  "maxActive": 1,
+                  "maxActive": 2,
                   "poolSize": 3,
                   "speedMin": 0.6,
                   "speedMax": 1.0,
@@ -370,11 +377,47 @@
                   "speedMax": 1.8,
                   "scaleMin": 0.9,
                   "scaleMax": 1.0,
-                  "lanes": [[-2.8, 1.2]],
+                  "lanes": [[-2.8, 2.4]],
                   "tiltScale": 0.8,
                   "wake": true,
                   "hullColor": [0.36, 0.22, 0.12, 1.0],
                   "sailColor": [0.96, 0.94, 0.88, 1.0]
+                },
+                "fish": {
+                  "enabled": true,
+                  "weight": 0.9,
+                  "maxActive": 1,
+                  "poolSize": 1,
+                  "speedMin": 1.3,
+                  "speedMax": 2.0,
+                  "scaleMin": 0.9,
+                  "scaleMax": 1.15,
+                  "lanes": [],
+                  "count": 10,
+                  "spread": 1.6,
+                  "fleeRadius": 4.0,
+                  "fleeSpeed": 5.5,
+                  "jumpChance": 0.5,
+                  "idleJumpChance": 0.03,
+                  "jumpHeight": 0.6,
+                  "sink": 0.03,
+                  "color": [0.16, 0.22, 0.3, 1.0]
+                },
+                "contact": {
+                  "enabled": true,
+                  "letterShake": 0.14,
+                  "splash": 1.0,
+                  "ripple": 0.12,
+                  "driftRestitution": 0.45
+                },
+                "cursorRock": {
+                  "enabled": true,
+                  "radius": 5.0,
+                  "strength": 1.4,
+                  "click": 0.5,
+                  "push": 0.6,
+                  "frequency": 0.55,
+                  "damping": 0.18
                 }
               }
             ],
@@ -712,6 +755,59 @@
               }
             ],
             "scriptTypeName": "TitleWeatherScript"
+          }
+        }
+      ]
+    },
+    {
+      "id": "744304f1-f5fc-4a4c-bf59-0c0944e06e8b",
+      "name": "TitleOctopus",
+      "tag": "",
+      "active": true,
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": {
+            "position": [0.0, 0.0, 0.0],
+            "rotation": [0.0, 0.0, 0.0],
+            "scale": [1.0, 1.0, 1.0]
+          }
+        },
+        {
+          "type": "NativeScriptComponent",
+          "data": {
+            "scriptTypeNames": ["TitleOctopusScript"],
+            "scriptDataList": [
+              {
+                "enabled": true,
+                "scale": 0.85,
+                "firstDelay": 3.0,
+                "intervalMin": 5.0,
+                "intervalMax": 10.0,
+                "clingChance": 0.45,
+                "peekMin": 5.0,
+                "peekMax": 8.0,
+                "clingMin": 6.0,
+                "clingMax": 10.0,
+                "lookRadius": 7.0,
+                "startleRadius": 1.8,
+                "startleSpeed": 4.0,
+                "clickStartleRadius": 2.6,
+                "approachSpeed": 0.7,
+                "approachDelay": 1.2,
+                "approachStop": 2.2,
+                "tentacleWave": 0.32,
+                "bodyColor": [0.93, 0.4, 0.33, 1.0],
+                "eyeColor": [0.98, 0.98, 0.96, 1.0],
+                "pupilColor": [0.05, 0.05, 0.07, 1.0],
+                "inkEnabled": true,
+                "inkSize": 2.6,
+                "inkLife": 2.5,
+                "inkColor": [0.04, 0.03, 0.07, 0.85]
+              }
+            ],
+            "scriptTypeName": "TitleOctopusScript"
           }
         }
       ]

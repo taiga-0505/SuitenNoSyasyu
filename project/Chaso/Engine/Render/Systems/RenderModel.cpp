@@ -335,7 +335,8 @@ void DrawModelProxies() {
 
 void DrawModelBatchColored(int modelHandle,
                            const std::vector<Transform> &instances,
-                           const Vector4 &color, int texHandle) {
+                           const Vector4 &color, int texHandle,
+                           bool afterWater) {
   auto &ctx = GetRenderContext();
   if (!ctx.IsInitialized()) {
     return;
@@ -352,7 +353,10 @@ void DrawModelBatchColored(int modelHandle,
     blend = kBlendModeNormal;
   }
 
-  const auto layer = isTranslucent ? SortKey::kLayerTranslucent : SortKey::kLayerOpaque;
+  // afterWater: 水面（Translucent）より後の Glass レイヤーへ回す
+  const auto layer = afterWater      ? SortKey::kLayerGlass
+                     : isTranslucent ? SortKey::kLayerTranslucent
+                                     : SortKey::kLayerOpaque;
   const uint64_t key = SortKey::Make(layer,
                                      SortKey::HashPSO("object3d_inst"), 0);
 
