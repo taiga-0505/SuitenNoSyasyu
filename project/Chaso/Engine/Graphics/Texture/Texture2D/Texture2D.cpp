@@ -17,8 +17,8 @@ Microsoft::WRL::ComPtr<ID3D12Resource> Texture2D::LoadFromFile(SRVManager &srv, 
 }
 
 bool Texture2D::LoadCPU(const std::string &path, bool srgb) {
-  // ---- 画像読み込み（存在しなければ白1x1）----
-  // ゲーム側 Resources → エンジン側 (Chaso/Resources) の順で探す
+  // ---- 画像読み込み（存在しなければ白 1x1）----
+  // ゲーム側 Resources → エンジン側（Chaso/Resources）の順で探す
   const std::string resolved = Chaso::ResolvePath(path);
   std::wstring wpath(resolved.begin(), resolved.end());
   DirectX::ScratchImage image;
@@ -39,7 +39,7 @@ bool Texture2D::LoadCPU(const std::string &path, bool srgb) {
   }
 
   if (FAILED(hr)) {
-    // 描画は続行できるよう白1x1で代替するが、黙って成功扱いにはしない。
+    // 描画は続行できるよう白 1x1 で代替するが、黙って成功扱いにはしない。
     // （読み込めていないのに「ロード完了」と出ると原因調査が遠回りになる）
     isFallback_ = true;
     std::string absStr = "解決失敗";
@@ -53,7 +53,7 @@ bool Texture2D::LoadCPU(const std::string &path, bool srgb) {
     }
     Log::Print(std::format("[WARN][Texture] 読み込み失敗のため白1x1で代替します: {} (HRESULT={:08X}, 絶対パス: {})",
                            path, static_cast<uint32_t>(hr), absStr));
-    // 白1x1を生成
+    // 白 1x1 を生成
     DirectX::ScratchImage white;
     white.Initialize2D(DXGI_FORMAT_R8G8B8A8_UNORM, 1, 1, 1, 1);
     auto img = white.GetImage(0, 0, 0);
@@ -79,7 +79,7 @@ bool Texture2D::LoadCPU(const std::string &path, bool srgb) {
 
   metadata_ = mipImages_.GetMetadata();
 
-  // srgb設定の反映
+  // sRGB 設定の反映
   if (srgb) {
     metadata_.format = DirectX::MakeSRGB(metadata_.format);
   } else {
@@ -97,7 +97,7 @@ Microsoft::WRL::ComPtr<ID3D12Resource> Texture2D::Upload(SRVManager &srv, Comman
     return nullptr;
   }
 
-  // ---- GPUテクスチャ作成 ----
+  // ---- GPU テクスチャ作成 ----
   D3D12_RESOURCE_DESC desc{};
   desc.Dimension = D3D12_RESOURCE_DIMENSION(metadata_.dimension);
   desc.Width = (UINT)metadata_.width;
@@ -195,7 +195,7 @@ Microsoft::WRL::ComPtr<ID3D12Resource> Texture2D::Upload(SRVManager &srv, Comman
   uploadRes->Unmap(0, nullptr);
   cmd.Transition(resource_.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-  // SRV作成（Cubemap と 2D で分岐）
+  // SRV 作成（Cubemap と 2D で分岐）
   if (metadata_.IsCubemap()) {
     srv_ = srv.CreateTextureCube(resource_.Get(), metadata_.format, (UINT)metadata_.mipLevels);
   } else {
@@ -216,7 +216,7 @@ void Texture2D::Term(SRVManager *srv) {
     resource_.Reset();
   }
   if (srv && srv_.IsValid()) {
-    // ※GPUが参照し終わったタイミングで呼ぶのが前提（終了時ならOK）
+    // ※GPU が参照し終わったタイミングで呼ぶのが前提（終了時なら問題ない）
     srv->Free(srv_);
   }
   srv_ = {};

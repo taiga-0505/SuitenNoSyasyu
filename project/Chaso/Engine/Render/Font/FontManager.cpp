@@ -13,7 +13,7 @@
 namespace RC {
 
 // ============================================================================
-// Init / Term
+// 初期化・終了
 // ============================================================================
 
 void FontManager::Init(ID3D12Device *device, SRVManager *srv) {
@@ -140,7 +140,7 @@ void FontManager::BeginFrame(float screenW, float screenH) {
 }
 
 // ============================================================================
-// Load / Unload
+// 読み込み・解放
 // ============================================================================
 
 int FontManager::Load(const std::string &path, float sizePx,
@@ -388,7 +388,7 @@ void FontManager::DrawString(int handle, std::u32string_view text,
         const float y1 = y0 + g->height * scale;
 
         FontVertex *v = frame.vbMapped + frame.vertexCursor;
-        // 反時計/時計回りはカリング NONE なので不問。2 三角形で矩形
+        // カリングは NONE なので巻き順は問わない。2 つの三角形で矩形を作る
         v[0] = {{x0, y0, 0.0f, 1.0f}, {g->u0, g->v0}, color};
         v[1] = {{x1, y0, 0.0f, 1.0f}, {g->u1, g->v0}, color};
         v[2] = {{x0, y1, 0.0f, 1.0f}, {g->u0, g->v1}, color};
@@ -429,7 +429,7 @@ void FontManager::DrawString(int handle, std::u32string_view text,
   cl->IASetVertexBuffers(0, 1, &vbv);
   cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-  // RootParam (RootSignatureType::Sprite): 0=Material(PS b0), 1=WVP(VS b0), 2=SRV(t0)
+  // ルートパラメータ（RootSignatureType::Sprite）: 0=マテリアル(PS b0), 1=WVP(VS b0), 2=SRV(t0)
   cl->SetGraphicsRootConstantBufferView(0, cbMaterial_->GetGPUVirtualAddress());
   cl->SetGraphicsRootConstantBufferView(1, frame.cbWVP->GetGPUVirtualAddress());
   cl->SetGraphicsRootDescriptorTable(2, atlas->Srv());

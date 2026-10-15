@@ -1,7 +1,7 @@
 // ============================================================================
 // UpdateElectric.CS.hlsl
 // ----------------------------------------------------------------------------
-// 電撃 (ParticleType::Electric) 用の更新 Compute Shader。
+// 電撃（ParticleType::Electric）用の更新 Compute Shader。
 //
 // UpdateParticle.CS との違いは「モデルの表面を這い回る」動きを足している点:
 //   1. 殻への射影 … 速度で動かした後、殻（丸みのある箱 / 球。ElectricShell.hlsli 参照）の
@@ -14,7 +14,7 @@
 // 細かな明滅と稲妻の「形」は ElectricParticle.PS 側で作る。
 // gravity は電撃には不要なので参照しない。
 //
-// u0 : gParticles      — パーティクルデータ (RWStructuredBuffer)
+// u0 : gParticles      — パーティクルデータ（RWStructuredBuffer）
 // u1 : gFreeListIndex  — FreeList の現在のインデックス
 // u2 : gFreeList       — 空きパーティクルインデックスの配列
 // b0 : gPerFrame       — エミッタパラメータ
@@ -22,54 +22,54 @@
 
 struct Particle
 {
-    float3 translate;
-    float pad0;      ///< 電撃ではパーティクル固有の乱数 (0〜1)。EmitElectric が書き込む
-    float3 scale;
-    float lifeTime;
-    float3 velocity;
-    float currentTime;
-    float4 color;
+    float3 translate;   ///< 位置
+    float pad0;         ///< 電撃ではパーティクル固有の乱数（0〜1）。EmitElectric が書き込む
+    float3 scale;       ///< スケール（0 なら描画時に棄却される）
+    float lifeTime;     ///< 寿命（秒）
+    float3 velocity;    ///< 速度（1 フレームあたりの移動量）
+    float currentTime;  ///< 経過時間（秒）
+    float4 color;       ///< 色（RGBA。alpha が 0 なら死んでいる扱い）
 };
 
 cbuffer PerFrame : register(b0)
 {
-    // 基本パラメータ (16 bytes)
-    float gDeltaTime;
-    uint gMaxParticles;
-    float gMinLifeTime;
-    float gMaxLifeTime;
+    // 基本パラメータ（16 bytes）
+    float gDeltaTime;        ///< フレーム間隔（秒）
+    uint gMaxParticles;      ///< 最大パーティクル数
+    float gMinLifeTime;      ///< 最小寿命（秒）
+    float gMaxLifeTime;      ///< 最大寿命（秒）
 
-    // スケール (16 bytes)
-    float gMinScale;
-    float gMaxScale;
-    float gGravity;
-    uint gEmitterShape;
+    // スケール（16 bytes）
+    float gMinScale;         ///< 最小スケール
+    float gMaxScale;         ///< 最大スケール
+    float gGravity;          ///< 重力の強さ（電撃では参照しない）
+    uint gEmitterShape;      ///< エミッタ形状（2: Box なら箱の殻、それ以外は球の殻）
 
-    // 速度 (16 bytes)
-    float3 gBaseVelocity;
-    float gVelocityVariance;
+    // 速度（16 bytes）
+    float3 gBaseVelocity;    ///< 基本速度（更新では参照しない）
+    float gVelocityVariance; ///< 速さのランダム分散（更新では参照しない）
 
-    // 形状パラメータ (16 bytes)
+    // 形状パラメータ（16 bytes）
     // ※ 他タイプの gShapePad.xy に当たる 2 つを、電撃では殻の丸みとマージンに使う
-    float gShapeRadius;
-    float gConeAngle;
-    float gShellRoundness;
-    float gShellMargin;
+    float gShapeRadius;      ///< 球の殻の半径
+    float gConeAngle;        ///< Cone の半角（rad。電撃では参照しない）
+    float gShellRoundness;   ///< 殻の角の丸み（0〜1。0 で角のある箱、1 で最短辺いっぱいまで丸める）
+    float gShellMargin;      ///< 殻を表面から外側へ浮かせる距離（m）
 
-    // 開始色 (16 bytes)
-    float4 gStartColor;
+    // 開始色（16 bytes）
+    float4 gStartColor;      ///< 開始色（RGBA）
 
-    // 終了色 (16 bytes)
-    float4 gEndColor;
+    // 終了色（16 bytes）
+    float4 gEndColor;        ///< 終了色（RGBA）
 
-    // エミッタ位置 (16 bytes)
-    float3 gEmitterPosition;
-    uint gEmitCount;
+    // エミッタ位置（16 bytes）
+    float3 gEmitterPosition; ///< エミッタのワールド座標（殻の中心。毎フレーム現在値を使う）
+    uint gEmitCount;         ///< 1 フレームの射出数
 
-    // Box形状サイズ (16 bytes)
+    // Box 形状サイズ（16 bytes）
     // ※ 他タイプの gShapeBoxPad に当たる 1 つを、電撃では殻の Y 軸回転に使う
-    float3 gShapeBoxSize;
-    float gShellYaw;
+    float3 gShapeBoxSize;    ///< Box の殻のサイズ（全長 xyz）
+    float gShellYaw;         ///< 殻の Y 軸回転（rad）
 };
 
 RWStructuredBuffer<Particle> gParticles     : register(u0);
@@ -78,12 +78,14 @@ RWStructuredBuffer<uint>     gFreeList      : register(u2);
 
 #include "ElectricShell.hlsli"
 
-/// @brief 方向転換の頻度 (回/秒)。大きいほど細かくジグザグに走る
+/// @brief 方向転換の頻度（回/秒）。大きいほど細かくジグザグに走る
 static const float kJitterRate = 40.0f;
 
-/// @brief 方向転換時に新しいランダム方向へどれだけ寄せるか (0=直進, 1=完全にランダム)
+/// @brief 方向転換時に新しいランダム方向へどれだけ寄せるか（0 = 直進、1 = 完全にランダム）
 static const float kJitterBlend = 0.75f;
 
+/// @brief エントリポイント。1 スレッドが 1 パーティクルを更新する
+/// @param DTid ディスパッチスレッド ID（x がパーティクル番号）
 [numthreads(1024, 1, 1)]
 void main(uint3 DTid : SV_DispatchThreadID)
 {

@@ -26,7 +26,7 @@ void ShadowMap::Create(Dx12Core* core, uint32_t width, uint32_t height) {
   height_ = height;
   auto device = core->GetDevice();
 
-  // 1. テクスチャリソースの作成 (R32_TYPELESS)
+  // 1. テクスチャリソースの作成（DSV と SRV で別フォーマットを使うため R32_TYPELESS）
   D3D12_RESOURCE_DESC texDesc = {};
   texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
   texDesc.Alignment = 0;
@@ -63,7 +63,7 @@ void ShadowMap::Create(Dx12Core* core, uint32_t width, uint32_t height) {
   }
   resource_->SetName(L"ShadowMap Resource");
 
-  // 2. DSVヒープの作成とDSV生成
+  // 2. DSV ヒープの作成と DSV 生成
   dsvHeap_.Init(device, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 1, false);
   D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
   dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
@@ -71,7 +71,7 @@ void ShadowMap::Create(Dx12Core* core, uint32_t width, uint32_t height) {
   dsvDesc.Flags = D3D12_DSV_FLAG_NONE;
   device->CreateDepthStencilView(resource_.Get(), &dsvDesc, dsvHeap_.CPUAt(0));
 
-  // 3. SRVの生成
+  // 3. SRV の生成
   auto srvHandle = core->SRVMan().Allocate();
   srvIndex_ = srvHandle.index;
   D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
@@ -84,7 +84,7 @@ void ShadowMap::Create(Dx12Core* core, uint32_t width, uint32_t height) {
 }
 
 void ShadowMap::BindAndClear(ID3D12GraphicsCommandList* cmd) {
-  // RESOURCE_STATE を DEPTH_WRITE に変更
+  // リソースの状態を DEPTH_WRITE に変更
   D3D12_RESOURCE_BARRIER barrier = {};
   barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
   barrier.Transition.pResource = resource_.Get();

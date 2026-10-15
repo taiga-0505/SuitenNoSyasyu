@@ -22,9 +22,9 @@ namespace RC { class CameraController; }
 /// @enum PlayState
 /// @brief ゲームの再生状態を表す列挙型
 enum class PlayState {
-  Stopped, // 停止中（編集モード）
-  Playing, // 再生中
-  Paused   // 一時停止中
+  Stopped, ///< 停止中（編集モード）
+  Playing, ///< 再生中
+  Paused   ///< 一時停止中
 };
 
 /// @enum SceneTransition
@@ -45,12 +45,14 @@ enum class SceneTransition {
 ///          ヘッダなので SceneTransition を型として持てない。文字列で受けて
 ///          ParseSceneTransition で変換する。
 namespace SceneTransitions {
-inline constexpr const char *kDissolve = "dissolve";
-inline constexpr const char *kDive = "dive";
-inline constexpr const char *kAscend = "ascend";
+inline constexpr const char *kDissolve = "dissolve"; ///< SceneTransition::Dissolve
+inline constexpr const char *kDive = "dive";         ///< SceneTransition::Dive
+inline constexpr const char *kAscend = "ascend";     ///< SceneTransition::Ascend
 } // namespace SceneTransitions
 
-/// @brief 遷移演出の名前を SceneTransition へ変換する（不明な名前は Dissolve）
+/// @brief 遷移演出の名前を SceneTransition へ変換する
+/// @param name 遷移演出の名前（SceneTransitions::kDive など）
+/// @return 対応する SceneTransition（不明な名前は Dissolve）
 inline SceneTransition ParseSceneTransition(const std::string &name) {
   if (name == SceneTransitions::kDive) return SceneTransition::Dive;
   if (name == SceneTransitions::kAscend) return SceneTransition::Ascend;
@@ -59,7 +61,7 @@ inline SceneTransition ParseSceneTransition(const std::string &name) {
 
 /// @struct SceneContext
 /// @brief シーン間で共有されるエンジンコンポーネントへの参照を保持する構造体
-/// @details 各シーンの Update/Render に渡され、グラフィックスデバイス、入力、デバッグツールなどへのアクセスを提供します。
+/// @details 各シーンの Update / Render に渡され、グラフィックスデバイス、入力、デバッグツールなどへのアクセスを提供する。
 ///          オーディオはシングルトンの AudioEngine と、エンティティの AudioSourceComponent で扱うためここには含めない。
 struct SceneContext {
   Dx12Core *core = nullptr;             ///< DirectX12 コアシステム
@@ -69,7 +71,7 @@ struct SceneContext {
   PipelineManager *pipelineManager = nullptr; ///< パイプライン管理
   PostProcess *postProcess = nullptr;     ///< ポストプロセス管理
   RC::CameraController *camera = nullptr; ///< エディタカメラ（SceneManager が所有）
-  float deltaTime = 1.0f / 60.0f;        ///< 前フレームからの経過時間 (秒)
+  float deltaTime = 1.0f / 60.0f;        ///< 前フレームからの経過時間（秒）
 
   /// @brief シーン遷移を要求するコールバック（SceneManager::Init で結線される）
   /// @details 引数は遷移先のシーン名と遷移演出、戻り値は要求が受理されたか。
@@ -97,19 +99,22 @@ struct SceneContext {
   ///          立てたスクリプトが OnDestroy で必ず下ろすこと（シーンをまたいで残さない）。
   bool gamePaused = false;
 
-  D3D12_CPU_DESCRIPTOR_HANDLE currentRTV{}; ///< 現在の描画先RTV
-  D3D12_CPU_DESCRIPTOR_HANDLE currentDSV{}; ///< 現在の描画先DSV
-  /// @brief currentRTV の実体（RENDER_TARGET 状態）。水面の屈折で「水を描く前の画面」をコピーする元にする。
-  ///        nullptr なら屈折は無効（従来の αブレンドで描く）
+  D3D12_CPU_DESCRIPTOR_HANDLE currentRTV{}; ///< 現在の描画先 RTV
+  D3D12_CPU_DESCRIPTOR_HANDLE currentDSV{}; ///< 現在の描画先 DSV
+  /// @brief currentRTV の実体（RENDER_TARGET 状態）
+  /// @details 水面の屈折で「水を描く前の画面」をコピーする元にする。
+  ///          nullptr なら屈折は無効（従来の α ブレンドで描く）。
   ID3D12Resource *currentColorResource = nullptr;
 
   /// @brief 再生中かどうか判定する（エディタの再生状態。ゲーム内ポーズは見ない）
+  /// @return playState が Playing なら true
   bool isPlaying() const {
     return playState == PlayState::Playing;
   }
 
   /// @brief ゲームの時間が進んでいるか（再生中 かつ ゲーム内ポーズでない）
   /// @details 敵・弾・レール・アニメーションなど「ゲームの進行」はこちらで判定する。
+  /// @return 再生中かつ gamePaused が false なら true
   bool isSimulating() const {
     return isPlaying() && !gamePaused;
   }

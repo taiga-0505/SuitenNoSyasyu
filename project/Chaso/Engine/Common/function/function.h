@@ -4,7 +4,12 @@
 #include <cassert>
 #include <mutex>
 
-// バッファリソース作成
+/// @brief アップロードヒープ上にバッファリソースを作成する
+/// @param device      D3D12 デバイス
+/// @param sizeInBytes バッファのサイズ（バイト）
+/// @param name        デバッグ用のリソース名（nullptr なら付けない）
+/// @return 作成したバッファ（状態は D3D12_RESOURCE_STATE_GENERIC_READ）
+/// @note 作成に失敗すると assert で停止する。
 inline Microsoft::WRL::ComPtr<ID3D12Resource>
 CreateBufferResource(ID3D12Device *device, size_t sizeInBytes,
                      const wchar_t *name = nullptr) {

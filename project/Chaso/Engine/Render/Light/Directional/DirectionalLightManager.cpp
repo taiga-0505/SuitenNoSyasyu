@@ -6,7 +6,7 @@
 namespace RC {
 
 void DirectionalLightManager::Init(ID3D12Device *device) {
-  // 二重Initにも耐える
+  // 二重に Init されても壊れないよう、先に後始末する
   Term();
 
   device_ = device;
@@ -19,10 +19,10 @@ void DirectionalLightManager::Init(ID3D12Device *device) {
     return;
   }
 
-  // slot[0] は「デフォルトライト」予約
+  // slot[0] は既定のライト用に予約
   slots_.emplace_back();
   slots_[0].inUse = true;
-  slots_[0].light = DirectionalLightSource{}; // defaults
+  slots_[0].light = DirectionalLightSource{}; // 既定値で初期化
 
   EnsureCB_(slots_[0]);
   SyncCB_(slots_[0]);
@@ -43,7 +43,7 @@ void DirectionalLightManager::Term() {
 }
 
 int DirectionalLightManager::AllocSlot_() {
-  // 0 はデフォルトなので 1 から探す
+  // 0 は既定のライトなので 1 から探す
   for (int i = 1; i < static_cast<int>(slots_.size()); ++i) {
     if (!slots_[i].inUse) {
       return i;
@@ -65,7 +65,7 @@ int DirectionalLightManager::ResolveActiveHandle_() const {
   if (activeHandle_ >= 0 && IsValid_(activeHandle_)) {
     return activeHandle_;
   }
-  // 未設定はデフォルト(0)
+  // 未設定（または無効）なら既定のライト（0）
   return 0;
 }
 
@@ -77,11 +77,11 @@ int DirectionalLightManager::Create() {
   const int h = AllocSlot_();
   auto &slot = slots_[h];
 
-  // 再利用スロットに古いGPUリソースが残ってたら解放
+  // 再利用スロットに古い GPU リソースが残っていたら解放
   ReleaseSlot_(slot);
 
   slot.inUse = true;
-  slot.light = DirectionalLightSource{}; // defaults
+  slot.light = DirectionalLightSource{}; // 既定値で初期化
 
   EnsureCB_(slot);
   SyncCB_(slot);
@@ -114,7 +114,7 @@ void DirectionalLightManager::Destroy(int handle) {
 }
 
 void DirectionalLightManager::SetActive(int handle) {
-  // -1: 明示的なアクティブ無し（内部では default を使う）
+  // 負の値: 明示的なアクティブ無し（内部では既定のライトを使う）
   if (handle < 0) {
     activeHandle_ = -1;
     return;

@@ -230,7 +230,7 @@ void GPUParticle::Update(const RC::Matrix4x4 &view, const RC::Matrix4x4 &proj,
   if (!initialized_)
     return;
 
-  // Billboard 行列の構築（ビュー行列の逆回転）
+  // ビルボード行列の構築（ビュー行列の逆回転）
   RC::Matrix4x4 cameraWorld = Inverse(view);
   RC::Matrix4x4 billboard = MakeIdentity4x4();
 
@@ -379,7 +379,7 @@ void GPUParticle::Render(SceneContext &ctx, ID3D12GraphicsCommandList *cl) {
     BlendMode prevBlend = RC::GetBlendMode();
     RC::SetBlendMode(blend);
 
-    // UAV -> SRV
+    // CS が書き込んだパーティクルバッファを VS で読むため、UAV → SRV へ遷移する
     D3D12_RESOURCE_BARRIER barrier{};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
@@ -404,7 +404,7 @@ void GPUParticle::Render(SceneContext &ctx, ID3D12GraphicsCommandList *cl) {
     // インスタンシング描画
     cmdList->DrawInstanced(vertexCount, maxParticles, 0, 0);
 
-    // SRV -> UAV (次回 CS のため)
+    // 次回の CS で書き込めるよう SRV → UAV へ戻す
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     cmdList->ResourceBarrier(1, &barrier);
@@ -446,7 +446,7 @@ void GPUParticle::DrawImGui() {
       SetParticleType(static_cast<ParticleType>(currentTypeInt));
     }
 
-    // BlendMode
+    // ブレンドモード
     const char *blendNames[] = {"None", "Normal", "Add", "Subtract",
                                 "Multiply", "Screen", "Premultiplied"};
     int current = static_cast<int>(blendMode_);
@@ -700,7 +700,7 @@ void GPUParticle::rebuildBuffers_() {
     freeListIndexUavHandle_ = {};
   }
 
-  // 2. バッファ再作成
+  // 2. バッファ再作成（CS から書き込むので UAV を許可した DEFAULT ヒープ）
   D3D12_HEAP_PROPERTIES heapProp{};
   heapProp.Type = D3D12_HEAP_TYPE_DEFAULT;
   D3D12_RESOURCE_DESC bufDesc{};
@@ -749,7 +749,7 @@ void GPUParticle::rebuildBuffers_() {
   freeListUavHandle_ = srvMgr_->CreateStructuredBufferUAV(
       freeListBuffer_.Get(), maxParticles_, sizeof(uint32_t));
 
-  // 次回の Update() の先頭で再初期化CSを走らせる
+  // 次回の Render() の先頭で初期化 CS を走らせ直す
   if (initCS_.IsReady()) {
     needsCSInit_ = true;
   }

@@ -102,7 +102,7 @@ Vector3 Vector3Transform(const Vector3 &vector, const Matrix4x4 &matrix) {
 
 Vector3 project(const Vector3 &v1, const Vector3 &v2) {
   float dot = Dot(v1, v2);
-  float lengthSq = Dot(v2, v2); // v2の長さの2乗
+  float lengthSq = Dot(v2, v2); // v2 の長さの 2 乗
 
   if (lengthSq == 0) {
     return {0, 0, 0};
@@ -121,18 +121,18 @@ Vector3 closestPoint(const Vector3 &point, const Segment &segment) {
   // 線分の終点
   Vector3 b = Add(segment.origin, segment.diff);
 
-  // abベクトル
+  // ab ベクトル
   Vector3 ab = Subtract(b, a);
-  // apベクトル
+  // ap ベクトル
   Vector3 ap = Subtract(point, a);
 
   float abLenSq = Dot(ab, ab);
   if (abLenSq == 0.0f) {
-    // 線分の長さが0の場合、始点を返す
+    // 線分の長さが 0 の場合、始点を返す
     return a;
   }
 
-  // 最近接点のパラメータtを計算（0 <= t <= 1にクランプ）
+  // 最近接点のパラメータ t を計算（0 <= t <= 1 にクランプ）
   float t = Dot(ap, ab) / abLenSq;
   if (t < 0.0f)
     t = 0.0f;
@@ -193,7 +193,7 @@ Matrix4x4 Multiply(const Matrix4x4 &m1, const Matrix4x4 &m2) {
 }
 
 Matrix4x4 Inverse(const Matrix4x4 &m) {
-  //|A|用の変数
+  // 行列式 |A|
   float det = 0;
 
   Matrix4x4 result;
@@ -530,7 +530,7 @@ Quaternion Slerp(const Quaternion &q1, const Quaternion &q2, float t) {
 }
 
 //==================================
-// Affine関数
+// アフィン変換
 //==================================
 Matrix4x4 MakeAffineMatrix(const Vector3 &scale, const Vector3 &rotate,
                            const Vector3 &translate) {
@@ -584,19 +584,19 @@ Matrix4x4 MakeRotateMatrix(const Quaternion& q) {
 
 Vector3 QuaternionToEuler(const Quaternion& q) {
     Vector3 euler;
-    // Roll (x-axis rotation)
+    // ロール（X 軸回転）
     float sinr_cosp = 2.0f * (q.w * q.x + q.y * q.z);
     float cosr_cosp = 1.0f - 2.0f * (q.x * q.x + q.y * q.y);
     euler.x = std::atan2(sinr_cosp, cosr_cosp);
 
-    // Pitch (y-axis rotation)
+    // ピッチ（Y 軸回転）
     float sinp = 2.0f * (q.w * q.y - q.z * q.x);
     if (std::abs(sinp) >= 1.0f)
-        euler.y = std::copysign(3.14159265358979323846f / 2.0f, sinp); // use 90 degrees if out of range
+        euler.y = std::copysign(3.14159265358979323846f / 2.0f, sinp); // 誤差で ±1 を超えると asin が NaN になるので ±90° に丸める
     else
         euler.y = std::asin(sinp);
 
-    // Yaw (z-axis rotation)
+    // ヨー（Z 軸回転）
     float siny_cosp = 2.0f * (q.w * q.z + q.x * q.y);
     float cosy_cosp = 1.0f - 2.0f * (q.y * q.y + q.z * q.z);
     euler.z = std::atan2(siny_cosp, cosy_cosp);

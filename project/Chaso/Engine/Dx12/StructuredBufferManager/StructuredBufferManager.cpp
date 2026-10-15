@@ -53,7 +53,7 @@ StructuredBufferManager::Create(UINT elementCount, UINT strideBytes) {
   }
 
   // ---- 2) SRV 作成（SRVManager 経由）----
-  // ここで index / CPU / GPU ハンドルまで全部揃う
+  // ここでインデックス・CPU / GPU ハンドルまで全部揃う
   auto handle =
       srvMgr_->CreateStructuredBuffer(resource.Get(), elementCount, strideBytes);
 
@@ -113,13 +113,13 @@ void StructuredBufferManager::Destroy(BufferID id) {
 
   Entry &e = entries_[id];
 
-  // 先にUnmap
+  // 先にアンマップする
   if (e.resource && e.mapped) {
     e.resource->Unmap(0, nullptr);
     e.mapped = nullptr;
   }
 
-  // SRVスロット返却（※GPUが参照し終わってから呼ぶ前提）
+  // SRV スロット返却（※ GPU が参照し終わってから呼ぶ前提）
   if (srvMgr_ && e.srvHandle.IsValid()) {
     srvMgr_->Free(e.srvHandle);
   }

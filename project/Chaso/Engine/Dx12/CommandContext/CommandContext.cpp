@@ -8,14 +8,14 @@ void CommandContext::Init(ID3D12Device *device, D3D12_COMMAND_LIST_TYPE type,
   type_ = type;
   frameCount_ = (frameCount >= 1 && frameCount <= kMaxFrames) ? frameCount : 2;
 
-  // Queue
+  // コマンドキュー
   D3D12_COMMAND_QUEUE_DESC qdesc{};
   qdesc.Type = type_;
   HRESULT hr = device_->CreateCommandQueue(&qdesc, IID_PPV_ARGS(&queue_));
   assert(SUCCEEDED(hr));
   queue_->SetName(L"CommandContext::Queue");
 
-  // Allocator(s)
+  // コマンドアロケータ（フレーム数ぶん）
   for (uint32_t i = 0; i < frameCount_; ++i) {
     hr = device_->CreateCommandAllocator(type_, IID_PPV_ARGS(&alloc_[i]));
     assert(SUCCEEDED(hr));
@@ -24,7 +24,7 @@ void CommandContext::Init(ID3D12Device *device, D3D12_COMMAND_LIST_TYPE type,
     frameFenceValue_[i] = 0;
   }
 
-  // List（1本を使い回す）
+  // コマンドリスト（1 本を使い回す）
   hr = device_->CreateCommandList(0, type_, alloc_[0].Get(), nullptr,
                                   IID_PPV_ARGS(&list_));
   assert(SUCCEEDED(hr));
@@ -32,7 +32,7 @@ void CommandContext::Init(ID3D12Device *device, D3D12_COMMAND_LIST_TYPE type,
   hr = list_->Close(); // 最初は閉じておく
   assert(SUCCEEDED(hr));
 
-  // Fence + Event
+  // フェンスと待機用イベント
   hr = device_->CreateFence(globalFenceValue_, D3D12_FENCE_FLAG_NONE,
                             IID_PPV_ARGS(&fence_));
   assert(SUCCEEDED(hr));
@@ -55,10 +55,10 @@ void CommandContext::Term() {
   device_.Reset();
 }
 
-// backBufferIndex を渡す
+// frameIndex にはバックバッファのインデックスを渡す
 void CommandContext::BeginFrame(uint32_t frameIndex) {
   currentFrameIndex_ = frameIndex;
-  WaitForFrame(frameIndex); // 同じBBの前フレームが完了していることを保証
+  WaitForFrame(frameIndex); // 同じバックバッファを使った前回のフレームが完了していることを保証する
   HRESULT hr = alloc_[frameIndex]->Reset();
   assert(SUCCEEDED(hr));
   hr = list_->Reset(alloc_[frameIndex].Get(), nullptr);
@@ -117,7 +117,7 @@ uint64_t CommandContext::ExecuteAndReset() {
   hr = queue_->Signal(fence_.Get(), signalValue);
   assert(SUCCEEDED(hr));
 
-  // GPU実行完了を待機しないと、直後の allocator->Reset() でクラッシュする (D3D12の規約違反)
+  // GPU の実行完了を待たないと、直後の allocator->Reset() でクラッシュする（D3D12 の規約違反）
   if (fence_->GetCompletedValue() < signalValue) {
     hr = fence_->SetEventOnCompletion(signalValue, fenceEvent_);
     assert(SUCCEEDED(hr));
@@ -132,7 +132,7 @@ uint64_t CommandContext::ExecuteAndReset() {
   return signalValue;
 }
 
-// 便利: 単発トランジション
+// 単発のトランジションバリアを発行する
 void CommandContext::Transition(ID3D12Resource *res,
                                 D3D12_RESOURCE_STATES before,
                                 D3D12_RESOURCE_STATES after) {

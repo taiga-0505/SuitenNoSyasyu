@@ -32,6 +32,7 @@ class Scene;
 
 namespace EditorExtension {
 
+/// @struct Panel
 /// @brief エディタのパネル 1 件
 struct Panel {
   std::string name;                        ///< ウィンドウ名（Window メニューにも出る）
@@ -40,13 +41,14 @@ struct Panel {
 };
 
 /// @brief パネルを追加する
-/// @param name ウィンドウ名
-/// @param draw 中身を描く関数
+/// @param name          ウィンドウ名
+/// @param draw          中身を描く関数
 /// @param openByDefault 起動時に開いておくか
 void AddPanel(std::string name, std::function<void(Scene *scene)> draw,
               bool openByDefault = false);
 
 /// @brief 登録済みのパネル（登録順）
+/// @return パネル一覧への参照（関数内 static なので静的初期化の順序に依存しない）
 std::vector<Panel> &Panels();
 
 } // namespace EditorExtension

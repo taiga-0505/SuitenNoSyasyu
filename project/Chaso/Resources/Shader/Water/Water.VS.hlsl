@@ -1,51 +1,58 @@
-// Water.VS.hlsl - Vertex Shader for ocean/water surface
-// Uses Gerstner Waves for realistic vertex displacement
+// =============================================================================
+// Water.VS.hlsl - 海面・水面の頂点シェーダー
+//
+// Gerstner 波で頂点を変位させ、それっぽい海面のうねりを作る。
+//   - 主波 3 本（GetWaveDef）＋ 障害物ごとの反射波（鏡像法）
+//   - 詳細波（OceanWaves.hlsli）の変位。法線は PS 側でピクセルごとに求める
+//   - インタラクティブ波紋（WaveSimulation.CS のハイトマップ）の高さ
+// 法線は主波（＋反射波）の接線・従法線から求め、PS へ渡す。
+// =============================================================================
 
 #include "Water.hlsli"
 
-// b0: WVP 行列（VS用）
+// b0: WVP 行列（VS 用）
 struct TransformationMatrix
 {
-    float4x4 WVP;
-    float4x4 World;
-    float4x4 worldInverseTranspose;
+    float4x4 WVP;                   ///< World-View-Projection 行列
+    float4x4 World;                 ///< World 行列
+    float4x4 worldInverseTranspose; ///< World の逆転置行列（ここでは未使用）
 };
 
 ConstantBuffer<TransformationMatrix> gTransformationMatrix : register(b0);
 
-// b6: 水面パラメータ (PS と共有、VS でも波の計算に使用)
+// b6: 水面パラメータ（PS と共有、VS でも波の計算に使用）
 cbuffer WaterParams : register(b6)
 {
-    float  gTime;         // 経過時間 (秒)
-    float  gWaveHeight;   // 波の高さスケール
-    float  gWaveSpeed;    // 波の速度スケール
-    float  gWaveFreq;     // 波の周波数
+    float  gTime;         ///< 経過時間（秒）
+    float  gWaveHeight;   ///< 主波の高さスケール
+    float  gWaveSpeed;    ///< 主波の速度スケール
+    float  gWaveFreq;     ///< 主波の周波数
 
-    float  gWaveHeight2;  // 第2波の高さ
-    float  gWaveSpeed2;   // 第2波の速度
-    float  gWaveFreq2;    // 第2波の周波数
-    float  gWaveSteepness; // Gerstner 鋭さ (0..1)
+    float  gWaveHeight2;  ///< 第 2 波の高さ
+    float  gWaveSpeed2;   ///< 第 2 波の速度
+    float  gWaveFreq2;    ///< 第 2 波の周波数
+    float  gWaveSteepness; ///< Gerstner の鋭さ（0〜1）
 
-    float4 gWaterShallowColor;  // 浅瀬の色
-    float4 gWaterDeepColor;     // 深海の色
+    float4 gWaterShallowColor;  ///< 浅瀬の色
+    float4 gWaterDeepColor;     ///< 深海の色
 
-    float  gFresnelPower;       // フレネル指数
-    float  gSpecularPower;      // スペキュラ指数
-    float  gNormalScrollSpeed;  // 法線マップスクロール速度
-    float  gNormalStrength;     // 法線マップ強度
+    float  gFresnelPower;       ///< フレネル指数
+    float  gSpecularPower;      ///< スペキュラ指数
+    float  gNormalScrollSpeed;  ///< 法線マップスクロール速度
+    float  gNormalStrength;     ///< 法線マップ強度
 
-    float4 gInvScreenSize;
-    float4 gCameraNearFar; // x: near, y: far
-    float4 gFoamParams;    // x: foamDepth, y: foamScale
-    float4 gFoamColor;
+    float4 gInvScreenSize; ///< xy: 画面サイズの逆数
+    float4 gCameraNearFar; ///< x: near, y: far
+    float4 gFoamParams;    ///< x: foamDepth, y: foamScale, z: 波の高さによる色付けの強さ（crestTint）
+    float4 gFoamColor;     ///< 泡の色（rgb）と強さ（a）
 
-    float4 gObstacles[4];  // xyz: pos, w: radius
-    float4 gObstacleCount; // x: count, y: 反射の強さ, z: 反射の到達範囲(半径倍率)
+    float4 gObstacles[4];  ///< 障害物（xyz: 位置, w: 半径）
+    float4 gObstacleCount; ///< x: 障害物の数, y: 反射の強さ, z: 反射の到達範囲（半径倍率）
 
-    float4 gOceanParams;   // x: 詳細波の強さ, y: 尖り(choppy), z: 白波の強さ, w: 頂点で変位させる最短波長(m)
-    float4 gOceanParams2;  // x: 透明度(m), y: 遠景フェード距離(m), z: 法線マップのタイルサイズ(m, 0=従来UV), w: 白波の量
-    float4 gSssColor;      // rgb: 波頭を透ける光の色, a: 強さ
-    float4 gRefractParams; // x: 屈折が有効(1/0), y: 歪みの強さ(画面UV), z: 交差部のフェード幅(m)
+    float4 gOceanParams;   ///< x: 詳細波の強さ, y: 尖り（choppy）, z: 白波の強さ, w: 頂点で変位させる最短波長（m）
+    float4 gOceanParams2;  ///< x: 透明度（m）, y: 遠景フェード距離（m）, z: 法線マップのタイルサイズ（m。0 = 従来 UV）, w: 白波の量
+    float4 gSssColor;      ///< rgb: 波頭を透ける光の色, a: 強さ
+    float4 gRefractParams; ///< x: 屈折が有効（1/0）, y: 歪みの強さ（画面 UV）, z: 交差部のフェード幅（m）
 };
 
 #include "OceanWaves.hlsli"
@@ -55,24 +62,26 @@ SamplerState gSamplerClamp : register(s2);
 
 struct VertexShaderInput
 {
-    float4 position : POSITION0;
-    float2 texcoord : TEXCOORD0;
-    float3 normal   : NORMAL0;
+    float4 position : POSITION0; ///< 頂点位置（ローカル）
+    float2 texcoord : TEXCOORD0; ///< テクスチャ座標
+    float3 normal   : NORMAL0;   ///< 法線（使わない。波から求め直す）
 };
 
 // =====================================================
-// Gerstner Wave
+// Gerstner 波
 // =====================================================
-// 3方向の平面波を重ね合わせて海面を作り、
+// 3 方向の平面波を重ね合わせて海面を作り、
 // さらに障害物ごとの「反射波」を鏡像法で足し込む。
+/// @struct GerstnerResult
+/// @brief Gerstner 波の合計結果
 struct GerstnerResult
 {
-    float3 offset;
-    float3 tangent;
-    float3 binormal;
+    float3 offset;   ///< 頂点の変位（ワールド）
+    float3 tangent;  ///< X 方向の接線（変位後の面の ∂P/∂x）
+    float3 binormal; ///< Z 方向の従法線（変位後の面の ∂P/∂z）
 };
 
-// 1つの平面波の定義
+// 1 つの平面波の定義
 //
 // ※ 位相を dot(dir, x) * freq + timePhase と組み立てるとき、
 //    位相が一定になる点は timePhase が減るほど dir 方向へ移動する。
@@ -81,28 +90,32 @@ struct GerstnerResult
 //    反射波が「波が来る側」ではなく反対側に出てしまっていた。
 struct WaveDef
 {
-    float2 dir;       // 波が実際に進む向き（正規化済み）
-    float  freq;      // 空間周波数
-    float  timePhase; // 時間項 (-speed * time)
-    float  steepness; // Gerstner の鋭さ
-    float  amp;       // 振幅
+    float2 dir;       ///< 波が実際に進む向き（正規化済み）
+    float  freq;      ///< 空間周波数
+    float  timePhase; ///< 時間項（-speed * time）
+    float  steepness; ///< Gerstner の鋭さ
+    float  amp;       ///< 振幅
 };
 
-static const int kWaveCount    = 3; // 重ね合わせる平面波の数
-static const int kMaxObstacles = 4; // CB が保持できる障害物の最大数
+static const int kWaveCount    = 3; ///< 重ね合わせる平面波の数
+static const int kMaxObstacles = 4; ///< CB が保持できる障害物の最大数
 
+/// @brief index 本目の主波の定義を返す
+/// @param index 主波の番号（0: 主波, 1: 副波, 2: 微細波）
+/// @param time  経過時間（秒）
+/// @return 平面波の定義
 WaveDef GetWaveDef(int index, float time)
 {
     WaveDef w;
     if (index == 0) {
-        // 主波 (X方向寄り)
+        // 主波（X 方向寄り）
         w.dir       = normalize(float2(0.7, 0.5));
         w.freq      = gWaveFreq;
         w.timePhase = -gWaveSpeed * time;
         w.steepness = gWaveSteepness;
         w.amp       = gWaveHeight;
     } else if (index == 1) {
-        // 副波 (Z方向寄り, 位相をずらす)
+        // 副波（Z 方向寄り、位相をずらす）
         w.dir       = normalize(float2(0.3, 0.8));
         w.freq      = gWaveFreq2;
         w.timePhase = -gWaveSpeed2 * time;
@@ -119,8 +132,14 @@ WaveDef GetWaveDef(int index, float time)
     return w;
 }
 
-// 平面波を1成分ぶん Gerstner として加算する
-// 入射波・反射波のどちらも同じ式を通すため、反射波も横方向変位と法線への寄与を持つ
+/// @brief 平面波を 1 成分ぶん Gerstner として加算する
+/// @details 入射波・反射波のどちらも同じ式を通すため、反射波も横方向変位と法線への寄与を持つ。
+/// @param result    加算先（inout）
+/// @param dir       波の進行方向（正規化済み）
+/// @param freq      空間周波数
+/// @param phase     この頂点での位相（rad）
+/// @param steepness Gerstner の鋭さ
+/// @param amp       振幅
 void AccumulateGerstner(inout GerstnerResult result, float2 dir, float freq,
                         float phase, float steepness, float amp)
 {
@@ -131,7 +150,7 @@ void AccumulateGerstner(inout GerstnerResult result, float2 dir, float freq,
     result.offset.z += steepness * amp * dir.y * c;
     result.offset.y += amp * s;
 
-    // 接線/従法線への影響（交差項 dx*dz も入れる。斜めの波で法線が正しく傾くように）
+    // 接線 / 従法線への影響（交差項 dx*dz も入れる。斜めの波で法線が正しく傾くように）
     float wa = steepness * freq * amp * s;
     result.tangent.x  -= wa * dir.x * dir.x;
     result.tangent.y  += dir.x * freq * amp * c;
@@ -141,10 +160,13 @@ void AccumulateGerstner(inout GerstnerResult result, float2 dir, float freq,
     result.binormal.y += dir.y * freq * amp * c;
 }
 
-// 詳細波（OceanWaves.hlsli）の変位だけを足す。
-// 法線は PS でピクセルごとに求めるので、ここでは接線に入れない。
-// 頂点間隔より短い波は表現できず折り返しノイズになるため、minWavelength 未満はフェードアウトさせる。
-// ※ CPU 側 WaterSurface::Evaluate() と同じ式
+/// @brief 詳細波（OceanWaves.hlsli）の変位だけを求める
+/// @details 法線は PS でピクセルごとに求めるので、ここでは接線に入れない。
+///          頂点間隔より短い波は表現できず折り返しノイズになるため、minWavelength 未満はフェードアウトさせる。
+/// @note CPU 側 WaterSurface::Evaluate() と同じ式。
+/// @param xz   変位前のワールド XZ
+/// @param time 経過時間（秒）
+/// @return 詳細波による変位（ワールド）
 float3 ComputeDetailOffset(float2 xz, float time)
 {
     float3 offset = float3(0, 0, 0);
@@ -179,6 +201,13 @@ float3 ComputeDetailOffset(float2 xz, float time)
 // ことで、「入射波が跳ね返って外へ伝播する」波を作る。
 // 独立した sin 波を足す旧実装と違い、周波数・位相・進行方向が入射波と連続する。
 // 反射点では入射波と反射波が同位相になるので、壁際で振幅が倍になる（定在波の腹）。
+/// @brief 入射波 w の、各障害物での反射波を加算する
+/// @param result          加算先（inout）
+/// @param w               入射波の定義
+/// @param posXZ           頂点のワールド XZ
+/// @param obstacleCount   障害物の数（kMaxObstacles 以下）
+/// @param reflectStrength 反射波の強さ（1.0 で入射波と同じ振幅）
+/// @param reflectRange    反射波の到達範囲（障害物半径に対する倍率）
 void AccumulateReflection(inout GerstnerResult result, WaveDef w, float2 posXZ,
                           int obstacleCount, float reflectStrength, float reflectRange)
 {
@@ -228,6 +257,11 @@ void AccumulateReflection(inout GerstnerResult result, WaveDef w, float2 posXZ,
     }
 }
 
+/// @brief 主波 3 本・反射波・詳細波をすべて合わせた変位と接線・従法線を求める
+/// @details 障害物の内側では変位を 0 に寄せ、メッシュが岩を突き抜けないようにする。
+/// @param pos  変位前のワールド位置
+/// @param time 経過時間（秒）
+/// @return 変位と接線・従法線（接線・従法線には詳細波を含めない）
 GerstnerResult ComputeGerstnerWave(float3 pos, float time)
 {
     GerstnerResult result;
@@ -271,6 +305,9 @@ GerstnerResult ComputeGerstnerWave(float3 pos, float time)
     return result;
 }
 
+/// @brief エントリポイント。波で頂点を変位させ、PS 用の情報を詰める
+/// @param input 頂点入力
+/// @return クリップ空間位置など出力
 VertexShaderOutput main(VertexShaderInput input)
 {
     VertexShaderOutput output;
@@ -281,12 +318,12 @@ VertexShaderOutput main(VertexShaderInput input)
     // =========================
     // 波と障害物の干渉計算
     // =========================
-    // 入射波（Gerstner 3成分）と、障害物で反射した波を合わせて計算する。
+    // 入射波（Gerstner 3 成分）と、障害物で反射した波を合わせて計算する。
     // 反射の詳細は ComputeGerstnerWave / AccumulateReflection を参照。
     GerstnerResult wave = ComputeGerstnerWave(worldPos.xyz, gTime);
 
     // インタラクティブ波紋のサンプリング
-    // WaterPlaneのワールドサイズ(100x100)に合わせたUV変換
+    // WaterPlane のワールドサイズ（100x100）に合わせた UV 変換
     float2 waveUV = (worldPos.xz / 100.0f) + 0.5f;
     float interactiveHeight = gInteractiveWave.SampleLevel(gSamplerClamp, waveUV, 0).r;
 
@@ -294,20 +331,22 @@ VertexShaderOutput main(VertexShaderInput input)
     worldPos.xyz += wave.offset;
     worldPos.y += interactiveHeight;
 
-    // 法線を接線・従法線から計算（cross product）
+    // 法線を接線・従法線から計算（外積）
     // ※ 波紋の法線はここでは足さない。PS がピクセルごとに求めて合成する
     //   （以前は VS と PS の両方で足していて、波紋の傾きが二重に入っていた）
     float3 N = normalize(cross(wave.binormal, wave.tangent));
 
     // 変位後のワールド位置を WVP で投影
-    // World逆行列を使って元のローカルに戻してから WVP する代わりに、
+    // World 逆行列を使って元のローカルに戻してから WVP する代わりに、
     // 直接 View*Proj を適用するために、World の逆を避けて VP を使う
+    // ※ 現状この VP は単位行列 × WVP × 単位行列で、以降どこからも使っていない（下の簡易版で投影している）
     float4x4 VP = mul(
         mul(float4x4(1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1), gTransformationMatrix.WVP),
         float4x4(1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1)
     );
 
     // 簡易的に: 元のローカル空間に offset を加えて WVP で変換
+    // （offset はワールドで求めた値なので、World に回転・拡縮が無い前提）
     float4 displacedLocal = input.position;
     displacedLocal.xyz += wave.offset;
     displacedLocal.y += interactiveHeight;

@@ -11,7 +11,7 @@
 
 void TextureManager::Init(SRVManager *srv) {
   srv_ = srv;
-  // テクスチャ転送用に独自のコマンドリスト（DirectQueue、バッファ数1）を作る
+  // テクスチャ転送用に独自のコマンドリスト（DirectQueue、バッファ数 1）を作る
   loadCmd_.Init(srv->Device(), D3D12_COMMAND_LIST_TYPE_DIRECT, 1);
   
   // Init() 終了直後は Close されているので、記録開始のために一度 Reset しておく
@@ -92,12 +92,12 @@ TextureManager::TextureID TextureManager::LoadID(const std::string &path,
 
   {
     std::lock_guard lock(mtx_);
-    // 既にIDがあるか確認
+    // 既に ID があるか確認
     if (auto itId = pathToId_.find(npath); itId != pathToId_.end()) {
       id = itId->second;
       alreadyExists = true;
     } else {
-      // 新規ID発行（プレースホルダを作成）
+      // 新規 ID 発行（プレースホルダを作成）
       id = nextId_++;
       pathToId_[npath] = id;
       idToPath_[id] = npath;
@@ -118,13 +118,13 @@ TextureManager::TextureID TextureManager::LoadID(const std::string &path,
         return cache_[npath];
       }();
 
-      // 1. CPUデコード (完全並列)
+      // 1. CPU デコード（ロックを取らずに完全並列で行う）
       if (!tex.LoadCPU(npath, srgb)) {
         Log::Print("[Texture] ロード失敗: " + npath);
         return;
       }
 
-      // 2. GPU転送 (最小限のロック)
+      // 2. GPU 転送（コマンドリストを共有するので、ここだけロックする）
       Microsoft::WRL::ComPtr<ID3D12Resource> uploadRes;
       {
         std::lock_guard lock(mtx_);

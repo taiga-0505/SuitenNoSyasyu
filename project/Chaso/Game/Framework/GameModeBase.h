@@ -11,7 +11,7 @@ class Entity;
 
 /// @class GameModeBase
 /// @brief ゲームのルール、勝利条件、進行を管理するクラス
-/// @details Unreal Engineの AGameModeBase に相当。
+/// @details Unreal Engine の AGameModeBase に相当。
 ///          エンジンは「いつ呼ぶか」だけを持ち、「何を判定するか」は
 ///          Application 側の派生クラスが決める。派生クラスは SetFactory で登録すると、
 ///          DataDrivenScene がシーンを読み込むたびにそのファクトリで GameMode を作る。
@@ -63,9 +63,10 @@ public:
     /// @return 保持している GameState（未設定なら nullptr）
     GameStateBase* GetGameState() const { return gameState_.get(); }
 
-    /// @brief BeginPlay 済みかどうかの取得と、BeginPlay 済みとしての記録
-    /// @return HasBegunPlay: BeginPlay 済みなら true
+    /// @brief BeginPlay 済みかどうか
+    /// @return BeginPlay 済みなら true
     bool HasBegunPlay() const { return hasBegunPlay_; }
+    /// @brief BeginPlay 済みとして記録する（シーンが BeginPlay を呼んだ直後に呼ぶ）
     void MarkBegunPlay() { hasBegunPlay_ = true; }
 
     /// @brief シーンを再入場したときに BeginPlay からやり直せる状態へ戻す

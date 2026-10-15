@@ -6,6 +6,7 @@
 #include <cmath>
 #include <nlohmann/json.hpp>
 
+/// @class AudioListenerComponent
 /// @brief 3D 音響の聞き手（Unity の AudioListener 相当）
 /// @details 付けなくても 3D 音響は動く（描画中のカメラが聞き手になる）。
 ///          「距離はプレイヤー基準で測りたい」ときにプレイヤー等のエンティティへ付ける。
@@ -22,14 +23,20 @@ class AudioListenerComponent : public IComponent {
 public:
   bool orientToCamera = true; ///< 向きをカメラに合わせる（位置だけこのエンティティ）
 
+  /// @brief コンポーネントの型名を返す
+  /// @return "AudioListenerComponent"
   const char *TypeName() const override { return "AudioListenerComponent"; }
 
+  /// @brief 設定を JSON に書き出す
+  /// @return orientToCamera を格納した JSON
   nlohmann::json Serialize() const override {
     return {
         {"orientToCamera", orientToCamera},
     };
   }
 
+  /// @brief JSON から設定を読み込み、速度推定の履歴を捨てる
+  /// @param j 読み込み元の JSON（orientToCamera が無ければ true）
   void Deserialize(const nlohmann::json &j) override {
     orientToCamera = j.value("orientToCamera", true);
     ResetMotion();
@@ -72,6 +79,7 @@ public:
   }
 
   /// @brief 最後にエンジンへ渡した姿勢（Inspector 表示用）
+  /// @return 最後に Tick() で設定した姿勢
   const AudioListenerPose &LastPose() const { return lastPose_; }
 
 private:

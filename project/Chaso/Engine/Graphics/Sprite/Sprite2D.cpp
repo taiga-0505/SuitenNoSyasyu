@@ -24,15 +24,15 @@ void Sprite2D::Initialize(ID3D12Device *device,
   screenW_ = screenWidth;
   screenH_ = screenHeight;
 
-  // CB: WVP
+  // 定数バッファ: WVP
   cbWVP_.dyn.Ptr()->World = MakeIdentity4x4();
   cbWVP_.dyn.Ptr()->WVP = MakeIdentity4x4();
 
-  // CB: Material
+  // 定数バッファ: マテリアル
   cbMat_.dyn.Ptr()->color = {1, 1, 1, 1};
   cbMat_.dyn.Ptr()->uvTransform = MakeIdentity4x4();
 
-  // ビュー/プロジェクション（左上基準の直交）
+  // ビュー / プロジェクション（左上基準の正射影）
   view_ = MakeIdentity4x4();
   proj_ = MakeOrthographicMatrix(0.0f, 0.0f, screenW_, screenH_, 0.0f, 100.0f);
 
@@ -57,12 +57,12 @@ void Sprite2D::SetSize(float w, float h) {
 
 void Sprite2D::Update() {
   if (worldSpace_) {
-    // 共有クアッドは「左上原点・右下(1,1)・Y下向き」のスクリーン用なので、
-    // 3D 用に「原点中心・1×1・Y上向き」へ補正してから Transform を掛ける。
+    // 共有クアッドは「左上原点・右下 (1,1)・Y 下向き」のスクリーン用なので、
+    // 3D 用に「原点中心・1×1・Y 上向き」へ補正してから Transform を掛ける。
     //   local.x = x - 0.5
-    //   local.y = 0.5 - y   （Y反転）
+    //   local.y = 0.5 - y   （Y 反転）
     Matrix4x4 pre = MakeIdentity4x4();
-    pre.m[1][1] = -1.0f; // Y反転
+    pre.m[1][1] = -1.0f; // Y 反転
     pre.m[3][0] = -0.5f; // 中心合わせ
     pre.m[3][1] = 0.5f;
 
@@ -95,7 +95,7 @@ void Sprite2D::Draw(ID3D12GraphicsCommandList *cmdList) const {
   cmdList->IASetIndexBuffer(&ibv);
   cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-  // RootParam: 0=Material, 1=WVP, 2=SRV
+  // ルートパラメータ: 0 = マテリアル、1 = WVP、2 = SRV
   cmdList->SetGraphicsRootConstantBufferView(
       0, cbMat_.dyn.Address());
   cmdList->SetGraphicsRootConstantBufferView(

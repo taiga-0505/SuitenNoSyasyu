@@ -16,10 +16,10 @@ void DrawSkyBox(int skyboxHandle) {
   if (!skybox || !skybox->Visible())
     return;
 
-  // Skybox用のWVP行列を計算
-  // 平行移動を0にしたView行列を使う（カメラが動いてもスカイボックスは追従しない）
+  // Skybox 用の WVP 行列を計算する
+  // 平行移動を 0 にした View 行列を使う（カメラが動いてもスカイボックスとの位置関係は変わらない）
   Matrix4x4 view = ctx.View();
-  // View行列の平行移動成分をゼロにする（回転だけ適用）
+  // View 行列の平行移動成分をゼロにする（回転だけ適用）
   view.m[3][0] = 0.0f;
   view.m[3][1] = 0.0f;
   view.m[3][2] = 0.0f;
@@ -36,7 +36,7 @@ void DrawSkyBox(int skyboxHandle) {
     ctx.SetEnvironmentMap(envSrv);
   }
 
-  // コマンドキューにPSO切り替え→描画→元に戻すを積む
+  // コマンドキューに「PSO 切り替え → 描画 → 元に戻す」を積む
   const uint64_t key = SortKey::Make(SortKey::kLayerOpaque, SortKey::HashPSO("skybox"), 0);
   ctx.PushCommand3D(key, [skyboxHandle, world, envSrv](ID3D12GraphicsCommandList *cl) {
     auto &r = GetRenderContext();
@@ -53,7 +53,7 @@ void DrawSkyBox(int skyboxHandle) {
     cl->SetPipelineState(pso->PSO());
     cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-    // WVP更新して描画
+    // WVP を更新して描画
     if (auto *cbWvp = sb->Mat()) {
       // Mat() は Material を返すので、WVP は Draw 内で直接設定
     }

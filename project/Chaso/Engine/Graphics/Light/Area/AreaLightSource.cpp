@@ -4,6 +4,9 @@
 
 namespace RC {
 
+/// @brief ベクトルを正規化する（長さがほぼ 0 なら +X を返す）
+/// @param v 正規化するベクトル
+/// @return 正規化したベクトル
 static Vector3 NormalizeSafe_(const Vector3 &v) {
   const float len2 = v.x * v.x + v.y * v.y + v.z * v.z;
   if (len2 <= 1e-12f) {

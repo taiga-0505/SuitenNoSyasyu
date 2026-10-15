@@ -34,9 +34,11 @@ class ColliderComponent;
 class RigidbodyComponent;
 class NativeScriptComponent;
 
+/// @class ColliderBroadphase
 /// @brief コライダーの粗い判定（ブロードフェーズ）
 class ColliderBroadphase {
 public:
+  /// @struct Entry
   /// @brief 1 エンティティ分の登録情報（Sync 時点のコンポーネントをキャッシュしている）
   struct Entry {
     std::weak_ptr<Entity> weak;            ///< 対象（Sync 後に破棄された場合でも安全に判定できるよう弱参照で持つ）
@@ -57,9 +59,12 @@ public:
   /// @brief entities の内容を BVH に反映する
   /// @details 非アクティブ・破棄予定・コライダー無効のエンティティは登録から外す。
   ///          呼び出し後、EntryAt(i) で entities[i] のキャッシュを引ける。
+  /// @param entities シーンのエンティティ一覧
   void Sync(const std::vector<std::shared_ptr<Entity>> &entities);
 
   /// @brief 1 エンティティの位置だけを BVH に反映する（未登録なら何もしない）
+  /// @param e 位置を反映するエンティティ
+  /// @note Sync が必要な状態（IsDirty()）のときは何もしない。
   void Refresh(Entity *e);
 
   /// @brief 重なり候補のペアを (i, j)（entities の添え字、i < j、昇順）で列挙する
@@ -68,7 +73,8 @@ public:
   void CollectPairs(bool includeAll, std::vector<std::pair<uint32_t, uint32_t>> &out) const;
 
   /// @brief box と重なる候補を列挙する
-  /// @param cb bool(const Entry&)。false を返すと打ち切る
+  /// @param box 判定する箱
+  /// @param cb  bool(const Entry&)。false を返すと打ち切る
   template <class Callback> void QueryBox(const RC::BoundingBox &box, Callback &&cb) const {
     bvh_.Query(box, [&](int32_t proxy) {
       const Entry &en = entries_[bvh_.GetUserData(proxy)];
@@ -76,7 +82,9 @@ public:
     });
   }
 
-  /// @brief entities[order] の登録情報（未登録なら nullptr）
+  /// @brief entities[order] の登録情報を取得する
+  /// @param order 直前の Sync に渡した entities の添え字
+  /// @return 登録情報（未登録・範囲外なら nullptr）
   const Entry *EntryAt(uint32_t order) const {
     if (order >= orderToEntry_.size()) return nullptr;
     const int32_t idx = orderToEntry_[order];
@@ -87,18 +95,25 @@ public:
   void MarkDirty() { dirty_ = true; }
 
   /// @brief Sync が必要か（一度も Sync していない、または MarkDirty された）
+  /// @return Sync が必要なら true
   bool IsDirty() const { return dirty_; }
 
   /// @brief 直前の Sync に渡した entities の要素数（増減の検出用）
+  /// @return entities の要素数
   size_t SyncedEntityCount() const { return orderToEntry_.size(); }
 
   /// @brief 全登録を破棄する
   void Clear();
 
   /// @brief 登録数
+  /// @return BVH に登録されている葉の数
   int32_t Count() const { return bvh_.GetProxyCount(); }
 
   /// @brief コライダーのワールド AABB（Scene の判定と同じ式。Capsule は AABB 扱い）
+  /// @param tr  エンティティの Transform
+  /// @param col エンティティの Collider
+  /// @param out 計算した AABB の出力先
+  /// @return 有限の値で計算できたら true（NaN / 無限大が混ざったら false）
   static bool ComputeBounds(const TransformComponent &tr, const ColliderComponent &col,
                             RC::BoundingBox &out);
 
@@ -108,13 +123,18 @@ public:
   static constexpr float kFatMargin = 0.25f;
 
 private:
+  /// @brief 空き登録を 1 つ確保する（空きが無ければ entries_ を伸ばす）
+  /// @return 確保した entries_ の添え字
   int32_t AcquireEntry_();
+
+  /// @brief 登録を解放し、BVH の葉も破棄する
+  /// @param idx 解放する entries_ の添え字
   void ReleaseEntry_(int32_t idx);
 
-  RC::DynamicBVH bvh_{kFatMargin, 2.0f};
-  std::vector<Entry> entries_;
-  std::vector<int32_t> freeEntries_;
+  RC::DynamicBVH bvh_{kFatMargin, 2.0f}; ///< 本体の BVH
+  std::vector<Entry> entries_;           ///< 登録情報の配列（解放分は freeEntries_ で再利用する）
+  std::vector<int32_t> freeEntries_;     ///< 空いている entries_ の添え字
   std::vector<int32_t> orderToEntry_; ///< entities の添え字 → entries_ の添え字（-1 = 未登録）
-  uint32_t stamp_ = 0;
-  bool dirty_ = true;
+  uint32_t stamp_ = 0;                   ///< Sync ごとに増える番号（0 は使わない）
+  bool dirty_ = true;                    ///< Sync が必要か
 };

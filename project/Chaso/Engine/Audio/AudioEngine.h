@@ -65,22 +65,24 @@ struct AudioListenerPose {
 /// @note 全メソッドは Init() 前・Term() 後に呼ばれても安全（何もしない）。
 class AudioEngine {
 public:
-  /// @brief シングルトン取得
+  /// @brief シングルトンを取得する
+  /// @return AudioEngine の唯一のインスタンス
   /// @note 静的破棄順の問題を避けるため、インスタンスは意図的に解放しない。
   ///       リソースの解放は Term() で明示的に行う。
   static AudioEngine &Get();
 
-  /// @brief 初期化（XAudio2 / マスター / BGM・SE のサブミックス / X3DAudio を生成）
+  /// @brief 初期化する（XAudio2 / マスター / BGM・SE のサブミックス / X3DAudio を生成）
   /// @return 成功したら true。オーディオデバイスが無い環境では false を返し、以降は無音で動作する
   bool Init();
 
-  /// @brief 終了処理。全ボイスを止め、全クリップを解放する
+  /// @brief 終了処理（全ボイスを止め、全クリップを解放する）
   void Term();
 
-  /// @brief 毎フレーム呼ぶ。鳴り終わった SE の回収、持ち主のいない BGM の停止、3D ボイスの定位更新を行う
+  /// @brief 鳴り終わった SE の回収、持ち主のいない BGM の停止、3D ボイスの定位更新を行う（毎フレーム呼ぶ）
   void Update();
 
   /// @brief 初期化済みか
+  /// @return XAudio2 を生成済みなら true
   bool IsInitialized() const { return xaudio_ != nullptr; }
 
   // ================================================================
@@ -88,33 +90,44 @@ public:
   // ================================================================
 
   /// @brief 音声ファイルをロードしてクリップハンドルを返す（キャッシュ済みなら同じハンドル）
-  /// @param path ファイルパス（.wav / .mp3）
+  /// @param path ファイルパス（.wav / .mp3 など）
   /// @return クリップハンドル。失敗時 -1
-  /// @note 返ったハンドルは使い終わったら UnloadClip() で参照を返すこと
+  /// @note 返ったハンドルは使い終わったら UnloadClip() で参照を返すこと。
   int LoadClip(const std::string &path);
 
   /// @brief クリップの参照を 1 つ返す
-  /// @details 参照が 0 になっても即座には解放しない（PurgeUnusedClips() で解放）
+  /// @details 参照が 0 になっても即座には解放しない（PurgeUnusedClips() で解放）。
+  /// @param clip クリップハンドル（無効なら何もしない）
   void UnloadClip(int clip);
 
   /// @brief 誰も参照していないクリップをメモリから解放する
   /// @details シーン遷移の完了後（新シーンのロード後）に呼ぶと、前のシーンだけが
-  ///          使っていたクリップが解放され、共有している BGM は残る
+  ///          使っていたクリップが解放され、共有している BGM は残る。
   void PurgeUnusedClips();
 
   /// @brief 有効なクリップハンドルか
+  /// @param clip クリップハンドル
+  /// @return 範囲内かつ使用中のスロットなら true
   bool IsValidClip(int clip) const;
 
-  /// @brief クリップのファイルパス（無効なら空文字）
+  /// @brief クリップのファイルパスを取得する
+  /// @param clip クリップハンドル
+  /// @return 正規化済みパス（無効なら空文字）
   const std::string &ClipPath(int clip) const;
 
-  /// @brief クリップの長さ（秒）。無効なら 0
+  /// @brief クリップの長さを取得する
+  /// @param clip クリップハンドル
+  /// @return 長さ（秒。無効なら 0）
   float ClipDuration(int clip) const;
 
-  /// @brief クリップのチャンネル数（無効なら 0）。3D 音響はモノラル音源が最も自然に定位する
+  /// @brief クリップのチャンネル数を取得する
+  /// @param clip クリップハンドル
+  /// @return チャンネル数（無効なら 0）
+  /// @note 3D 音響はモノラル音源が最も自然に定位する。
   int ClipChannels(int clip) const;
 
   /// @brief キャッシュ中のクリップ数（デバッグ表示用）
+  /// @return 使用中のスロット数
   size_t ClipCount() const;
 
   // ================================================================
@@ -122,9 +135,9 @@ public:
   // ================================================================
 
   /// @brief SE を再生する
-  /// @param clip クリップハンドル
-  /// @param volume 音量（0.0 ~ 1.0、バス音量・マスター音量とは別に乗算される）
-  /// @param loop ループ再生するか（環境音など。止めるには StopVoice が必要）
+  /// @param clip    クリップハンドル
+  /// @param volume  音量（0.0〜1.0、バス音量・マスター音量とは別に乗算される）
+  /// @param loop    ループ再生するか（環境音など。止めるには StopVoice が必要）
   /// @param emitter 3D 音響のパラメータ。nullptr なら 2D で鳴る。
   ///                渡すと最初のサンプルから正しい定位・音量で鳴り始める（1 フレームだけ 2D で
   ///                大きく鳴ることがない）。以降は毎フレーム SetVoiceEmitter() で位置を更新する
@@ -132,32 +145,45 @@ public:
   int PlaySe(int clip, float volume = 1.0f, bool loop = false, const AudioEmitter *emitter = nullptr);
 
   /// @brief ボイスを停止・破棄する（既に鳴り終わっていれば何もしない）
+  /// @param voiceId ボイス ID
   void StopVoice(int voiceId);
 
   /// @brief ボイスが再生中か
+  /// @param voiceId ボイス ID
+  /// @return 再生中なら true
   bool IsVoicePlaying(int voiceId) const;
 
-  /// @brief 再生中のボイスがループ再生か（鳴り終わっていれば false）
+  /// @brief 再生中のボイスがループ再生か
+  /// @param voiceId ボイス ID
+  /// @return ループ再生中なら true（鳴り終わっていれば false）
   bool IsVoiceLooping(int voiceId) const;
 
   /// @brief 再生中ボイスの音量を変更する
+  /// @param voiceId ボイス ID
+  /// @param volume  音量（負なら 0 に丸める）
   void SetVoiceVolume(int voiceId, float volume);
 
-  /// @brief 再生中ボイスの 3D パラメータ（位置など）を更新する。毎フレーム呼ぶ
+  /// @brief 再生中ボイスの 3D パラメータ（位置など）を更新する（毎フレーム呼ぶ）
   /// @details spatialBlend が 0 なら 2D に戻る（元々 2D のボイスに 0 を渡しても何もしない）。
   ///          実際の計算は次の Update() でまとめて行う。
+  /// @param voiceId ボイス ID
+  /// @param emitter 最新のエミッターパラメータ
   void SetVoiceEmitter(int voiceId, const AudioEmitter &emitter);
 
   /// @brief ボイスが 3D 音響で鳴っているか
+  /// @param voiceId ボイス ID
+  /// @return 3D 音響で鳴っていれば true
   bool IsVoiceSpatial(int voiceId) const;
 
   /// @brief 全 SE を停止する
   void StopAllSe();
 
   /// @brief 再生中の SE ボイス数（デバッグ表示用）
+  /// @return SE ボイス数
   size_t ActiveSeCount() const { return seVoices_.size(); }
 
   /// @brief 再生中の 3D SE ボイス数（デバッグ表示用）
+  /// @return 3D 音響で鳴っている SE ボイス数
   size_t ActiveSpatialCount() const;
 
   // ================================================================
@@ -165,13 +191,13 @@ public:
   // ================================================================
 
   /// @brief BGM を再生する。同じクリップが既に鳴っていれば継続（音量だけ反映）、違えば差し替える
-  /// @param clip クリップハンドル
-  /// @param volume 音量（0.0 ~ 1.0）
-  /// @param loop ループ再生するか
+  /// @param clip   クリップハンドル
+  /// @param volume 音量（0.0〜1.0）
+  /// @param loop   ループ再生するか
   void PlayBgm(int clip, float volume = 1.0f, bool loop = true);
 
   /// @brief BGM の持ち主が「まだ必要」と伝える（毎フレーム呼ぶ）
-  /// @param clip 自分が鳴らしているクリップ。現在の BGM と一致しなければ何もしない
+  /// @param clip   自分が鳴らしているクリップ。現在の BGM と一致しなければ何もしない
   /// @param volume 現在の希望音量（Inspector での変更をリアルタイム反映するため）
   /// @details 呼ばれなくなってから kBgmGraceFrames 回目の Update() で BGM を止める
   ///          （それまでの数フレームは鳴り続ける）。
@@ -183,73 +209,94 @@ public:
   void StopBgm();
 
   /// @brief BGM が鳴っているか
+  /// @return BGM ボイスがあれば true
   bool IsBgmPlaying() const { return bgm_.voice != nullptr; }
 
-  /// @brief 現在鳴っている BGM のクリップハンドル（鳴っていなければ -1）
+  /// @brief 現在鳴っている BGM のクリップハンドルを取得する
+  /// @return クリップハンドル（鳴っていなければ -1）
   int CurrentBgmClip() const { return bgm_.voice ? bgm_.clip : -1; }
 
   // ================================================================
   // 3D 音響（リスナー）
   // ================================================================
 
-  /// @brief 3D 音響が使えるか（X3DAudio の初期化に成功したか）。false なら 3D 指定の音も 2D で鳴る
+  /// @brief 3D 音響が使えるか（X3DAudio の初期化に成功したか）
+  /// @return 使えるなら true。false なら 3D 指定の音も 2D で鳴る
   bool Is3DAvailable() const { return x3dReady_; }
 
   /// @brief リスナー（聞き手）の姿勢を速度込みで設定する（毎フレーム呼ぶ）
+  /// @param pose リスナーの姿勢（forward / up は内部で正規直交化する）
   void SetListener(const AudioListenerPose &pose);
 
   /// @brief リスナーの位置と向きを設定する。速度は前回位置との差分から自動で求める（毎フレーム呼ぶ）
   /// @param position ワールド座標
-  /// @param forward 正面方向（正規化していなくてよい）
-  /// @param up 上方向（正規化していなくてよい。forward と直交していなければ直交化する）
-  /// @param dt 前フレームからの経過時間（秒）。0 以下なら速度は 0 とする
+  /// @param forward  正面方向（正規化していなくてよい）
+  /// @param up       上方向（正規化していなくてよい。forward と直交していなければ直交化する）
+  /// @param dt       前フレームからの経過時間（秒）。0 以下なら速度は 0 とする
   void SetListenerPose(const RC::Vector3 &position, const RC::Vector3 &forward, const RC::Vector3 &up, float dt);
 
   /// @brief カメラのビュー行列からリスナーを設定する（AudioListenerComponent が無いシーン用）
   /// @param view ワールド → ビューの行列（CameraController::GetView()）
-  /// @param dt 前フレームからの経過時間（秒）
+  /// @param dt   前フレームからの経過時間（秒）
   void SetListenerFromView(const RC::Matrix4x4 &view, float dt);
 
-  /// @brief 現在のリスナー
+  /// @brief 現在のリスナーを取得する
+  /// @return リスナーの姿勢
   const AudioListenerPose &GetListener() const { return listener_; }
 
-  /// @brief 音速（ワールド単位/秒）。ドップラー効果の強さに関わる。既定は 343.5（空気中・m 単位）
-  /// @details ワールドの 1 単位が 1m でないゲームでは、その比率に合わせて変える
+  /// @brief 音速を設定する（ドップラー効果の強さに関わる。既定は 343.5（空気中・m 単位））
+  /// @details ワールドの 1 単位が 1m でないゲームでは、その比率に合わせて変える。
+  /// @param unitsPerSecond 音速（ワールド単位/秒。1 未満は 1 に丸める）
   void SetSpeedOfSound(float unitsPerSecond);
 
-  /// @brief 音速（ワールド単位/秒）
+  /// @brief 音速を取得する
+  /// @return 音速（ワールド単位/秒）
   float GetSpeedOfSound() const { return speedOfSound_; }
 
   /// @brief エンティティのワールド行列からリスナー姿勢を作る（Transform の +Z を正面、+Y を上とする）
+  /// @param world ワールド行列
+  /// @return リスナー姿勢（速度は 0）
   static AudioListenerPose PoseFromWorldMatrix(const RC::Matrix4x4 &world);
 
   /// @brief カメラのビュー行列からリスナー姿勢を作る
+  /// @param view ワールド → ビューの行列
+  /// @return リスナー姿勢（速度は 0）
   static AudioListenerPose PoseFromViewMatrix(const RC::Matrix4x4 &view);
 
   /// @brief 距離減衰を計算する（Inspector のプレビュー表示などにも使える）
-  /// @return 音量倍率（0.0 ~ 1.0）
+  /// @param distance    音源とリスナーの距離
+  /// @param minDistance この距離までは減衰しない
+  /// @param maxDistance この距離で無音になる
+  /// @param rolloff     減衰カーブ
+  /// @return 音量倍率（0.0〜1.0）
   static float ComputeRolloff(float distance, float minDistance, float maxDistance, AudioRolloff rolloff);
 
   // ================================================================
   // バス / マスター音量
   // ================================================================
 
-  /// @brief バス音量を設定する（0.0 ~ 1.0）
+  /// @brief バス音量を設定する
+  /// @param bus    対象のバス
+  /// @param volume 音量（0.0〜1.0 に丸める）
   void SetBusVolume(AudioBus bus, float volume);
 
   /// @brief バス音量を取得する
+  /// @param bus 対象のバス
+  /// @return 音量（範囲外のバスなら 0）
   float GetBusVolume(AudioBus bus) const;
 
-  /// @brief マスター音量を設定する（0.0 ~ 1.0）
+  /// @brief マスター音量を設定する
+  /// @param volume 音量（0.0〜1.0 に丸める）
   void SetMasterVolume(float volume);
 
   /// @brief マスター音量を取得する
+  /// @return 音量（0.0〜1.0）
   float GetMasterVolume() const { return masterVolume_; }
 
   /// @brief BGM・SE をすべて停止する
   void StopAll();
 
-  /// @brief BGM が持ち主なしで生き残るフレーム数
+  /// @brief BGM が持ち主なしで生き残るフレーム数（KeepBgmAlive が呼ばれなくなってからの猶予）
   static constexpr int kBgmGraceFrames = 3;
 
 private:
@@ -313,21 +360,63 @@ private:
     std::vector<float> workMatrix;  ///< 計算用の出力行列
   };
 
+  /// @brief クリップを積んだソースボイスを作る（まだ鳴らさない）
+  /// @param clip   クリップハンドル
+  /// @param bus    送り先のバス（サブミックスが無ければマスターへ直接送る）
+  /// @param volume 音量
+  /// @param loop   ループ再生するか
+  /// @return ソースボイス。失敗時 nullptr
+  /// @note 3D の初期定位を先に反映できるよう、Start() は呼び出し側で行う。
   SourceVoicePtr CreateVoice_(int clip, AudioBus bus, float volume, bool loop);
+  /// @brief ボイスの再生を開始する
+  /// @param v 対象のボイス
+  /// @return 開始できたら true
   bool StartVoice_(Voice &v);
+  /// @brief ボイスを破棄し、クリップの参照を返す
+  /// @param v 対象のボイス
   void DestroyVoice_(Voice &v);
+  /// @brief ボイス側からクリップの参照を返す（挙動は UnloadClip と同じ）
+  /// @param clip クリップハンドル
   void ReleaseClipRef_(int clip);
+  /// @brief クリップの PCM を解放し、スロットを空きに戻す
+  /// @param c 対象のクリップ
   void FreeClip_(Clip &c);
+  /// @brief 空きスロットを探す（無ければ末尾に追加する）
+  /// @return スロットのインデックス（＝クリップハンドル）
   int AllocClipSlot_();
+  /// @brief ID から再生中の SE ボイスを探す
+  /// @param voiceId ボイス ID
+  /// @return 見つかったボイス（無ければ nullptr）
   Voice *FindSeVoice_(int voiceId);
+  /// @brief ID から再生中の SE ボイスを探す（const 版）
+  /// @param voiceId ボイス ID
+  /// @return 見つかったボイス（無ければ nullptr）
   const Voice *FindSeVoice_(int voiceId) const;
+  /// @brief ボイスが鳴り終わったか（キューにバッファが残っていないか）
+  /// @param v 対象のボイス
+  /// @return 鳴り終わっていれば true（ボイスが無い場合も true）
   static bool IsVoiceFinished_(const Voice &v);
+  /// @brief 区切り文字を '/' に揃え、"." や ".." を畳んだパスにする
+  /// @param path 元のパス
+  /// @return 正規化したパス
   static std::string NormalizePath_(const std::string &path);
+  /// @brief キャッシュのキーを作る（Windows は大文字小文字を区別しないので小文字に寄せる）
+  /// @param normalizedPath 正規化済みパス
+  /// @return キャッシュのキー
   static std::string CacheKey_(const std::string &normalizedPath);
 
+  /// @brief 現在のスピーカー構成と音速で X3DAudio を初期化する
+  /// @return 成功したら true
   bool InitX3D_();
+  /// @brief 2D のときの出力行列（作成直後の既定値）を取得して保存する
+  /// @param v 対象のボイス
+  /// @return 取得できたら（または取得済みなら）true
   bool CaptureFlatMatrix_(Voice &v);
+  /// @brief リスナーとエミッターから定位・距離減衰・ドップラーを計算してボイスに反映する
+  /// @param v 対象のボイス
   void ApplySpatial_(Voice &v);
+  /// @brief 出力行列とピッチを 2D の状態に戻す
+  /// @param v 対象のボイス
   void ResetSpatial_(Voice &v);
 
   Microsoft::WRL::ComPtr<IXAudio2> xaudio_; ///< XAudio2 本体
@@ -347,7 +436,7 @@ private:
   // --- 3D 音響 ---
   /// @brief X3DAudio のインスタンスハンドル（X3DAUDIO_HANDLE = BYTE[20]）
   /// @details x3daudio.h（DirectXMath 込み）を全コンポーネントに波及させないため、生バイトで持つ。
-  ///          サイズは AudioEngine.cpp の static_assert で検証している
+  ///          サイズは AudioEngine.cpp の static_assert で検証している。
   alignas(16) unsigned char x3dInstance_[20] = {};
   bool x3dReady_ = false;                 ///< X3DAudioInitialize に成功したか
   uint32_t dstChannels_ = 0;              ///< 出力（マスター / サブミックス）のチャンネル数

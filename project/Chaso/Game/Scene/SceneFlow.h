@@ -51,8 +51,9 @@ public:
   /// @brief 既定の保存先（作業ディレクトリ = project/ 基準）
   static constexpr const char *kDefaultPath = "Resources/SceneFlow.json";
 
-  /// @brief 組み込み変数（$current: いまのシーン / $arg: スクリプトが渡した名前）
+  /// @brief 組み込み変数: いまのシーン
   static constexpr const char *kVarCurrent = "$current";
+  /// @brief 組み込み変数: スクリプトが RequestTransition の第 2 引数で渡した名前
   static constexpr const char *kVarArg = "$arg";
 
   /// @brief 唯一のインスタンスを取得する

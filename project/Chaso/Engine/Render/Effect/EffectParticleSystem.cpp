@@ -18,9 +18,14 @@ namespace {
 constexpr float kPi = 3.14159f; // 旧スクリプトと同じ値（角度の乱数に使う）
 
 /// @brief 0〜(n-1) の整数乱数（旧スクリプトの rand() % n と同じ）
+/// @param n 乱数の範囲（1 以上）
+/// @return 0〜(n-1) の整数値を float にしたもの
 inline float RandMod(int n) { return static_cast<float>(std::rand() % n); }
 
-/// @brief 行ベクトル規約の行列積（a * b）を out へ
+/// @brief 行ベクトル規約の行列積（a * b）を out へ書く
+/// @param a   左の行列
+/// @param b   右の行列
+/// @param out 結果の書き込み先
 inline void MulTo(const Matrix4x4 &a, const Matrix4x4 &b, Matrix4x4 &out) {
   for (int r = 0; r < 4; ++r) {
     for (int c = 0; c < 4; ++c) {
@@ -30,11 +35,17 @@ inline void MulTo(const Matrix4x4 &a, const Matrix4x4 &b, Matrix4x4 &out) {
   }
 }
 
+/// @brief 専用のデバッグ用 PSO で描く表示モードか
+/// @param mode ビューの表示モード
+/// @return FaceOrientation / RandomColor / SolidShading なら true
 bool IsDebugShadingMode(ViewShadingMode mode) {
   return mode == ViewShadingMode::FaceOrientation || mode == ViewShadingMode::RandomColor ||
          mode == ViewShadingMode::SolidShading;
 }
 
+/// @brief 表示モードに対応するインスタンス描画用 PSO のプレフィックスを取得する
+/// @param mode ビューの表示モード
+/// @return PSO のプレフィックス（デバッグ表示以外は "object3d_inst"）
 std::string_view DebugInstPrefix(ViewShadingMode mode) {
   switch (mode) {
   case ViewShadingMode::FaceOrientation: return "object3d_faceori_inst";

@@ -5,9 +5,9 @@
 
 /// @class Game
 /// @brief アプリケーション全体のメインロジックを統括するクラス
-/// @details シーン遷移（SceneManager）の初期化と更新を管理します。
+/// @details シーン遷移（SceneManager）の初期化と更新を管理する。
 ///          オーディオはエンジン側の AudioEngine（シングルトン）と、シーン内の
-///          AudioSourceComponent が担当するため、ここでは扱いません。
+///          AudioSourceComponent が担当するため、ここでは扱わない。
 class Game {
 public:
   Game() = default;
@@ -64,7 +64,7 @@ public:
   void RestoreCurrentScene(SceneContext &ctx);
 
   /// @brief 現在実行中のシーンのポインタを取得する
-  /// @return シーンのポインタ（なければnullptr）
+  /// @return シーンのポインタ（なければ nullptr）
   Scene* GetCurrentScene();
 
   /// @brief シーンマネージャーを取得する

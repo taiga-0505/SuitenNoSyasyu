@@ -12,6 +12,9 @@ namespace RC {
 
 namespace {
 /// @brief 内部共通: 指定インデックスのアニメーションをパースする
+/// @param scene     assimp で読み込んだシーン（nullptr 可）
+/// @param animIndex アニメーションインデックス（0 始まり）
+/// @return 解析結果（scene が無効・範囲外なら空の Animation）
 Animation ParseAnimation_(const aiScene* scene, int animIndex) {
     Animation animation;
     if (!scene || animIndex < 0 || static_cast<unsigned>(animIndex) >= scene->mNumAnimations) {
@@ -21,12 +24,12 @@ Animation ParseAnimation_(const aiScene* scene, int animIndex) {
     aiAnimation* animationAssimp = scene->mAnimations[animIndex];
     animation.duration = float(animationAssimp->mDuration / animationAssimp->mTicksPerSecond);
 
-    // NodeAnimationを解析する
+    // NodeAnimation を解析する（キーの時刻は tick から秒へ換算する）
     for (uint32_t channelIndex = 0; channelIndex < animationAssimp->mNumChannels; ++channelIndex) {
         aiNodeAnim* nodeAnimationAssimp = animationAssimp->mChannels[channelIndex];
         NodeAnimation& nodeAnimation = animation.nodeAnimations[nodeAnimationAssimp->mNodeName.C_Str()];
 
-        // Translate
+        // 平行移動
         for (uint32_t keyIndex = 0; keyIndex < nodeAnimationAssimp->mNumPositionKeys; ++keyIndex) {
             aiVectorKey& keyAssimp = nodeAnimationAssimp->mPositionKeys[keyIndex];
             KeyframeVector3 keyframe;
@@ -35,7 +38,7 @@ Animation ParseAnimation_(const aiScene* scene, int animIndex) {
             nodeAnimation.translate.push_back(keyframe);
         }
 
-        // Rotate
+        // 回転
         for (uint32_t keyIndex = 0; keyIndex < nodeAnimationAssimp->mNumRotationKeys; ++keyIndex) {
             aiQuatKey& keyAssimp = nodeAnimationAssimp->mRotationKeys[keyIndex];
             KeyframeQuaternion keyframe;
@@ -44,7 +47,7 @@ Animation ParseAnimation_(const aiScene* scene, int animIndex) {
             nodeAnimation.rotate.push_back(keyframe);
         }
 
-        // Scale
+        // 拡縮
         for (uint32_t keyIndex = 0; keyIndex < nodeAnimationAssimp->mNumScalingKeys; ++keyIndex) {
             aiVectorKey& keyAssimp = nodeAnimationAssimp->mScalingKeys[keyIndex];
             KeyframeVector3 keyframe;

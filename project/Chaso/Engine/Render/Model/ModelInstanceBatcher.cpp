@@ -13,10 +13,15 @@ namespace RC {
 namespace {
 
 /// @brief 64bit のハッシュ合成（boost::hash_combine と同じ考え方）
+/// @param seed 合成先のハッシュ値（更新される）
+/// @param v    混ぜる値
 inline void HashCombine(size_t &seed, uint64_t v) {
   seed ^= std::hash<uint64_t>{}(v) + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2);
 }
 
+/// @brief float のビット列をそのまま uint32_t として取り出す（比較・ハッシュ用）
+/// @param f 元の値
+/// @return f のビット列
 inline uint32_t FloatBits(float f) {
   uint32_t u;
   std::memcpy(&u, &f, sizeof(u));
@@ -24,12 +29,16 @@ inline uint32_t FloatBits(float f) {
 }
 
 /// @brief デバッグ表示用のプロシージャルシェーダーか
+/// @param mode ビューの表示モード
+/// @return FaceOrientation / RandomColor / SolidShading なら true
 bool IsDebugShadingMode(ViewShadingMode mode) {
   return mode == ViewShadingMode::FaceOrientation || mode == ViewShadingMode::RandomColor ||
          mode == ViewShadingMode::SolidShading;
 }
 
 /// @brief ViewShadingMode に応じたインスタンシング用 PSO 名（RenderModel.cpp と同じ対応）
+/// @param mode ビューの表示モード
+/// @return PSO のプレフィックス（デバッグ表示以外は "object3d_inst"）
 std::string_view ResolveInstPrefix(ViewShadingMode mode) {
   switch (mode) {
   case ViewShadingMode::FaceOrientation: return "object3d_faceori_inst";
@@ -39,7 +48,10 @@ std::string_view ResolveInstPrefix(ViewShadingMode mode) {
   }
 }
 
-/// @brief 行ベクトル規約の行列積（a * b）を out へ（Multiply の戻り値コピーを避ける）
+/// @brief 行ベクトル規約の行列積（a * b）を out へ書く（Multiply の戻り値コピーを避ける）
+/// @param a   左の行列
+/// @param b   右の行列
+/// @param out 結果の書き込み先
 inline void MulTo(const Matrix4x4 &a, const Matrix4x4 &b, Matrix4x4 &out) {
   for (int r = 0; r < 4; ++r) {
     for (int c = 0; c < 4; ++c) {
@@ -166,7 +178,7 @@ void ModelInstanceBatcher::Clear() {
 }
 
 // ============================================================================
-// Flush
+// 書き出し（カリング → まとめ → コマンド化）
 // ============================================================================
 
 void ModelInstanceBatcher::Flush(RenderContext &ctx, ModelProxyPool &proxies) {
@@ -236,6 +248,7 @@ void ModelInstanceBatcher::Flush(RenderContext &ctx, ModelProxyPool &proxies) {
     proxies.UpdateDirty(ctx.Models());
     stats_.proxyTotal = proxies.Count();
 
+    /// @brief テンプレート（モデルハンドル）ごとの描画情報
     struct TemplateInfo {
       int32_t batch = -1;                     ///< -1 = このテンプレートは描かない
       Vector4 color{1.0f, 1.0f, 1.0f, 1.0f};  ///< テンプレートのマテリアル色

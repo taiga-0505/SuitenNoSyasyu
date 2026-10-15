@@ -33,10 +33,10 @@ void PrimitiveMesh::Initialize(ID3D12Device *device, const ModelData &data) {
   UploadVB_(data.vertices);
   UploadIB_(data.indices);
 
-  // CB: WVP / Material は DynamicCB（CPU 側に値を持ち、バインド時に今フレームの領域へ送る）
+  // 定数バッファ: WVP / Material は DynamicCB（CPU 側に値を持ち、バインド時に今フレームの領域へ送る）
   cbMat_.dyn.Ptr()->color = {1, 1, 1, 1};
   cbMat_.dyn.Ptr()->uvTransform = MakeIdentity4x4();
-  cbMat_.dyn.Ptr()->lightingMode = 2; // Half Lambert 既定
+  cbMat_.dyn.Ptr()->lightingMode = 2; // 既定は HalfLambert
   cbMat_.dyn.Ptr()->shininess = 32.0f;
 }
 
@@ -53,20 +53,20 @@ void PrimitiveMesh::Draw(ID3D12GraphicsCommandList *cmdList) {
   cbMat_.dyn.Ptr()->useNormalMap = (normalMapSrv_.ptr != 0) ? 1 : 0;
   cbMat_.dyn.Ptr()->useRoughnessMap = (roughnessMapSrv_.ptr != 0) ? 1 : 0;
 
-  // RootParam: 0:Material, 1:WVP, 2:SRV, 3:Light
+  // ルートパラメータ: 0: マテリアル, 1: WVP, 2: SRV, 3: ライト
   cmdList->SetGraphicsRootConstantBufferView(0, cbMat_.dyn.Address());
   cmdList->SetGraphicsRootConstantBufferView(1, cbWvp_.dyn.Address());
   const D3D12_GPU_DESCRIPTOR_HANDLE mainSrv = textureSrv_.ptr != 0 ? textureSrv_ : D3D12_GPU_DESCRIPTOR_HANDLE{};
   if (mainSrv.ptr != 0) {
     cmdList->SetGraphicsRootDescriptorTable(2, mainSrv);
   }
-  // Slot 9 is NormalMap
+  // スロット 9 は法線マップ（未設定ならメインテクスチャで埋める）
   if (normalMapSrv_.ptr != 0) {
     cmdList->SetGraphicsRootDescriptorTable(9, normalMapSrv_);
   } else if (mainSrv.ptr != 0) {
     cmdList->SetGraphicsRootDescriptorTable(9, mainSrv);
   }
-  // Slot 10 is RoughnessMap
+  // スロット 10 は粗さマップ（未設定ならメインテクスチャで埋める）
   if (roughnessMapSrv_.ptr != 0) {
     cmdList->SetGraphicsRootDescriptorTable(10, roughnessMapSrv_);
   } else if (mainSrv.ptr != 0) {
@@ -92,7 +92,7 @@ void PrimitiveMesh::DrawInstancedPrepared(ID3D12GraphicsCommandList *cmdList,
   }
   cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-  // RootParam (Object3DInstancing): 0:Material, 1:Instance SRV, 2:Texture, 3:DirectionalLight
+  // ルートパラメータ（Object3DInstancing）: 0: マテリアル, 1: インスタンス SRV, 2: テクスチャ, 3: 平行光源
   cmdList->SetGraphicsRootConstantBufferView(0, materialCB);
   cmdList->SetGraphicsRootShaderResourceView(1, instanceAddr);
   if (lightCB != 0) {
@@ -131,7 +131,7 @@ void PrimitiveMesh::Draw(ID3D12GraphicsCommandList *cmdList, const RC::Matrix4x4
     cbWvp_.dyn.Ptr()->worldInverseTranspose = Transpose(Inverse(world));
   }
 
-  // IA
+  // 入力アセンブラ（IA）
   cmdList->IASetVertexBuffers(0, 1, &vb_.view);
   if (ib_.resource) {
     cmdList->IASetIndexBuffer(&ib_.view);
@@ -141,7 +141,7 @@ void PrimitiveMesh::Draw(ID3D12GraphicsCommandList *cmdList, const RC::Matrix4x4
   cbMat_.dyn.Ptr()->useNormalMap = (normalMapSrv_.ptr != 0) ? 1 : 0;
   cbMat_.dyn.Ptr()->useRoughnessMap = (roughnessMapSrv_.ptr != 0) ? 1 : 0;
 
-  // RootParam: 0:Material, 1:WVP, 2:SRV, 3:Light
+  // ルートパラメータ: 0: マテリアル, 1: WVP, 2: SRV, 3: ライト
   cmdList->SetGraphicsRootConstantBufferView(0, cbMat_.dyn.Address());
   cmdList->SetGraphicsRootConstantBufferView(1, cbWvp_.dyn.Address());
   const D3D12_GPU_DESCRIPTOR_HANDLE mainSrv2 = textureSrv_.ptr != 0 ? textureSrv_ : D3D12_GPU_DESCRIPTOR_HANDLE{};

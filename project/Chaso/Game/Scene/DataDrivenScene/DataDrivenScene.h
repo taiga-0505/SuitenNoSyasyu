@@ -153,7 +153,7 @@ public:
         }
     }
 
-    // === AnimationComponent の更新（Transform同期より前に実行）===
+    // === AnimationComponent の更新（Transform 同期より前に実行）===
     for (auto& e : entities_) {
       if (!e->IsVisible() || IsStaticMapCollider(*e)) continue;
       auto* ren = e->GetComponent<ModelRendererComponent>();
@@ -533,7 +533,7 @@ public:
 
     // A-05: レベル JSON 側のカメラを優先する。
     // レベルのカメラは "main": true を明示したときだけ isMain が立つので、
-    // 1周目でレベル側を探し、見つからなければシーン JSON 側を採用する。
+    // 1 周目でレベル側を探し、見つからなければシーン JSON 側を採用する。
     // シーン側の isMain を false に書き換えて降格させる手もあるが、
     // isMain は CameraComponent::Serialize() でシーン JSON に焼き付くため、
     // 「探す順番」だけで解決してデータは書き換えない。
@@ -611,7 +611,7 @@ public:
     };
 
     // ===========================================
-    // 背景2D描画（常にモデルより後ろ）
+    // 背景 2D 描画（常にモデルより後ろ）
     // ===========================================
     // 3D のコマンドはキューに溜まり PreDraw2D でまとめて発行されるため、
     // ここで積んだスプライトは必ず 3D より先に実行される＝モデルの奥に見える。
@@ -666,7 +666,7 @@ public:
             }
         }
         if (auto* pm = e->GetComponent<PrimitiveMeshComponent>()) {
-            // 自己発光（アンリット lightingMode == 0：UI板ポリやエフェクト用）は影を落とさない
+            // 自己発光（アンリット lightingMode == 0：UI 板ポリやエフェクト用）は影を落とさない
             if (pm->lightingMode != 0 && pm->HasMesh() && pm->visible && pm->IsEnabled()) {
                 entry.pm = pm;
             }
@@ -730,7 +730,7 @@ public:
         if (!e->IsVisible() || !e->IsActive()) continue;
         if (auto* dl = e->GetComponent<DirectionalLightComponent>()) {
             if (dl->IsEnabled() && dl->visible) {
-                // DirectionalLight用の広範囲の正射影（±40 の範囲を near 0.1〜far 100 で覆う）。
+                // DirectionalLight 用の広範囲の正射影（±40 の範囲を near 0.1〜far 100 で覆う）。
                 // ライトの向きから pitch / yaw を求め、原点から光の逆方向へ 50 離した位置に置いた
                 // カメラの逆行列をビュー行列とする
                 float range = 40.0f;
@@ -757,7 +757,7 @@ public:
     sParams.color = {0.0f, 0.0f, 0.0f, 0.5f}; // 色と濃さ
     sParams.shadowMapEnabled = shadowEnabled ? 1 : 0;
     // PCF のタップ間隔（テクセル単位）。大きくするほど影の縁が柔らかくなるが、
-    // 広げすぎると接地部分の影が薄れる。0以下にすると 1 タップ（PCF無効）になる。
+    // 広げすぎると接地部分の影が薄れる。0 以下にすると 1 タップ（PCF 無効）になる。
     sParams.pcfRadius = 1.0f;
     // shadowMapTexelSize は RenderContext 側でシャドウマップの実解像度から設定される
     RC::UpdateShadowParams(sParams);
@@ -843,7 +843,7 @@ public:
         c.direction = d.direction;
         c.range = d.distance;
         // 真横まで開いた円錐は透視投影で表せないので少し内側で止める
-        c.halfAngle = std::acos(std::clamp(d.cosAngle, 0.0872f, 0.9999f)); // cos(85度) 〜 ほぼ 0度
+        c.halfAngle = std::acos(std::clamp(d.cosAngle, 0.0872f, 0.9999f)); // cos(85 度) 〜 ほぼ 0 度
         c.shadowNear = src->GetShadowNear();
         c.distToCamera = distToCamera;
         shadowCandidates.push_back(c);
@@ -1007,11 +1007,11 @@ public:
     // --- 2) マスクパス（インタラクトできる物などの輪郭強調用シルエット） ---
     //
     // 強調するかどうかは各スクリプトが OnMaskRender の中で判断する（強調中だけ描く）。
-    // ここでは毎フレーム必ずパスを回してマスクRTをクリアしておく。そうしないと
+    // ここでは毎フレーム必ずパスを回してマスク RT をクリアしておく。そうしないと
     // 「強調が終わったのに前フレームのシルエットが残る」ことになる。
     //
     // 置き場所はシャドウパスの直後で固定。Execute3DCommands は「その時点までに
-    // 積まれた全ての3Dコマンド」を流すので、メイン3Dの Draw を積む前でなければ
+    // 積まれた全ての 3D コマンド」を流すので、メイン 3D の Draw を積む前でなければ
     // シーン全体がマスクとして描かれてしまう。
     if (RC::BeginMaskPass()) {
         for (auto& e : entities_) {
@@ -1029,10 +1029,10 @@ public:
     }
 
     // ===========================================
-    // 3D描画
+    // 3D 描画
     // ===========================================
 
-    // Entityコンポーネントを持つモデル・スカイボックス・天球の描画
+    // Entity コンポーネントを持つモデル・スカイボックス・天球の描画
     for (auto& e : entities_) {
         if (!e->IsVisible() || !e->IsActive() || IsStaticMapCollider(*e)) continue; // 静的壁・穴、非表示、非アクティブ時はスキップ
 
@@ -1179,14 +1179,14 @@ public:
     RC::EndOverlay3D();
 
     // ===========================================
-    // 2D描画
+    // 2D 描画
     // ===========================================
     RC::PreDraw2D(ctx, cl);
 
-    // Entityコンポーネントのスプライト描画（前景：モデルより手前）
+    // Entity コンポーネントのスプライト描画（前景：モデルより手前）
     drawSpriteLayer(SpriteSpace::Screen);
 
-    // Entityコンポーネントの文字列描画（スプライトの上に重ねる）
+    // Entity コンポーネントの文字列描画（スプライトの上に重ねる）
     for (auto& e : entities_) {
         if (!e->IsVisible() || !e->IsActive() || IsStaticMapCollider(*e)) continue;
         if (auto* txt = e->GetComponent<TextRendererComponent>()) {
@@ -1202,7 +1202,7 @@ public:
         }
     }
 
-    // NativeScript の OnRender（HUD描画など、コマンドリストが開いた状態で実行）
+    // NativeScript の OnRender（HUD 描画など、コマンドリストが開いた状態で実行）
     if (ctx.isPlaying()) {
         for (auto& e : entities_) {
             if (!e || e->IsPendingDestroy() || !e->IsActive()) continue;
@@ -1294,7 +1294,7 @@ public:
     entities_.clear();
     broadphase_.Clear();
     RC::ClearEffectParticles();
-    gameMode_ = GameModeBase::Create(sceneName_); // GameModeのリセット（Application 側のファクトリで作る）
+    gameMode_ = GameModeBase::Create(sceneName_); // GameMode のリセット（Application 側のファクトリで作る）
 
     if (!std::filesystem::exists(filePath_)) {
       Log::Print("[DataDrivenScene] File not found: " + filePath_);
@@ -1420,7 +1420,7 @@ public:
       pendingEntities_.clear();
       broadphase_.Clear();
       RC::ClearEffectParticles();
-      gameMode_ = GameModeBase::Create(sceneName_); // GameModeのリセット（Application 側のファクトリで作る）
+      gameMode_ = GameModeBase::Create(sceneName_); // GameMode のリセット（Application 側のファクトリで作る）
 
       // バックアップから作り直し、ランタイム資源と結果判定の状態を初期化する
       for (auto& ej : backupJson_) {
@@ -1459,7 +1459,7 @@ private:
 
   std::string sceneName_;     ///< シーン名（遷移キー）
   std::string filePath_;      ///< シーン JSON のパス
-  std::string levelDataPath_; ///< Blenderからエクスポートした追加レベルデータのパス
+  std::string levelDataPath_; ///< Blender からエクスポートした追加レベルデータのパス
   float waterTime_ = 0.0f; ///< 水面アニメーション用累積時間
   nlohmann::json backupJson_; ///< メモリ上へのバックアップ用
 

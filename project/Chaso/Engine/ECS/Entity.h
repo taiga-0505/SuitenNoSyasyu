@@ -10,11 +10,13 @@
 #include <nlohmann/json.hpp>
 #include <any>
 
-/// @brief Lightweight entity class. Minimal container for holding components.
-/// Uses template-based AddComponent / GetComponent for type-safe component management.
+/// @class Entity
+/// @brief 軽量なエンティティクラス。コンポーネントを保持するだけの最小限の入れ物
+/// @details テンプレートの AddComponent / GetComponent で型安全にコンポーネントを管理する。
 class Entity {
 public:
-  /// @brief Generate a unique GUID
+  /// @brief 一意な GUID を生成する
+  /// @return 1〜UINT64_MAX の乱数（0 は「未設定」の意味で使うため出さない）
   static uint64_t GenerateGUID() {
     static std::random_device rd;
     static std::mt19937_64 gen(rd());
@@ -22,14 +24,14 @@ public:
     return dis(gen);
   }
 
-  /// @brief Constructor. Internal ID is auto-assigned.
+  /// @brief コンストラクタ。内部 ID と GUID は自動で割り当てる
   Entity() : id_(NextId()), guid_(GenerateGUID()) {}
-  
-  /// @brief Named constructor
-  /// @param name Entity name
+
+  /// @brief 名前を指定するコンストラクタ
+  /// @param name エンティティ名
   explicit Entity(const std::string &name) : id_(NextId()), name_(name), guid_(GenerateGUID()) {}
 
-  /// @brief Destructor
+  /// @brief デストラクタ
   /// @details components_ の破棄が始まる前に全コンポーネントへ OnEntityDestroy() を通知する。
   ///          スクリプトの OnDestroy() は GetComponent() で他のコンポーネントを触るため、
   ///          unordered_map の破棄中に呼ぶとノードが解放済みのマップを検索してしまい
@@ -42,11 +44,11 @@ public:
     components_.clear();
   }
 
-  /// @brief Add a component
-  /// @tparam T Component type (must derive from IComponent)
-  /// @tparam Args Constructor arguments
-  /// @param args Arguments
-  /// @return Reference to the added component (overwrites if same type exists)
+  /// @brief コンポーネントを追加する
+  /// @tparam T    コンポーネントの型（IComponent の派生であること）
+  /// @tparam Args コンストラクタ引数の型
+  /// @param args T のコンストラクタに渡す引数
+  /// @return 追加したコンポーネントへの参照（同じ型が既にあれば置き換える）
   template <typename T, typename... Args> T &AddComponent(Args &&...args) {
     static_assert(std::is_base_of_v<IComponent, T>,
                   "T must derive from IComponent");
@@ -57,9 +59,9 @@ public:
     return ref;
   }
 
-  /// @brief Get a component
-  /// @tparam T Component type to get
-  /// @return Pointer to the component, or nullptr if not found
+  /// @brief コンポーネントを取得する
+  /// @tparam T 取得するコンポーネントの型
+  /// @return コンポーネントへのポインタ（無ければ nullptr）
   template <typename T> T *GetComponent() {
     auto it = components_.find(std::type_index(typeid(T)));
     if (it != components_.end()) {
@@ -68,9 +70,9 @@ public:
     return nullptr;
   }
 
-  /// @brief Get a component (const)
-  /// @tparam T Component type to get
-  /// @return Pointer to the component, or nullptr if not found
+  /// @brief コンポーネントを取得する（const 版）
+  /// @tparam T 取得するコンポーネントの型
+  /// @return コンポーネントへのポインタ（無ければ nullptr）
   template <typename T> const T *GetComponent() const {
     auto it = components_.find(std::type_index(typeid(T)));
     if (it != components_.end()) {
@@ -79,21 +81,22 @@ public:
     return nullptr;
   }
 
-  /// @brief Check if entity has a component of given type
-  /// @tparam T Component type to check
-  /// @return true if the component exists
+  /// @brief 指定した型のコンポーネントを持っているかを返す
+  /// @tparam T 調べるコンポーネントの型
+  /// @return 持っていれば true
   template <typename T> bool HasComponent() const {
     return components_.count(std::type_index(typeid(T))) > 0;
   }
 
-  /// @brief Remove a component of given type
-  /// @tparam T Component type to remove
+  /// @brief 指定した型のコンポーネントを取り除く
+  /// @tparam T 取り除くコンポーネントの型
+  /// @note OnEntityDestroy() は呼ばずにその場で破棄する。
   template <typename T> void RemoveComponent() {
     components_.erase(std::type_index(typeid(T)));
   }
 
-  /// @brief Update all components
-  /// @param deltaTime Delta time since last frame
+  /// @brief 有効なコンポーネントをすべて更新する
+  /// @param deltaTime 前フレームからの経過時間（秒）
   void UpdateAll(float deltaTime) {
     for (auto &[type, comp] : components_) {
       if (comp && comp->IsEnabled()) {
@@ -102,89 +105,113 @@ public:
     }
   }
 
-  /// @brief Get active state
-  /// @return true if active
+  /// @brief アクティブかどうかを返す
+  /// @return アクティブなら true
   bool IsActive() const { return active_; }
-  
-  /// @brief Set active state
-  /// @param active State to set
+
+  /// @brief アクティブ状態を設定する
+  /// @param active 設定する状態
   void SetActive(bool active) { active_ = active; }
 
-  /// @brief Mark entity for deferred destruction
-  /// @details Not immediately deleted; collected by Scene::RemoveDeadEntities()
+  /// @brief 遅延破棄の印を付ける
+  /// @details その場では削除しない。Scene::RemoveDeadEntities() でまとめて回収される。
   void Destroy() { pendingDestroy_ = true; }
 
-  /// @brief Check if entity is pending destruction
-  /// @return true if marked for destruction
+  /// @brief 破棄待ちかどうかを返す
+  /// @return Destroy() 済みなら true
   bool IsPendingDestroy() const { return pendingDestroy_; }
 
-  /// @brief Get unique ID
-  /// @return Entity ID
+  /// @brief 一意な ID を取得する
+  /// @return エンティティ ID（実行中のみ有効。保存しない）
   uint32_t Id() const { return id_; }
-  
-  /// @brief Get entity name
-  /// @return Name string
+
+  /// @brief エンティティ名を取得する
+  /// @return 名前の文字列
   const std::string &Name() const { return name_; }
-  
-  /// @brief Set entity name
-  /// @param name Name to set
+
+  /// @brief エンティティ名を設定する
+  /// @param name 設定する名前
   void SetName(const std::string &name) { name_ = name; }
 
-  /// @brief Get visibility
+  /// @brief 表示するかどうかを返す
+  /// @return 表示するなら true
   bool IsVisible() const { return visible_; }
-  /// @brief Set visibility
+  /// @brief 表示・非表示を設定する
+  /// @param v 表示するなら true
   void SetVisible(bool v) { visible_ = v; }
 
-  /// @brief Get lock state
+  /// @brief ロック状態を返す
+  /// @return ロック中なら true
   bool IsLocked() const { return locked_; }
-  /// @brief Set lock state
+  /// @brief ロック状態を設定する
+  /// @param l ロックするなら true
   void SetLocked(bool l) { locked_ = l; }
 
-  /// @brief Get GUID
+  /// @brief GUID を取得する
+  /// @return GUID
   uint64_t Guid() const { return guid_; }
-  /// @brief Set GUID (usually used during deserialization)
+  /// @brief GUID を設定する（主にデシリアライズ時に使う）
+  /// @param guid 設定する GUID
   void SetGuid(uint64_t guid) { guid_ = guid; }
 
-  /// @brief Get Parent GUID
+  /// @brief 親の GUID を取得する
+  /// @return 親の GUID（0 なら親なし）
   uint64_t ParentGuid() const { return parentGuid_; }
-  /// @brief Set Parent GUID
+  /// @brief 親の GUID を設定する
+  /// @param parentGuid 親の GUID（0 で親なし）
   void SetParentGuid(uint64_t parentGuid) { parentGuid_ = parentGuid; }
 
-  /// @brief Check if this entity is marked as a UI folder
+  /// @brief UI 上のフォルダとして扱うエンティティかを返す
+  /// @return フォルダなら true
   bool IsFolder() const { return isFolder_; }
-  /// @brief Set folder status
+  /// @brief フォルダかどうかを設定する
+  /// @param isFolder フォルダにするなら true
   void SetIsFolder(bool isFolder) { isFolder_ = isFolder; }
 
-  /// @brief Get entity name (alias for Name())
+  /// @brief エンティティ名を取得する（Name() の別名）
+  /// @return 名前の文字列
   const std::string& GetName() const { return name_; }
 
-  /// @brief Get entity ID (alias for Id())
+  /// @brief エンティティ ID を取得する（Id() の別名）
+  /// @return エンティティ ID
   uint32_t GetId() const { return id_; }
 
   // ================================================================
-  // Lightweight Tag System (for inter-script communication)
+  // 軽量タグ（スクリプト間のやり取り用）
   // ================================================================
 
-  /// @brief Set an integer tag
+  /// @brief 整数タグを設定する
+  /// @param key   タグ名
+  /// @param value 設定する値
   void SetTag(const std::string& key, int value) { intTags_[key] = value; }
 
-  /// @brief Get an integer tag
+  /// @brief 整数タグを取得する
+  /// @param key          タグ名
+  /// @param defaultValue タグが無いときに返す値
+  /// @return タグの値（無ければ defaultValue）
   int GetTagInt(const std::string& key, int defaultValue = 0) const {
       auto it = intTags_.find(key);
       return (it != intTags_.end()) ? it->second : defaultValue;
   }
 
-  /// @brief Clear a tag
+  /// @brief タグを消す
+  /// @param key タグ名
   void ClearTag(const std::string& key) { intTags_.erase(key); }
 
-  /// @brief Check if a tag exists
+  /// @brief タグがあるかを返す
+  /// @param key タグ名
+  /// @return あれば true
   bool HasTag(const std::string& key) const { return intTags_.count(key) > 0; }
 
-  /// @brief Get all tags
+  /// @brief すべてのタグを取得する
+  /// @return タグ名 → 値の表
   const std::unordered_map<std::string, int>& GetTags() const { return intTags_; }
+  /// @brief すべてのタグを書き換え可能な参照で取得する
+  /// @return タグ名 → 値の表
   std::unordered_map<std::string, int>& GetTagsRef() { return intTags_; }
 
-  /// @brief Serialize entity state to JSON
+  /// @brief エンティティの状態を JSON に書き出す
+  /// @return 名前・各フラグ・GUID・コンポーネント（型名・データ・有効状態）・タグを格納した JSON
   nlohmann::json Serialize() const {
     nlohmann::json j;
     j["name"] = name_;
@@ -209,8 +236,9 @@ public:
     return j;
   }
 
-  /// @brief Deserialize entity state from JSON
-  /// @param j JSON object to deserialize from
+  /// @brief JSON からエンティティの状態を読み込む
+  /// @param j 読み込み元の JSON オブジェクト
+  /// @note コンポーネントは ComponentFactory で型名から生成する。未登録の型名は読み飛ばす。
   void Deserialize(const nlohmann::json& j) {
     if (j.contains("name")) name_ = j["name"].get<std::string>();
     if (j.contains("active")) active_ = j["active"].get<bool>();
@@ -237,19 +265,25 @@ public:
   }
 
   // =================================================================
-  // Component Factory (type name string -> creator function registry)
+  // コンポーネントファクトリ（型名の文字列 → 生成関数の表）
   // =================================================================
+  /// @class ComponentFactory
+  /// @brief 型名の文字列からコンポーネントを生成するためのファクトリ
   class ComponentFactory {
   public:
-    using Creator = std::function<std::unique_ptr<IComponent>()>;
+    using Creator = std::function<std::unique_ptr<IComponent>()>; ///< コンポーネントの生成関数
 
-    /// @brief Register a component creator function
+    /// @brief コンポーネントの生成関数を登録する
+    /// @tparam T 登録するコンポーネントの型
+    /// @param name 型名（TypeName() と同じ文字列にする）
     template <typename T>
     static void Register(const std::string& name) {
       Registry()[name] = []() { return std::make_unique<T>(); };
     }
 
-    /// @brief Create a component from type name
+    /// @brief 型名からコンポーネントを生成する
+    /// @param name 型名
+    /// @return 生成したコンポーネント（未登録なら nullptr）
     static std::unique_ptr<IComponent> Create(const std::string& name) {
       auto& reg = Registry();
       auto it = reg.find(name);
@@ -258,6 +292,8 @@ public:
     }
 
   private:
+    /// @brief 型名 → 生成関数の表を取得する
+    /// @return 関数内 static の表（静的初期化順の問題を避けるため関数内に置く）
     static std::unordered_map<std::string, Creator>& Registry() {
       static std::unordered_map<std::string, Creator> registry;
       return registry;
@@ -265,21 +301,21 @@ public:
   };
 
 private:
-  uint32_t id_;
-  std::string name_;
-  bool active_ = true;
-  bool visible_ = true;
-  bool locked_ = false;
-  bool pendingDestroy_ = false;
-  uint64_t guid_;
-  uint64_t parentGuid_ = 0;
-  bool isFolder_ = false;
+  uint32_t id_;                 ///< 実行中の一意 ID（保存しない）
+  std::string name_;            ///< エンティティ名
+  bool active_ = true;          ///< アクティブか
+  bool visible_ = true;         ///< 表示するか
+  bool locked_ = false;         ///< ロック中か
+  bool pendingDestroy_ = false; ///< 破棄待ちか
+  uint64_t guid_;               ///< 保存される一意 ID
+  uint64_t parentGuid_ = 0;     ///< 親の GUID（0 なら親なし）
+  bool isFolder_ = false;       ///< UI 上のフォルダか
 
-  std::unordered_map<std::type_index, std::unique_ptr<IComponent>> components_;
-  std::unordered_map<std::string, int> intTags_; ///< Lightweight tag storage for inter-script communication
+  std::unordered_map<std::type_index, std::unique_ptr<IComponent>> components_; ///< 型 → コンポーネント（1 型につき 1 つ）
+  std::unordered_map<std::string, int> intTags_; ///< スクリプト間のやり取り用の軽量タグ
 
-  /// @brief Generate next unique ID
-  /// @return Generated ID
+  /// @brief 次の一意 ID を発行する
+  /// @return 発行した ID（1 から連番）
   static uint32_t NextId() {
     static uint32_t counter = 0;
     return ++counter;

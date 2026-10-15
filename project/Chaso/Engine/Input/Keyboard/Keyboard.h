@@ -4,16 +4,18 @@
 
 /// @class Keyboard
 /// @brief DirectInput を使用したキーボード入力を管理するクラス
-/// @details 全てのキー（256キー）の押下状態をフレームごとに監視し、トリガー判定やリリース判定を提供します。
+/// @details 全てのキー（256 キー）の押下状態をフレームごとに監視し、トリガー判定やリリース判定を提供する。
 class Keyboard {
 public:
-    /// @brief 初期化
+    /// @brief キーボードデバイスを作成して初期化する
     /// @param directInput DirectInput8 インターフェースへのポインタ
     /// @param hwnd ウィンドウハンドル
     Keyboard(IDirectInput8* directInput, HWND hwnd);
+
+    /// @brief デバイスの入力取得を止めて解放する
     ~Keyboard();
 
-    /// @brief 入力状態を更新する（毎フレーム呼び出す必要があります）
+    /// @brief 入力状態を更新する（毎フレーム呼び出す必要がある）
     void Update();
 
     /// @brief 指定したキーが押されているか判定する
@@ -39,5 +41,5 @@ public:
 private:
     Microsoft::WRL::ComPtr<IDirectInputDevice8> device_; ///< キーボードデバイス
     BYTE key_[256] = {};                                ///< 現在の全キー状態
-    BYTE preKey_[256] = {};                             ///< 1フレーム前の全キー状態
+    BYTE preKey_[256] = {};                             ///< 1 フレーム前の全キー状態
 };

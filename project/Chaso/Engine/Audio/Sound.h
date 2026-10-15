@@ -17,10 +17,10 @@ struct ChunkHeader {
   int32_t size; ///< チャンクのサイズ
 };
 
-/// @brief RIFFヘッダー構造体
+/// @brief RIFF ヘッダー構造体
 struct RiffHeader {
   ChunkHeader chunk; ///< チャンクヘッダー
-  char type[4];      ///< RIFFのタイプ（例: "WAVE"）
+  char type[4];      ///< RIFF のタイプ（例: "WAVE"）
 };
 
 /// @brief フォーマットチャンク構造体
@@ -31,19 +31,19 @@ struct FormatChunk {
 
 /// @brief 音声データ構造体
 struct SoundData {
-  WAVEFORMATEX wfex{};               ///< 音声フォーマット (PCM前提)
+  WAVEFORMATEX wfex{};               ///< 音声フォーマット（PCM / IEEE float の基本形式）
   std::unique_ptr<BYTE[]> pBuffer{}; ///< 音声データ本体
-  unsigned int bufferSize = 0;       ///< データのバイト数
+  unsigned int bufferSize = 0;       ///< データのバイト数（0 なら読み込み失敗）
 };
 
-/// @brief WAVファイルをロードする
+/// @brief WAV ファイルをロードする
 /// @param filename ファイルパス
-/// @return ロードされた音声データ
+/// @return ロードされた音声データ（失敗時は bufferSize == 0 の空データ）
 SoundData SoundLoadWave(const char *filename);
 
-/// @brief 拡張子を自動判別してオーディオファイルをロードする (.wav / .mp3)
-/// @param filename ファイルパス
-/// @return ロードされた音声データ
+/// @brief 拡張子を自動判別してオーディオファイルをロードする（.wav / .mp3 / .m4a / .aac / .wma）
+/// @param filename ファイルパス（ゲーム側 Resources → エンジン側 Resources の順で解決する）
+/// @return ロードされた音声データ（失敗時は bufferSize == 0 の空データ）
 SoundData SoundLoadAudio(const char *filename);
 
 /// @brief 音声データを解放する

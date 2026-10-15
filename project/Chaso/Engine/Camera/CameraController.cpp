@@ -5,7 +5,7 @@
 
 namespace RC {
 
-// 画角やクリップは共通、初期姿勢だけ可変にしておきます
+// 画角やクリップは共通、初期姿勢だけ可変にしておく
 void CameraController::Initialize(Input *input, const Vector3 &mainPos,
                                   const Vector3 &mainRot, float fovY,
                                   float aspect, float nearZ, float farZ) {
@@ -25,7 +25,7 @@ void CameraController::Update(float dt) {
     bool isGuizmoActive = ImGuizmo::IsUsing() || ImGuizmo::IsOver();
 
     if (!isGuizmoActive) {
-        // Viewport上でマウスボタン（右/中）が押されたらドラッグ開始 (左クリックはギズモや選択と競合するため除外)
+        // Viewport 上でマウスボタン（右 / 中）が押されたらドラッグ開始（左クリックはギズモや選択と競合するため除外）
         if (input_->IsViewportHovered() && (input_->IsMousePressed(1) || input_->IsMousePressed(2))) {
           isDraggingCamera_ = true;
         }
@@ -36,10 +36,10 @@ void CameraController::Update(float dt) {
       isDraggingCamera_ = false;
     }
 
-    // マウスがViewport上にあるか、カメラをドラッグ中ならマウスをカメラに渡す
+    // マウスが Viewport 上にあるか、カメラをドラッグ中ならマウスをカメラに渡す
     bool captureMouse = ImGui::GetIO().WantCaptureMouse && !(input_->IsViewportHovered() || isDraggingCamera_);
 
-    // Viewport上にあるかドラッグ中なら、キーボード（WASD等）もカメラに渡す
+    // Viewport 上にあるかドラッグ中なら、キーボード（WASD 等）もカメラに渡す
     bool captureKeyboard = ImGui::GetIO().WantCaptureKeyboard && !(input_->IsViewportHovered() || isDraggingCamera_);
 
     if (!(captureMouse || captureKeyboard) && !isGuizmoActive) {

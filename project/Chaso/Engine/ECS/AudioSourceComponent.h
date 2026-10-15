@@ -11,6 +11,7 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 
+/// @enum AudioSpatialMode
 /// @brief スロットごとの 2D / 3D の指定
 enum class AudioSpatialMode : int {
   Inherit = 0, ///< コンポーネントの spatialBlend に従う（既定）
@@ -19,6 +20,7 @@ enum class AudioSpatialMode : int {
   Count        ///< 要素数
 };
 
+/// @struct AudioClipSlot
 /// @brief AudioSourceComponent が持つ 1 つの音（名前付きスロット）
 /// @details スクリプトからは name で指定して鳴らす。path は Inspector / JSON で差し替えられる。
 struct AudioClipSlot {
@@ -33,9 +35,11 @@ struct AudioClipSlot {
   std::string loadedPath; ///< clipHandle にロード済みのパス（差し替え検出用）
 
   /// @brief クリップがロード済みか
+  /// @return clipHandle が 0 以上なら true
   bool IsLoaded() const { return clipHandle >= 0; }
 };
 
+/// @class AudioSourceComponent
 /// @brief エンティティに音を持たせるコンポーネント（Unity の AudioSource 相当）
 /// @details 使い方は 2 通り。
 ///          - BGM: 空のエンティティに付け、bus = BGM、clips に 1 曲、playOnAwake にその名前を設定。
@@ -64,7 +68,7 @@ struct AudioClipSlot {
 class AudioSourceComponent : public IComponent {
 public:
   AudioBus bus = AudioBus::SE;      ///< 音を流すバス
-  float volume = 1.0f;              ///< コンポーネント全体の音量（0.0 ~ 1.0）
+  float volume = 1.0f;              ///< コンポーネント全体の音量（0.0〜1.0）
   std::vector<AudioClipSlot> clips; ///< 名前付きの音一覧
   std::string playOnAwake;          ///< 再生開始時に自動で鳴らすスロット名（空なら鳴らさない）
 
@@ -80,6 +84,7 @@ public:
   AudioSourceComponent(const AudioSourceComponent &) = delete;
   AudioSourceComponent &operator=(const AudioSourceComponent &) = delete;
 
+  /// @brief 鳴らしている音とクリップ参照を解放する
   ~AudioSourceComponent() override {
     // Inspector の Remove Component など、ReleaseRuntimeResources を経由しない破棄でも
     // 音が鳴り続けたりクリップ参照が漏れたりしないようにする。
@@ -134,6 +139,8 @@ public:
   }
 
   /// @brief スロット名を省略して鳴らす（playOnAwake、未設定なら先頭のスロット）
+  /// @param volScale 個別の音量倍率
+  /// @return 鳴らせたら true（スロットが 1 つも無ければ false）
   bool Play(float volScale = 1.0f) {
     if (!playOnAwake.empty()) {
       return Play(playOnAwake, volScale);
@@ -159,6 +166,7 @@ public:
   }
 
   /// @brief 何か鳴っているか
+  /// @return BGM バスなら自分の曲が流れていれば true、SE バスなら鳴っているボイスがあれば true
   bool IsPlaying() const {
     const auto &engine = AudioEngine::Get();
     if (bus == AudioBus::BGM) {
@@ -174,14 +182,17 @@ public:
   }
 
   /// @brief BGM バスか
+  /// @return bus が BGM なら true
   bool IsBgm() const { return bus == AudioBus::BGM; }
 
   /// @brief コンポーネントの既定が 3D か（SE バスで spatialBlend > 0）
+  /// @return SE バスで spatialBlend が 0 より大きければ true
   /// @note スロットの spatial（Force2D / Force3D）で個別に上書きされる。Any3D() / EffectiveBlend() 参照。
-  ///       Transform が無いエンティティでは実際には 2D で鳴る（HasTransform() 参照）
+  ///       Transform が無いエンティティでは実際には 2D で鳴る（HasTransform() 参照）。
   bool Is3D() const { return bus == AudioBus::SE && spatialBlend > 0.0f; }
 
   /// @brief 3D で鳴るスロットが 1 つでもあるか（距離設定が意味を持つか）
+  /// @return 3D で鳴るスロットがある、またはコンポーネントの既定が 3D なら true（BGM バスは常に false）
   bool Any3D() const {
     if (bus != AudioBus::SE) {
       return false;
@@ -195,16 +206,20 @@ public:
   }
 
   /// @brief スロットが実際に使う 2D/3D ブレンド（0 = 2D、1 = 3D）
-  /// @details Inherit ならコンポーネントの spatialBlend、Force2D なら 0、Force3D なら 1。BGM バスは常に 0
+  /// @details Inherit ならコンポーネントの spatialBlend、Force2D なら 0、Force3D なら 1。BGM バスは常に 0。
+  /// @param slot 対象のスロット
+  /// @return ブレンド値（0〜1）
   float EffectiveBlend(const AudioClipSlot &slot) const { return EffectiveBlend_(slot.spatial); }
 
   /// @brief 位置の取得に使う Transform を持っているか
+  /// @return エンティティに TransformComponent があれば true
   bool HasTransform() const {
     const Entity *e = GetEntity();
     return e && e->GetComponent<TransformComponent>() != nullptr;
   }
 
   /// @brief 音源のワールド座標を取得する
+  /// @param out ワールド座標の出力先
   /// @return Transform が無ければ false
   bool GetWorldPosition(RC::Vector3 &out) const {
     const Entity *e = GetEntity();
@@ -218,6 +233,7 @@ public:
   }
 
   /// @brief リスナー（聞き手）までの距離。Transform が無ければ 0
+  /// @return リスナーまでの距離（ワールド単位）
   float DistanceToListener() const {
     RC::Vector3 p{};
     if (!GetWorldPosition(p)) {
@@ -228,7 +244,8 @@ public:
     return std::sqrt(dx * dx + dy * dy + dz * dz);
   }
 
-  /// @brief 現在のリスナー位置で聞こえる距離減衰（0.0 ~ 1.0）。Inspector の表示用
+  /// @brief 現在のリスナー位置で聞こえる距離減衰（0.0〜1.0）。Inspector の表示用
+  /// @return 減衰率（3D で鳴らない、または Transform が無ければ 1.0）
   float CurrentRolloffGain() const {
     if (!Any3D() || !HasTransform()) {
       return 1.0f;
@@ -237,13 +254,16 @@ public:
   }
 
   /// @brief 推定中の音源速度（ワールド単位/秒）。ドップラー効果に使っている値
+  /// @return 推定した速度
   const RC::Vector3 &CurrentVelocity() const { return velocity_; }
 
   // ================================================================
   // スロット編集（Inspector / セットアップ用）
   // ================================================================
 
-  /// @brief 名前でスロットを探す（無ければ nullptr）
+  /// @brief 名前でスロットを探す
+  /// @param name スロット名
+  /// @return 見つかったスロット（無ければ nullptr）
   AudioClipSlot *FindSlot(const std::string &name) {
     for (auto &s : clips) {
       if (s.name == name) {
@@ -253,7 +273,9 @@ public:
     return nullptr;
   }
 
-  /// @brief 名前でスロットを探す（const）
+  /// @brief 名前でスロットを探す（const 版）
+  /// @param name スロット名
+  /// @return 見つかったスロット（無ければ nullptr）
   const AudioClipSlot *FindSlot(const std::string &name) const {
     for (const auto &s : clips) {
       if (s.name == name) {
@@ -264,7 +286,12 @@ public:
   }
 
   /// @brief スロットを追加する（同名があれば上書き）
+  /// @param name    スロット名
+  /// @param path    音声ファイルのパス
+  /// @param vol     スロットの音量
+  /// @param loop    ループ再生するか
   /// @param spatial 2D / 3D の上書き（既定はコンポーネントの spatialBlend に従う）
+  /// @return 追加（または上書き）したスロット
   AudioClipSlot &AddClip(const std::string &name, const std::string &path, float vol = 1.0f, bool loop = false,
                          AudioSpatialMode spatial = AudioSpatialMode::Inherit) {
     if (AudioClipSlot *s = FindSlot(name)) {
@@ -285,6 +312,8 @@ public:
   }
 
   /// @brief スロット名を変更する（playOnAwake や再生中 BGM の参照も追従させる）
+  /// @param index   clips の添え字（範囲外なら何もしない）
+  /// @param newName 新しいスロット名
   void RenameClip(size_t index, const std::string &newName) {
     if (index >= clips.size()) {
       return;
@@ -308,6 +337,8 @@ public:
   }
 
   /// @brief 重複しないスロット名を作る（"clip1", "clip2", ...）
+  /// @param base 名前の接頭辞
+  /// @return 既存スロットと重ならない名前
   std::string MakeUniqueClipName(const std::string &base = "clip") const {
     for (int i = 1; i < 10000; ++i) {
       const std::string candidate = base + std::to_string(i);
@@ -319,6 +350,7 @@ public:
   }
 
   /// @brief スロットを削除する（ロード済みならクリップ参照も返す）
+  /// @param index clips の添え字（範囲外なら何もしない）
   void RemoveClip(size_t index) {
     if (index >= clips.size()) {
       return;
@@ -424,12 +456,15 @@ public:
   // ================================================================
 
   /// @brief playOnAwake を発火済みか
+  /// @return 発火済みなら true
   bool HasFiredAwake() const { return awakeFired_; }
 
   /// @brief BGM バスで自分が鳴らしているスロット名（無ければ空）
+  /// @return スロット名
   const std::string &CurrentBgmSlot() const { return bgmSlotName_; }
 
   /// @brief 再生中の SE ボイス数
+  /// @return 鳴っているボイスの数
   size_t ActiveSeCount() const {
     const auto &engine = AudioEngine::Get();
     size_t n = 0;
@@ -442,6 +477,7 @@ public:
   }
 
   /// @brief 再生中の SE ボイスのうち 3D で鳴っている数
+  /// @return 3D で鳴っているボイスの数
   size_t ActiveSpatialCount() const {
     const auto &engine = AudioEngine::Get();
     size_t n = 0;
@@ -457,8 +493,12 @@ public:
   // シリアライズ
   // ================================================================
 
+  /// @brief コンポーネントの型名を返す
+  /// @return "AudioSourceComponent"
   const char *TypeName() const override { return "AudioSourceComponent"; }
 
+  /// @brief バス・音量・スロット・3D 音響の設定を JSON に書き出す
+  /// @return ランタイム状態以外の設定値を格納した JSON
   nlohmann::json Serialize() const override {
     nlohmann::json arr = nlohmann::json::array();
     for (const auto &s : clips) {
@@ -482,6 +522,9 @@ public:
     };
   }
 
+  /// @brief JSON からバス・音量・スロット・3D 音響の設定を読み込む
+  /// @param j 読み込み元の JSON
+  /// @note 先に ReleaseRuntime() してスロットを空にしてから読み込む。範囲外の値は既定値または有効範囲へ丸める。
   void Deserialize(const nlohmann::json &j) override {
     // 既存のランタイム状態は捨てる（Undo / ペーストで再構築されるケース）
     ReleaseRuntime();
@@ -520,6 +563,7 @@ public:
   }
 
 private:
+  /// @struct SeVoice
   /// @brief 自分が鳴らした SE ボイス 1 本分の記録
   struct SeVoice {
     int id = -1;          ///< AudioEngine のボイス ID
@@ -577,6 +621,8 @@ private:
   // ================================================================
 
   /// @brief スロットの指定から実際の 2D/3D ブレンドを決める
+  /// @param mode スロットの 2D / 3D 指定
+  /// @return ブレンド値（0〜1。BGM バスは常に 0）
   float EffectiveBlend_(AudioSpatialMode mode) const {
     if (bus != AudioBus::SE) {
       return 0.0f; // BGM は常に 2D
@@ -590,6 +636,7 @@ private:
   }
 
   /// @brief 現在の設定と位置からエンジンへ渡すエミッターを作る
+  /// @param out   エミッターの出力先
   /// @param blend このボイスの 2D/3D ブレンド（EffectiveBlend()）
   /// @return Transform が無ければ false（2D で鳴らす）
   bool BuildEmitter_(AudioEmitter &out, float blend) const {
@@ -611,6 +658,8 @@ private:
   /// @details ボイスごとに鳴らしたスロットの 2D/3D 指定を毎フレーム見直すので、再生中に
   ///          Inspector で切り替えてもその場で反映される。ずっと 2D のボイスには何も送らないので軽い。
   ///          3D → 2D に変わった直後は 1 回だけ「2D に戻せ」（blend 0）を送る。
+  /// @param playing 再生中か（false なら速度を 0 にする）
+  /// @param dt      前フレームからの経過時間（秒）
   void UpdateSpatial_(bool playing, float dt) {
     if (bus != AudioBus::SE) {
       ResetMotion_();

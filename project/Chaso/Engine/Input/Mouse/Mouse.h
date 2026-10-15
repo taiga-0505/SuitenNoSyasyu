@@ -3,20 +3,22 @@
 
 /// @class Mouse
 /// @brief DirectInput を使用したマウス入力を管理するクラス
-/// @details 各マウスボタンの押下・トリガー・リリース判定に加え、移動量（X, Y）やスクロールホイール（Z）の差分値を取得できます。
+/// @details 各マウスボタンの押下・トリガー・リリース判定に加え、移動量（X, Y）やスクロールホイール（Z）の差分値を取得できる。
 class Mouse {
 public:
-    /// @brief 初期化
+    /// @brief マウスデバイスを作成して初期化する
     /// @param directInput DirectInput8 インターフェースへのポインタ
     /// @param hwnd ウィンドウハンドル
     Mouse(IDirectInput8* directInput, HWND hwnd);
+
+    /// @brief デバイスの入力取得を止めて解放する
     ~Mouse();
 
-    /// @brief 入力状態を更新する（毎フレーム呼び出す必要があります）
+    /// @brief 入力状態を更新する（毎フレーム呼び出す必要がある）
     void Update();
 
     /// @brief 指定したボタンが押されているか判定する
-    /// @param button ボタン番号（0:左, 1:右, 2:中）
+    /// @param button ボタン番号（0: 左, 1: 右, 2: 中）
     /// @return 押されていれば true
     bool IsPressed(int button) const;
 
@@ -45,5 +47,5 @@ public:
 private:
     Microsoft::WRL::ComPtr<IDirectInputDevice8> device_; ///< マウスデバイス
     DIMOUSESTATE state_ = {};    ///< 現在のマウス状態
-    DIMOUSESTATE preState_ = {}; ///< 1フレーム前のマウス状態
+    DIMOUSESTATE preState_ = {}; ///< 1 フレーム前のマウス状態
 };

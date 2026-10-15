@@ -21,30 +21,34 @@
 //   (object3d_scanbeam) 専用。
 // ============================================================================
 
+/// @brief マテリアル定数（b0）。エフェクト用に一部を流用する
 struct Material
 {
-    float4 color;                 // 発光色 (RGB) + 明度スケール (A)
-    int lightingMode;             // 未使用
-    float shininess;              // 伸長率 0..1 として流用
-    float environmentCoefficient; // 経過秒数として流用
-    int useNormalMap;             // 未使用
-    int useRoughnessMap;          // 未使用
-    float2 padding;
-    float4x4 uvTransform;         // 未使用（恒等行列のまま）
+    float4 color;                 ///< 発光色（RGB）＋ 明度スケール（A）
+    int lightingMode;             ///< 未使用
+    float shininess;              ///< 伸長率（0〜1）として流用
+    float environmentCoefficient; ///< 経過秒数として流用
+    int useNormalMap;             ///< 未使用
+    int useRoughnessMap;          ///< 未使用
+    float2 padding;               ///< パディング
+    float4x4 uvTransform;         ///< 未使用（恒等行列のまま）
 };
 
 ConstantBuffer<Material> gMaterial : register(b0);
 
 struct PixelShaderOutput
 {
-    float4 color : SV_TARGET0;
+    float4 color : SV_TARGET0; ///< 出力色（加算合成。rgb は発光色、a が強さ）
 };
 
-static const float kTau = 6.28318530718f;
+static const float kTau = 6.28318530718f; ///< 2π
 
-static const float kPulseCount = 5.0f;  // ビーム上に同時に走るパルス数
-static const float kPulseSpeed = 1.9f;  // パルスの流れる速さ
+static const float kPulseCount = 5.0f;  ///< ビーム上に同時に走るパルス数
+static const float kPulseSpeed = 1.9f;  ///< パルスの流れる速さ
 
+/// @brief 接続ビームの発光を出力する
+/// @param input 頂点シェーダーからの補間値（texcoord だけを使う）
+/// @return 出力色
 PixelShaderOutput main(VertexShaderOutput input)
 {
     // 幅方向：中心 0 → 端 1

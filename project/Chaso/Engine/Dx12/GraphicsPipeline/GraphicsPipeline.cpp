@@ -4,7 +4,7 @@
 
 void GraphicsPipeline::Term() {
   // ====================
-  // Resource Release
+  // リソース解放
   // ====================
   // PSO 解放
   pso_.Reset();
@@ -21,13 +21,13 @@ void GraphicsPipeline::BuildEx(const D3D12_INPUT_ELEMENT_DESC *inputElems,
                                const GPipelineOptions &opt,
                                const D3D12_CACHED_PIPELINE_STATE &cachedPSO) {
   // ====================
-  // Root Signature
+  // ルートシグネチャ
   // ====================
   // ルートシグネチャ構築
   buildRootSignature_(opt.rootType);
 
   // ====================
-  // Pipeline State
+  // パイプラインステート
   // ====================
   // PSO 作成
   D3D12_GRAPHICS_PIPELINE_STATE_DESC d{};
@@ -135,7 +135,7 @@ void GraphicsPipeline::BuildEx(const D3D12_INPUT_ELEMENT_DESC *inputElems,
   d.DepthStencilState = ds;
   d.DSVFormat = opt.enableDepth ? (opt.dsvFormatOverride != DXGI_FORMAT_UNKNOWN ? opt.dsvFormatOverride : dsvFmt) : DXGI_FORMAT_UNKNOWN;
 
-  // RT
+  // レンダーターゲット
   if (opt.disableRTV) {
       d.NumRenderTargets = 0;
       d.RTVFormats[0] = DXGI_FORMAT_UNKNOWN;
@@ -206,7 +206,7 @@ Microsoft::WRL::ComPtr<ID3DBlob> GraphicsPipeline::GetSerializedBlob() const {
 
 void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
   // ====================
-  // Root Signature
+  // ルートシグネチャ
   // ====================
   // 既存ルートシグネチャ解放
   root_.Reset();
@@ -217,17 +217,17 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
 
   switch (type) {
   case RootSignatureType::Object3D:
-    // 0: CBV b0 (PS)  Material
+    // 0: CBV b0 (PS) マテリアル
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[0].Descriptor.ShaderRegister = 0;
 
-    // 1: CBV b0 (VS)  Transform
+    // 1: CBV b0 (VS) トランスフォーム
     params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
     params[1].Descriptor.ShaderRegister = 0;
 
-    // 2: SRV table t0 (PS)  Texture
+    // 2: SRV table t0 (PS) テクスチャ
     ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[0].BaseShaderRegister = 0;
     ranges[0].NumDescriptors = 1;
@@ -239,32 +239,32 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[2].DescriptorTable.NumDescriptorRanges = 1;
     params[2].DescriptorTable.pDescriptorRanges = &ranges[0];
 
-    // 3: CBV b1 (PS)  DirectionalLight
+    // 3: CBV b1 (PS) 平行光源
     params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[3].Descriptor.ShaderRegister = 1;
 
-    // 4: CBV b2 (PS)  camera
+    // 4: CBV b2 (PS) カメラ
     params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[4].Descriptor.ShaderRegister = 2;
 
-    // 5: CBV b3 (PS) PointLight
+    // 5: CBV b3 (PS) 点光源
     params[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[5].Descriptor.ShaderRegister = 3;
 
-    // 6: CBV b4 (PS) SpotLight
+    // 6: CBV b4 (PS) スポットライト
     params[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[6].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[6].Descriptor.ShaderRegister = 4;
 
-    // 7: CBV b5 (PS) AreaLight
+    // 7: CBV b5 (PS) エリアライト
     params[7].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[7].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[7].Descriptor.ShaderRegister = 5;
 
-    // 8: SRV table t1 (PS) EnvironmentMap (Cubemap)
+    // 8: SRV table t1 (PS) 環境マップ（キューブマップ）
     ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[1].BaseShaderRegister = 1; // t1
     ranges[1].NumDescriptors = 1;
@@ -276,7 +276,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[8].DescriptorTable.NumDescriptorRanges = 1;
     params[8].DescriptorTable.pDescriptorRanges = &ranges[1];
 
-    // 9: SRV table t2 (PS) NormalMap
+    // 9: SRV table t2 (PS) 法線マップ
     ranges[2].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[2].BaseShaderRegister = 2; // t2
     ranges[2].NumDescriptors = 1;
@@ -287,7 +287,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[9].DescriptorTable.NumDescriptorRanges = 1;
     params[9].DescriptorTable.pDescriptorRanges = &ranges[2];
 
-    // 10: SRV table t3 (PS) RoughnessMap
+    // 10: SRV table t3 (PS) ラフネスマップ
     ranges[3].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[3].BaseShaderRegister = 3; // t3
     ranges[3].NumDescriptors = 1;
@@ -298,7 +298,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[10].DescriptorTable.NumDescriptorRanges = 1;
     params[10].DescriptorTable.pDescriptorRanges = &ranges[3];
 
-    // 11: SRV table t4 (PS) ShadowMap
+    // 11: SRV table t4 (PS) シャドウマップ
     ranges[4].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[4].BaseShaderRegister = 4; // t4
     ranges[4].NumDescriptors = 1;
@@ -309,7 +309,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[11].DescriptorTable.NumDescriptorRanges = 1;
     params[11].DescriptorTable.pDescriptorRanges = &ranges[4];
 
-    // 12: CBV b6 (ALL) ShadowParams
+    // 12: CBV b6 (ALL) 影のパラメータ（ShadowParams）
     params[12].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[12].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     params[12].Descriptor.ShaderRegister = 6; // b6
@@ -325,7 +325,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[13].DescriptorTable.NumDescriptorRanges = 1;
     params[13].DescriptorTable.pDescriptorRanges = &ranges[5];
 
-    // 14: CBV b7 (PS) SpotShadowCB
+    // 14: CBV b7 (PS) スポットライト影の定数バッファ（SpotShadowCB）
     params[14].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[14].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[14].Descriptor.ShaderRegister = 7; // b7
@@ -334,17 +334,17 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     break;
 
   case RootSignatureType::Object3DInstancing:
-    // 0: CBV b0 (PS) Material
+    // 0: CBV b0 (PS) マテリアル
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[0].Descriptor.ShaderRegister = 0;
 
-    // 1: SRV t1 (VS) Instance buffer（StructuredBuffer）
+    // 1: SRV t1 (VS) インスタンスバッファ（StructuredBuffer）
     params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
     params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
     params[1].Descriptor.ShaderRegister = 1;
 
-    // 2: SRV table t0 (PS) Texture
+    // 2: SRV table t0 (PS) テクスチャ
     ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[0].BaseShaderRegister = 0;
     ranges[0].NumDescriptors = 1;
@@ -356,33 +356,33 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[2].DescriptorTable.NumDescriptorRanges = 1;
     params[2].DescriptorTable.pDescriptorRanges = &ranges[0];
 
-    // 3..7 は Object3D と同じ（Directional/Camera/Point/Spot/Area）
-    // 3: CBV b1 (PS) DirectionalLight
+    // 3〜7 は Object3D と同じ（Directional/Camera/Point/Spot/Area）
+    // 3: CBV b1 (PS) 平行光源
     params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[3].Descriptor.ShaderRegister = 1;
 
-    // 4: CBV b2 (PS) camera
+    // 4: CBV b2 (PS) カメラ
     params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[4].Descriptor.ShaderRegister = 2;
 
-    // 5: CBV b3 (PS) PointLight
+    // 5: CBV b3 (PS) 点光源
     params[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[5].Descriptor.ShaderRegister = 3;
 
-    // 6: CBV b4 (PS) SpotLight
+    // 6: CBV b4 (PS) スポットライト
     params[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[6].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[6].Descriptor.ShaderRegister = 4;
 
-    // 7: CBV b5 (PS) AreaLight
+    // 7: CBV b5 (PS) エリアライト
     params[7].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[7].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[7].Descriptor.ShaderRegister = 5;
 
-    // 8: SRV table t1 (PS) EnvironmentMap (Cubemap)
+    // 8: SRV table t1 (PS) 環境マップ（キューブマップ）
     ranges[2].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[2].BaseShaderRegister = 1; // t1
     ranges[2].NumDescriptors = 1;
@@ -394,7 +394,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[8].DescriptorTable.NumDescriptorRanges = 1;
     params[8].DescriptorTable.pDescriptorRanges = &ranges[2];
 
-    // 9: SRV table t2 (PS) NormalMap
+    // 9: SRV table t2 (PS) 法線マップ
     ranges[3].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[3].BaseShaderRegister = 2; // t2
     ranges[3].NumDescriptors = 1;
@@ -405,7 +405,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[9].DescriptorTable.NumDescriptorRanges = 1;
     params[9].DescriptorTable.pDescriptorRanges = &ranges[3];
 
-    // 10: SRV table t3 (PS) RoughnessMap
+    // 10: SRV table t3 (PS) ラフネスマップ
     ranges[4].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[4].BaseShaderRegister = 3; // t3
     ranges[4].NumDescriptors = 1;
@@ -416,7 +416,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[10].DescriptorTable.NumDescriptorRanges = 1;
     params[10].DescriptorTable.pDescriptorRanges = &ranges[4];
 
-    // 11: SRV table t4 (PS) ShadowMap
+    // 11: SRV table t4 (PS) シャドウマップ
     ranges[5].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[5].BaseShaderRegister = 4; // t4
     ranges[5].NumDescriptors = 1;
@@ -427,7 +427,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[11].DescriptorTable.NumDescriptorRanges = 1;
     params[11].DescriptorTable.pDescriptorRanges = &ranges[5];
 
-    // 12: CBV b6 (ALL) ShadowParams
+    // 12: CBV b6 (ALL) 影のパラメータ（ShadowParams）
     params[12].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[12].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     params[12].Descriptor.ShaderRegister = 6; // b6
@@ -443,7 +443,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[13].DescriptorTable.NumDescriptorRanges = 1;
     params[13].DescriptorTable.pDescriptorRanges = &ranges[6];
 
-    // 14: CBV b7 (PS) SpotShadowCB
+    // 14: CBV b7 (PS) スポットライト影の定数バッファ（SpotShadowCB）
     params[14].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[14].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[14].Descriptor.ShaderRegister = 7; // b7
@@ -452,18 +452,18 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     break;
 
   case RootSignatureType::Object3DSkin:
-    // Object3D と同じ slot 0-8 に加え、VS用 SRV t1 (行列パレット) を追加
-    // 0: CBV b0 (PS) Material
+    // Object3D と同じスロット 0〜8 に加え、VS 用の SRV t1（行列パレット）を追加する
+    // 0: CBV b0 (PS) マテリアル
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[0].Descriptor.ShaderRegister = 0;
 
-    // 1: CBV b0 (VS) Transform
+    // 1: CBV b0 (VS) トランスフォーム
     params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
     params[1].Descriptor.ShaderRegister = 0;
 
-    // 2: SRV table t0 (PS) Texture
+    // 2: SRV table t0 (PS) テクスチャ
     ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[0].BaseShaderRegister = 0;
     ranges[0].NumDescriptors = 1;
@@ -475,32 +475,32 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[2].DescriptorTable.NumDescriptorRanges = 1;
     params[2].DescriptorTable.pDescriptorRanges = &ranges[0];
 
-    // 3: CBV b1 (PS) DirectionalLight
+    // 3: CBV b1 (PS) 平行光源
     params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[3].Descriptor.ShaderRegister = 1;
 
-    // 4: CBV b2 (PS) camera
+    // 4: CBV b2 (PS) カメラ
     params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[4].Descriptor.ShaderRegister = 2;
 
-    // 5: CBV b3 (PS) PointLight
+    // 5: CBV b3 (PS) 点光源
     params[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[5].Descriptor.ShaderRegister = 3;
 
-    // 6: CBV b4 (PS) SpotLight
+    // 6: CBV b4 (PS) スポットライト
     params[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[6].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[6].Descriptor.ShaderRegister = 4;
 
-    // 7: CBV b5 (PS) AreaLight
+    // 7: CBV b5 (PS) エリアライト
     params[7].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[7].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[7].Descriptor.ShaderRegister = 5;
 
-    // 8: SRV table t1 (PS) EnvironmentMap
+    // 8: SRV table t1 (PS) 環境マップ
     ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[1].BaseShaderRegister = 1; // t1
     ranges[1].NumDescriptors = 1;
@@ -512,7 +512,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[8].DescriptorTable.NumDescriptorRanges = 1;
     params[8].DescriptorTable.pDescriptorRanges = &ranges[1];
 
-    // 9: SRV table t2 (PS) NormalMap
+    // 9: SRV table t2 (PS) 法線マップ
     ranges[2].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[2].BaseShaderRegister = 2; // t2
     ranges[2].NumDescriptors = 1;
@@ -523,7 +523,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[9].DescriptorTable.NumDescriptorRanges = 1;
     params[9].DescriptorTable.pDescriptorRanges = &ranges[2];
 
-    // 10: SRV table t3 (PS) RoughnessMap
+    // 10: SRV table t3 (PS) ラフネスマップ
     ranges[3].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[3].BaseShaderRegister = 3; // t3
     ranges[3].NumDescriptors = 1;
@@ -534,7 +534,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[10].DescriptorTable.NumDescriptorRanges = 1;
     params[10].DescriptorTable.pDescriptorRanges = &ranges[3];
 
-    // 11: SRV table t4 (PS) ShadowMap
+    // 11: SRV table t4 (PS) シャドウマップ
     ranges[4].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[4].BaseShaderRegister = 4; // t4
     ranges[4].NumDescriptors = 1;
@@ -545,12 +545,12 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[11].DescriptorTable.NumDescriptorRanges = 1;
     params[11].DescriptorTable.pDescriptorRanges = &ranges[4];
 
-    // 12: CBV b6 (ALL) ShadowParams
+    // 12: CBV b6 (ALL) 影のパラメータ（ShadowParams）
     params[12].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[12].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     params[12].Descriptor.ShaderRegister = 6; // b6
 
-    // 13: SRV t1 (VS) SkinMatrices (StructuredBuffer<float4x4>)
+    // 13: SRV t1 (VS) スキン行列パレット（StructuredBuffer<float4x4>）
     params[Object3DRootParam::kSkinMatrices].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
     params[Object3DRootParam::kSkinMatrices].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
     params[Object3DRootParam::kSkinMatrices].Descriptor.ShaderRegister = 1; // t1
@@ -566,7 +566,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[14].DescriptorTable.NumDescriptorRanges = 1;
     params[14].DescriptorTable.pDescriptorRanges = &ranges[5];
 
-    // 15: CBV b7 (PS) SpotShadowCB
+    // 15: CBV b7 (PS) スポットライト影の定数バッファ（SpotShadowCB）
     params[15].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[15].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[15].Descriptor.ShaderRegister = 7; // b7
@@ -575,17 +575,17 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     break;
 
   case RootSignatureType::Sprite:
-    // 0: CBV b0 (PS)  Material
+    // 0: CBV b0 (PS) マテリアル
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[0].Descriptor.ShaderRegister = 0;
 
-    // 1: CBV b0 (VS)  Transform
+    // 1: CBV b0 (VS) トランスフォーム
     params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
     params[1].Descriptor.ShaderRegister = 0;
 
-    // 2: SRV table t0 (PS)  Texture
+    // 2: SRV table t0 (PS) テクスチャ
     ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[0].BaseShaderRegister = 0;
     ranges[0].NumDescriptors = 1;
@@ -601,7 +601,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     break;
 
   case RootSignatureType::FogOverlay:
-    // 0: CBV b0 (PS) Fog parameters
+    // 0: CBV b0 (PS) フォグのパラメータ
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[0].Descriptor.ShaderRegister = 0;
@@ -612,14 +612,14 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
 
 
   case RootSignatureType::Primitive3D:
-    // 0: CBV b0 (VS) View/Proj
+    // 0: CBV b0 (VS) ビュー・プロジェクション行列
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
     params[0].Descriptor.ShaderRegister = 0;
     paramCount = 1;
     break;
   case RootSignatureType::PostProcess:
-    // 0: SRV table t0 (PS) Texture
+    // 0: SRV table t0 (PS) テクスチャ
     ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[0].BaseShaderRegister = 0;
     ranges[0].NumDescriptors = 1;
@@ -631,14 +631,14 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[0].DescriptorTable.NumDescriptorRanges = 1;
     params[0].DescriptorTable.pDescriptorRanges = &ranges[0];
 
-    // 1: Root32BitConstants b0 (PS) PostEffect params (4 x uint32)
+    // 1: Root32BitConstants b0 (PS) ポストエフェクトのパラメータ（uint32 × 4）
     params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[1].Constants.ShaderRegister = 0; // b0
     params[1].Constants.RegisterSpace = 0;
     params[1].Constants.Num32BitValues = 4;
 
-    // 2: SRV table t1 (PS) Depth Texture
+    // 2: SRV table t1 (PS) 深度テクスチャ
     ranges[3].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[3].BaseShaderRegister = 1; // t1
     ranges[3].NumDescriptors = 1;
@@ -650,7 +650,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[2].DescriptorTable.NumDescriptorRanges = 1;
     params[2].DescriptorTable.pDescriptorRanges = &ranges[3];
 
-    // 3: CBV b1 (PS) ProjectionInverse / Material
+    // 3: CBV b1 (PS) 逆プロジェクション行列 / マテリアル
     params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[3].Descriptor.ShaderRegister = 1; // b1
@@ -660,12 +660,12 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
 
   case RootSignatureType::GPUParticle:
     // GPU Particle 描画用ルートシグネチャ
-    // 0: CBV b0 (VS) PerView (viewProjection + billboardMatrix)
+    // 0: CBV b0 (VS) ビューごとの定数（viewProjection + billboardMatrix）
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
     params[0].Descriptor.ShaderRegister = 0; // b0
 
-    // 1: SRV table t0 (VS) Particles StructuredBuffer
+    // 1: SRV table t0 (VS) パーティクルの StructuredBuffer
     ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[0].BaseShaderRegister = 0; // t0
     ranges[0].NumDescriptors = 1;
@@ -677,7 +677,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[1].DescriptorTable.NumDescriptorRanges = 1;
     params[1].DescriptorTable.pDescriptorRanges = &ranges[0];
 
-    // 2: SRV table t0 (PS) Texture
+    // 2: SRV table t0 (PS) テクスチャ
     ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[1].BaseShaderRegister = 0; // t0 (PS)
     ranges[1].NumDescriptors = 1;
@@ -693,18 +693,18 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     break;
 
   case RootSignatureType::Water:
-    // Object3D と同じ 0..10 に加え、b6 (ALL) に WaterParams を追加
-    // 0: CBV b0 (PS)  Material
+    // Object3D と同じ 0〜10 に加え、b6 (ALL) に WaterParams を追加する
+    // 0: CBV b0 (PS) マテリアル
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[0].Descriptor.ShaderRegister = 0;
 
-    // 1: CBV b0 (VS)  Transform
+    // 1: CBV b0 (VS) トランスフォーム
     params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
     params[1].Descriptor.ShaderRegister = 0;
 
-    // 2: SRV table t0 (PS)  Texture (Normal Map)
+    // 2: SRV table t0 (PS) テクスチャ（法線マップ）
     ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[0].BaseShaderRegister = 0;
     ranges[0].NumDescriptors = 1;
@@ -716,32 +716,32 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[2].DescriptorTable.NumDescriptorRanges = 1;
     params[2].DescriptorTable.pDescriptorRanges = &ranges[0];
 
-    // 3: CBV b1 (PS)  DirectionalLight
+    // 3: CBV b1 (PS) 平行光源
     params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[3].Descriptor.ShaderRegister = 1;
 
-    // 4: CBV b2 (PS)  camera
+    // 4: CBV b2 (PS) カメラ
     params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[4].Descriptor.ShaderRegister = 2;
 
-    // 5: CBV b3 (PS) PointLight
+    // 5: CBV b3 (PS) 点光源
     params[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[5].Descriptor.ShaderRegister = 3;
 
-    // 6: CBV b4 (PS) SpotLight
+    // 6: CBV b4 (PS) スポットライト
     params[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[6].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[6].Descriptor.ShaderRegister = 4;
 
-    // 7: CBV b5 (PS) AreaLight
+    // 7: CBV b5 (PS) エリアライト
     params[7].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[7].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[7].Descriptor.ShaderRegister = 5;
 
-    // 8: SRV table t1 (PS) EnvironmentMap (Cubemap)
+    // 8: SRV table t1 (PS) 環境マップ（キューブマップ）
     ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[1].BaseShaderRegister = 1; // t1
     ranges[1].NumDescriptors = 1;
@@ -753,7 +753,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[8].DescriptorTable.NumDescriptorRanges = 1;
     params[8].DescriptorTable.pDescriptorRanges = &ranges[1];
 
-    // 9: SRV table t2 (PS) NormalMap
+    // 9: SRV table t2 (PS) 法線マップ
     ranges[2].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[2].BaseShaderRegister = 2; // t2
     ranges[2].NumDescriptors = 1;
@@ -764,7 +764,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[9].DescriptorTable.NumDescriptorRanges = 1;
     params[9].DescriptorTable.pDescriptorRanges = &ranges[2];
 
-    // 10: SRV table t3 (PS) RoughnessMap
+    // 10: SRV table t3 (PS) ラフネスマップ
     ranges[3].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[3].BaseShaderRegister = 3; // t3
     ranges[3].NumDescriptors = 1;
@@ -775,12 +775,12 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[10].DescriptorTable.NumDescriptorRanges = 1;
     params[10].DescriptorTable.pDescriptorRanges = &ranges[3];
 
-    // 11: CBV b6 (ALL)  WaterParams (VS+PS で共有)
+    // 11: CBV b6 (ALL) WaterParams（VS と PS で共有）
     params[11].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[11].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     params[11].Descriptor.ShaderRegister = 6;
 
-    // 12: SRV table t4 (VS, PS) InteractiveWave HeightMap
+    // 12: SRV table t4 (VS, PS) InteractiveWave の高さマップ
     ranges[4].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[4].BaseShaderRegister = 4; // t4
     ranges[4].NumDescriptors = 1;
@@ -791,7 +791,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[12].DescriptorTable.NumDescriptorRanges = 1;
     params[12].DescriptorTable.pDescriptorRanges = &ranges[4];
 
-    // 13: SRV table t5 (PS) Depth Texture for Foam
+    // 13: SRV table t5 (PS) 泡の判定に使う深度テクスチャ
     ranges[5].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[5].BaseShaderRegister = 5; // t5
     ranges[5].NumDescriptors = 1;
@@ -802,7 +802,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[13].DescriptorTable.NumDescriptorRanges = 1;
     params[13].DescriptorTable.pDescriptorRanges = &ranges[5];
 
-    // 14: SRV table t6 (PS) Scene Color（水を描く前の画面のコピー。屈折用）
+    // 14: SRV table t6 (PS) シーンカラー（水を描く前の画面のコピー。屈折用）
     ranges[6].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[6].BaseShaderRegister = 6; // t6
     ranges[6].NumDescriptors = 1;
@@ -813,13 +813,13 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[14].DescriptorTable.NumDescriptorRanges = 1;
     params[14].DescriptorTable.pDescriptorRanges = &ranges[6];
 
-    // 15: CBV b7 (PS) ShadowParams（平行光源の影。Object3D の b6 と同じバッファを載せる）
+    // 15: CBV b7 (PS) 影のパラメータ（ShadowParams。平行光源の影。Object3D の b6 と同じバッファを載せる）
     //     Water は b6 を WaterParams に使っているため、レジスタだけずらして受け取る
     params[15].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[15].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[15].Descriptor.ShaderRegister = 7; // b7
 
-    // 16: SRV table t7 (PS) ShadowMap（平行光源のシャドウマップ。海面に影を落とす）
+    // 16: SRV table t7 (PS) シャドウマップ（平行光源のシャドウマップ。海面に影を落とす）
     ranges[7].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[7].BaseShaderRegister = 7; // t7
     ranges[7].NumDescriptors = 1;
@@ -840,11 +840,11 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
   }
 
   // ====================
-  // Static Sampler
+  // 静的サンプラー
   // ====================
   D3D12_STATIC_SAMPLER_DESC samplers[4] = {};
 
-  // s0: Linear
+  // s0: リニア（ラップ）
   samplers[0].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
   samplers[0].AddressU = samplers[0].AddressV = samplers[0].AddressW =
       D3D12_TEXTURE_ADDRESS_MODE_WRAP;
@@ -853,7 +853,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
   samplers[0].ShaderRegister = 0;
   samplers[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-  // s1: Point (for depth sampling etc)
+  // s1: ポイント（深度のサンプリングなど用）
   samplers[1].Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
   samplers[1].AddressU = samplers[1].AddressV = samplers[1].AddressW =
       D3D12_TEXTURE_ADDRESS_MODE_WRAP;
@@ -862,7 +862,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
   samplers[1].ShaderRegister = 1;
   samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-  // s2: Linear Clamp
+  // s2: リニア（クランプ）
   samplers[2].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
   samplers[2].AddressU = samplers[2].AddressV = samplers[2].AddressW =
       D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
@@ -871,7 +871,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
   samplers[2].ShaderRegister = 2;
   samplers[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
-  // s3: Shadow Comparison (PCF用)
+  // s3: 影の深度比較（PCF 用）
   // 深度比較つきバイリニアフィルタ。1タップで 2x2 の比較結果が補間されるため、
   // シェーダ側の 3x3 タップと合わせて実質 6x6 相当の滑らかさになる。
   samplers[3].Filter = D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
@@ -884,7 +884,7 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
   samplers[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
   // ====================
-  // Serialize
+  // シリアライズ
   // ====================
   // ルートシグネチャ作成
   D3D12_ROOT_SIGNATURE_DESC desc{};

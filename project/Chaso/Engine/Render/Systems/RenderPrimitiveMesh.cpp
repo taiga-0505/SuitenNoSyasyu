@@ -7,10 +7,10 @@ namespace RC {
 
 namespace {
 
-/// アクティブな DirectionalLight のライティングモードをメッシュに同期する。
-/// 個別オーバーライド (SetLightingMode) が設定されているメッシュは上書きしない。
+/// @brief アクティブな DirectionalLight のライティングモードをメッシュに同期する
 /// @param ctx レンダーコンテキスト
-/// @param m 対象のプリミティブメッシュ
+/// @param m   対象のプリミティブメッシュ
+/// @note 個別オーバーライド（SetLightingMode）が設定されているメッシュはその値に固定し、ライトに追従させない。
 static void ApplyDirLightMode_(RenderContext &ctx, PrimitiveMesh *m) {
   Material *mat = m->Mat();
   if (!mat) {
@@ -166,7 +166,7 @@ void DrawPrimitiveMesh(int meshHandle, int texHandle) {
                     shadingMode == ViewShadingMode::SolidShading);
 
     if (isDebug) {
-      // デバッグモード: 専用 PSO で描画（BlendMode=None固定）
+      // デバッグモード: 専用 PSO で描画（BlendMode = None 固定）
       auto savedBlend = ctx.CurrentBlendMode();
       ctx.SetBlendMode(kBlendModeNone);
 
@@ -200,7 +200,7 @@ void DrawPrimitiveMesh(int meshHandle, int texHandle) {
       if (shadingMode == ViewShadingMode::Wireframe || shadingMode == ViewShadingMode::SolidWireframe) {
         if (ctx.BindPipeline("object3d_wire")) {
           ctx.BindCameraCB();
-          cl->SetGraphicsRootConstantBufferView(3, lightAddr); // object3d用レイアウトなので必要
+          cl->SetGraphicsRootConstantBufferView(3, lightAddr); // object3d 用レイアウトなので必要
           ctx.BindAllLightCBs();
 
           ctx.PrimitiveMeshes().ApplyTexture(meshHandle, texHandle);
@@ -224,7 +224,7 @@ void DrawPrimitiveMeshWater(int meshHandle, int texHandle) {
   Matrix4x4 world = MakeAffineMatrix(m->T().scale, m->T().rotation, m->T().translation);
   D3D12_GPU_VIRTUAL_ADDRESS lightAddr = ctx.DirLights().GetActiveCBAddress();
 
-  // Water layer (same as glass: translucent layer)
+  // 水面はガラスと同じ半透明レイヤーに積む
   const uint64_t key = SortKey::Make(SortKey::kLayerGlass, SortKey::HashPSO("object3d_water"), 0);
 
   ctx.PushCommand3D(key, [m, meshHandle, world, texHandle, lightAddr](ID3D12GraphicsCommandList *cl) {
@@ -258,7 +258,7 @@ void DrawPrimitiveMeshWater(int meshHandle, int texHandle) {
       }
       ctx.SetBlendMode(savedBlend);
     } else {
-      // 2-pass water: back face first, then front face
+      // 水面は 2 パス: 先に裏面、次に表面
       if (shadingMode != ViewShadingMode::Wireframe) {
         if (ctx.BindPipeline("object3d_water_front")) {
           ctx.BindCameraCB();
@@ -288,13 +288,14 @@ void DrawPrimitiveMeshWater(int meshHandle, int texHandle) {
 
 namespace {
 
-/// エフェクト用プリミティブの共通描画。
-/// 加算合成・非ライティングの専用 PSO を直接叩くだけの軽い経路で、
-/// ApplyDirLightMode_ は呼ばない（Material の流用スロットを壊さないため）。
+/// @brief エフェクト用プリミティブの共通描画
+/// @details 加算合成・非ライティングの専用 PSO を直接叩くだけの軽い経路で、
+///          ApplyDirLightMode_ は呼ばない（Material の流用スロットを壊さないため）。
 /// @param meshHandle メッシュハンドル
-/// @param texHandle 差し替えテクスチャ（-1 で生成時のもの）
-/// @param prefix 使用する PSO のプレフィックス（文字列リテラルのみ）
-/// @param label デバッグ表示用ラベル（文字列リテラルのみ）
+/// @param texHandle  差し替えテクスチャ（-1 で生成時のもの）
+/// @param prefix     使用する PSO のプレフィックス（文字列リテラルのみ）
+/// @param label      デバッグ表示用ラベル（文字列リテラルのみ）
+/// @note prefix / label はラムダに生ポインタのまま渡すので、寿命の短い文字列を渡さないこと。
 static void DrawPrimitiveMeshEffect_(int meshHandle, int texHandle,
                                      const char *prefix, const char *label) {
   auto &ctx = GetRenderContext();
@@ -366,7 +367,7 @@ void DrawPrimitiveMeshWaterColumn(int meshHandle, int texHandle) {
   Matrix4x4 world = MakeAffineMatrix(m->T().scale, m->T().rotation, m->T().translation);
   D3D12_GPU_VIRTUAL_ADDRESS lightAddr = ctx.DirLights().GetActiveCBAddress();
 
-  // Water column layer (same as glass: translucent layer)
+  // 水柱もガラスと同じ半透明レイヤーに積む
   const uint64_t key = SortKey::Make(SortKey::kLayerGlass, SortKey::HashPSO("object3d_watercolumn"), 0);
 
   ctx.PushCommand3D(key, [m, meshHandle, world, texHandle, lightAddr](ID3D12GraphicsCommandList *cl) {
@@ -400,7 +401,7 @@ void DrawPrimitiveMeshWaterColumn(int meshHandle, int texHandle) {
       }
       ctx.SetBlendMode(savedBlend);
     } else {
-      // 2-pass water column: back face first, then front face
+      // 水柱は 2 パス: 先に裏面、次に表面
       if (shadingMode != ViewShadingMode::Wireframe) {
         if (ctx.BindPipeline("object3d_watercolumn_front")) {
           ctx.BindCameraCB();

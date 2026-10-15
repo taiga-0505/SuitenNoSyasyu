@@ -49,7 +49,7 @@ CompiledShader ShaderCompiler::Compile(const ShaderDesc &desc) const {
   }
 
   // ファイル読み込み
-  // ゲーム側 Resources → エンジン側 (Chaso/Resources) の順で探す
+  // ゲーム側 Resources → エンジン側（Chaso/Resources）の順で探す
   const std::wstring srcPath = Chaso::ResolvePath(desc.path);
   ComPtr<IDxcBlobEncoding> srcBlob;
   HRESULT hr = utils_->LoadFile(srcPath.c_str(), nullptr, &srcBlob);
@@ -91,11 +91,11 @@ CompiledShader ShaderCompiler::Compile(const ShaderDesc &desc) const {
     args.push_back(L"-Zi");
     args.push_back(L"-Qembed_debug");
   }
-  // 行番号を含むPDB名抑制（任意）
-  args.push_back(L"-Qstrip_reflect"); // 最小化したい場合
+  // リフレクション情報をバイナリから取り除く（任意）
+  args.push_back(L"-Qstrip_reflect"); // バイナリを最小化したい場合
 
   // マクロ定義
-  std::vector<DxcDefine> defs = desc.defines; // コピー（必要なら外で保持）
+  std::vector<DxcDefine> defs = desc.defines; // コピー（必要なら外で保持）。現状は args に渡していない
   DxcBuffer src{};
   src.Ptr = srcBlob->GetBufferPointer();
   src.Size = srcBlob->GetBufferSize();

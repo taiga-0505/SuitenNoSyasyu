@@ -2,7 +2,7 @@
 
 /// @class GameStateBase
 /// @brief ゲームの進行状況、スコア、経過時間などを管理するクラス
-/// @details Unreal Engineの AGameStateBase に相当。
+/// @details Unreal Engine の AGameStateBase に相当。
 class GameStateBase {
 public:
     GameStateBase() = default;

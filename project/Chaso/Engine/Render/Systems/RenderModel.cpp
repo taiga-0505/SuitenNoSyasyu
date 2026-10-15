@@ -12,13 +12,15 @@
 namespace RC {
 
 // ============================================================================
-// ライト適用の共通ヘルパー（file-scope）
+// ライト適用の共通ヘルパー（ファイルスコープ）
 // ============================================================================
 namespace {
 
-/// ディレクショナルライトの CB アドレスをモデルに適用し、
-/// ライティングモード/shininess をマテリアルに同期する。
-/// @return lightAddr (0 = デフォルト使用)
+/// @brief ディレクショナルライトの CB アドレスをモデルに適用し、ライティングモード／shininess をマテリアルに同期する
+/// @param ctx 描画コンテキスト
+/// @param m   対象モデル
+/// @return 適用したライトの CB アドレス（0 = デフォルトを使用）
+/// @note モデル個別のライティングモード指定があれば、ライト側のモードで上書きしない。
 static D3D12_GPU_VIRTUAL_ADDRESS ApplyDirLight_(RenderContext &ctx,
                                                 ModelObject *m) {
   const D3D12_GPU_VIRTUAL_ADDRESS lightAddr =
@@ -38,7 +40,9 @@ static D3D12_GPU_VIRTUAL_ADDRESS ApplyDirLight_(RenderContext &ctx,
   return lightAddr;
 }
 
-/// ガラス用ライト適用（shininess は上書きしない）
+/// @brief ガラス用のライト適用（ApplyDirLight_ と同じだが shininess は上書きしない）
+/// @param ctx 描画コンテキスト
+/// @param m   対象モデル
 static void ApplyDirLightGlass_(RenderContext &ctx, ModelObject *m) {
   const D3D12_GPU_VIRTUAL_ADDRESS lightAddr =
       ctx.DirLights().GetActiveCBAddress();
@@ -55,7 +59,10 @@ static void ApplyDirLightGlass_(RenderContext &ctx, ModelObject *m) {
   }
 }
 
-/// 標準的な 3D バインド（Pipeline + Camera + Lights）
+/// @brief 標準的な 3D バインド（パイプライン＋カメラ CB＋全ライト CB）を行う
+/// @param ctx    描画コンテキスト
+/// @param prefix パイプラインキーのプレフィックス
+/// @return パイプラインをバインドできたら true（失敗時はカメラ・ライトもバインドしない）
 static bool BindStandard3D_(RenderContext &ctx, std::string_view prefix) {
   if (!ctx.BindPipeline(prefix)) {
     return false;
@@ -65,7 +72,10 @@ static bool BindStandard3D_(RenderContext &ctx, std::string_view prefix) {
   return true;
 }
 
-/// テクスチャのオーバーライド
+/// @brief テクスチャを差し替える（負のハンドルならマテリアル本来のテクスチャへ戻す）
+/// @param ctx       描画コンテキスト
+/// @param m         対象モデル
+/// @param texHandle 差し替えるテクスチャのハンドル（負なら MTL のテクスチャに戻す）
 static void ApplyTexture_(RenderContext &ctx, ModelObject *m, int texHandle) {
   if (texHandle >= 0) {
     m->SetTexture(ctx.Textures().GetSrv(texHandle));
@@ -78,14 +88,19 @@ static void ApplyTexture_(RenderContext &ctx, ModelObject *m, int texHandle) {
 // ViewShadingMode ヘルパー
 // ============================================================================
 
-/// デバッグ用のプロシージャルシェーダーモードか判定
+/// @brief デバッグ用のプロシージャルシェーダーモードかを判定する
+/// @param mode 表示モード
+/// @return FaceOrientation / RandomColor / SolidShading なら true
 static bool IsDebugShadingMode_(ViewShadingMode mode) {
   return mode == ViewShadingMode::FaceOrientation ||
          mode == ViewShadingMode::RandomColor ||
          mode == ViewShadingMode::SolidShading;
 }
 
-/// ViewShadingMode に応じた単体描画用 Pipeline prefix を返す
+/// @brief ViewShadingMode に応じた単体描画用のパイプラインプレフィックスを返す
+/// @param mode    表示モード
+/// @param skinned スキニング用パイプラインを使うか
+/// @return パイプラインキーのプレフィックス
 static std::string_view ResolveSinglePrefix_(ViewShadingMode mode, bool skinned) {
   switch (mode) {
   case ViewShadingMode::FaceOrientation: return skinned ? "object3d_faceori_skin" : "object3d_faceori";
@@ -95,7 +110,9 @@ static std::string_view ResolveSinglePrefix_(ViewShadingMode mode, bool skinned)
   }
 }
 
-/// ViewShadingMode に応じたインスタンシング描画用 Pipeline prefix を返す
+/// @brief ViewShadingMode に応じたインスタンシング描画用のパイプラインプレフィックスを返す
+/// @param mode 表示モード
+/// @return パイプラインキーのプレフィックス
 static std::string_view ResolveInstPrefix_(ViewShadingMode mode) {
   switch (mode) {
   case ViewShadingMode::FaceOrientation: return "object3d_faceori_inst";
@@ -105,8 +122,14 @@ static std::string_view ResolveInstPrefix_(ViewShadingMode mode) {
   }
 }
 
-/// デバッグモード時の描画実行（単体）
-/// デバッグシェーダーは BlendMode=None 固定、ワイヤーフレーム無し
+/// @brief デバッグ表示モードでモデルを 1 体描画する
+/// @details デバッグシェーダーは BlendMode = None 固定で、ワイヤーフレームは重ねない。
+/// @param ctx     描画コンテキスト
+/// @param m       対象モデル
+/// @param cl      コマンドリスト
+/// @param world   ワールド行列
+/// @param mode    表示モード
+/// @param skinned スキニング用パイプラインを使うか
 static void DrawDebugSingle_(RenderContext &ctx, ModelObject *m,
                               ID3D12GraphicsCommandList *cl,
                               const Matrix4x4 &world,
@@ -122,7 +145,13 @@ static void DrawDebugSingle_(RenderContext &ctx, ModelObject *m,
   ctx.SetBlendMode(prevBlend);
 }
 
-/// デバッグモード時の描画実行（インスタンシング + カラー）
+/// @brief デバッグ表示モードでモデルをインスタンシング描画する（色指定付き）
+/// @param ctx       描画コンテキスト
+/// @param m         対象モデル
+/// @param cl        コマンドリスト
+/// @param instances 各インスタンスの Transform
+/// @param color     全インスタンス共通の色
+/// @param mode      表示モード
 static void DrawDebugInstColored_(RenderContext &ctx, ModelObject *m,
                                    ID3D12GraphicsCommandList *cl,
                                    const std::vector<Transform> &instances,
@@ -141,7 +170,7 @@ static void DrawDebugInstColored_(RenderContext &ctx, ModelObject *m,
 } // namespace
 
 // ============================================================================
-// Load / Unload
+// 読み込み／解放
 // ============================================================================
 
 int LoadModel(const std::string &path) {
@@ -166,14 +195,16 @@ bool IsModelReady(int modelHandle) {
 }
 
 // ============================================================================
-// Draw (基本)
+// 描画（基本）
 // ============================================================================
 
 /// @brief モデルの描画に使うワールド行列を求める
 /// @details SetModelWorldOverride で行列が直接指定されている場合はそれを使い、
-///          そうでなければ従来通り Transform(TRS) から生成する。
+///          そうでなければ従来通り Transform（TRS）から生成する。
 ///          ボーン追従（武器を手に持たせる等）はオイラー角では表現しづらいため、
 ///          行列をそのまま渡せる経路を用意している。
+/// @param m 対象モデル
+/// @return ワールド行列
 static Matrix4x4 ResolveModelWorld_(ModelObject *m) {
   if (m->HasWorldOverride()) {
     return m->WorldOverride();
@@ -278,7 +309,7 @@ ModelInstanceBatcher::Stats GetModelInstancingStats() {
 }
 
 // ============================================================================
-// VirtualEntity（ModelProxyPool）
+// VirtualEntity（ModelProxyPool）の操作
 // ============================================================================
 
 ModelProxyHandle CreateModelProxy(int modelHandle) {
@@ -330,7 +361,7 @@ void DrawModelProxies() {
 }
 
 // ============================================================================
-// Batch
+// バッチ描画
 // ============================================================================
 
 void DrawModelBatchColored(int modelHandle,
@@ -393,8 +424,8 @@ void DrawModelBatchColored(int modelHandle,
 }
 
 // ============================================================================
-// Glass (2パス: 背面→表面)
-// ※ 2パスは同一パケット内で PSO を切替える必要があるため、
+// ガラス（2 パス: 背面 → 表面）
+// ※ 2 パスは同一パケット内で PSO を切り替える必要があるため、
 //    ラムダ方式（PushCommand3D）のまま残す。
 // ============================================================================
 
@@ -434,13 +465,13 @@ void DrawModelGlassTwoPass(int modelHandle, int texHandle) {
         if (IsDebugShadingMode_(shadingMode)) {
           DrawDebugSingle_(ctx, m, cl, world, shadingMode, skinned);
         } else {
-          // 1) 背面（内側） - Solidのみ
+          // 1) 背面（内側）。Solid のときだけ
           if (shadingMode != ViewShadingMode::Wireframe) {
             if (BindStandard3D_(ctx, "object3d_glass_front")) {
               m->Draw(cl, world, ctx.CurrentFrame(), ctx.IsShadowPass());
             }
           }
-          // 2) 表面（外側） - SolidWireframeならワイヤーフレームも重ねる
+          // 2) 表面（外側）。SolidWireframe ならワイヤーフレームも重ねる
           if (shadingMode != ViewShadingMode::Wireframe) {
             if (BindStandard3D_(ctx, "object3d_glass")) {
               m->Draw(cl, world, ctx.CurrentFrame(), ctx.IsShadowPass());
@@ -459,7 +490,7 @@ void DrawModelGlassTwoPass(int modelHandle, int texHandle) {
 }
 
 // ============================================================================
-// Transform / Color / LightingMode / Mesh / Cursor
+// Transform・色・ライティングモード・メッシュ・カーソル・アニメーション
 // ============================================================================
 
 Transform *GetModelTransformPtr(int modelHandle) {
@@ -544,7 +575,7 @@ void UpdateModelAnimation(int modelHandle, float dt) {
     if (auto* ctx = GetRenderContext().Ctx()) {
       dt = ctx->deltaTime;
     } else {
-      dt = 1.0f / 60.0f; // fallback
+      dt = 1.0f / 60.0f; // SceneContext が無いときは 60fps 相当で進める
     }
   }
   GetRenderContext().Models().UpdateAnimation(modelHandle, dt);

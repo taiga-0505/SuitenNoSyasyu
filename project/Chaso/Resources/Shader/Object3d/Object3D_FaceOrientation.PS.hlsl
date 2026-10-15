@@ -1,13 +1,23 @@
 #include "Object3d.hlsli"
 
+// =============================================================================
+// FaceOrientation（面の表裏の可視化）
+//
+// ビューシェーディングのデバッグ表示用。SV_IsFrontFace で表裏を判定し、色分けする。
+//   表面（Front Face）→ 青系
+//   裏面（Back Face） → 赤系
+// 裏面も描く必要があるので、カリング無しの PSO（object3d_faceori*）から使う。
+// =============================================================================
+
 struct PixelShaderOutput
 {
-    float4 color : SV_TARGET0;
+    float4 color : SV_TARGET0; ///< 出力色
 };
 
-// SV_IsFrontFace で表裏を判定し、色分けする
-// 表面（Front Face）→ 青系
-// 裏面（Back Face）→  赤系
+/// @brief 面の表裏で色分けした色を出力する
+/// @param input       頂点シェーダーからの補間値
+/// @param isFrontFace 表面なら true
+/// @return 出力色
 PixelShaderOutput main(VertexShaderOutput input, bool isFrontFace : SV_IsFrontFace)
 {
     PixelShaderOutput output;

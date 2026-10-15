@@ -1,15 +1,15 @@
 // ============================================================================
 // RenderCommon.cpp
 // ----------------------------------------------------------------------------
-// RenderCommon は「Scene から呼べる描画ファサード。」
+// RenderCommon は「Scene から呼べる描画ファサード」。
 //
 // 責務分割後、このファイルに残るもの:
 //   - RenderContext の唯一のインスタンス管理
 //   - Init / Term
 //   - SetCamera
 //   - PreDraw3D / PreDraw2D
-//   - Texture (LoadTex / GetSrv)
-//   - BlendMode (Set / Get)
+//   - テクスチャ（LoadTex / GetSrv）
+//   - ブレンドモード（Set / Get）
 //   - IsInitialized / GetDevice
 //
 // Model / Sprite / Sphere / Light / Primitive の実装は
@@ -27,7 +27,7 @@
 #include "Graphics/PostProcess/PostProcess.h"
 #include "Common/SceneContext.h"
 #include "imgui/imgui.h"
-#include "Common/EngineConfig.h" // Added for RC_ENABLE_IMGUI
+#include "Common/EngineConfig.h" // RC_ENABLE_IMGUI のため
 #include "Common/Log/Log.h"
 
 #include <string_view>
@@ -50,7 +50,7 @@ void Term() {
 }
 
 // ============================================================================
-// Camera
+// カメラ
 // ============================================================================
 
 void SetCamera(const Matrix4x4 &view, const Matrix4x4 &proj,
@@ -59,7 +59,7 @@ void SetCamera(const Matrix4x4 &view, const Matrix4x4 &proj,
 }
 
 // ============================================================================
-// Shadow Pass
+// シャドウパス
 // ============================================================================
 
 void UpdateShadowParams(const ShadowParams& params) {
@@ -75,7 +75,7 @@ void EndShadowPass() {
 }
 
 // ============================================================================
-// Mask Pass
+// マスクパス
 // ============================================================================
 
 bool BeginMaskPass() {
@@ -91,7 +91,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE GetMaskSRVGPU() {
 }
 
 // ============================================================================
-// Spot Light Shadow
+// スポットライトの影
 // ============================================================================
 
 void SetSpotLightShadowIndex(int spotLightHandle, int shadowIndex) {
@@ -136,7 +136,7 @@ void BeginFrame() {
 }
 
 // ============================================================================
-// 3D Pass
+// 3D パス
 // ============================================================================
 
 void PreDraw3D(SceneContext &ctx, ID3D12GraphicsCommandList *cl) {
@@ -145,7 +145,7 @@ void PreDraw3D(SceneContext &ctx, ID3D12GraphicsCommandList *cl) {
 }
 
 // ============================================================================
-// 2D Pass
+// 2D パス
 // ============================================================================
 
 void PreDraw2D(SceneContext &ctx, ID3D12GraphicsCommandList *cl) {
@@ -165,7 +165,7 @@ void ExecuteOverlay3D() {
 }
 
 // ============================================================================
-// Texture
+// テクスチャ
 // ============================================================================
 
 int LoadTex(const std::string &path, bool srgb) {
@@ -177,7 +177,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE GetSrv(int texHandle) {
 }
 
 // ============================================================================
-// State
+// 状態
 // ============================================================================
 
 bool IsInitialized() { return RenderContext::GetInstance().IsInitialized(); }
@@ -211,7 +211,7 @@ ViewShadingMode GetViewShadingMode() {
 }
 
 #if RC_ENABLE_IMGUI
-static int s_ShadingIconHandles[6] = { -1, -1, -1, -1, -1, -1 };
+static int s_ShadingIconHandles[6] = { -1, -1, -1, -1, -1, -1 }; ///< 表示モード切り替えボタンのアイコン（ViewShadingMode 順。未読み込みなら -1）
 
 void DrawViewShadingModeImGui(const char *label) {
   if (s_ShadingIconHandles[0] == -1) {
@@ -241,7 +241,7 @@ void DrawViewShadingModeImGui(const char *label) {
 
   // ボタン間の隙間を少しあける
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 0));
-  // ボタン内の余白を固定(上下左右2px)して、ボタン全体の高さを24pxに固定する
+  // ボタン内の余白を固定（上下左右 2px）して、ボタン全体の高さを 24px に固定する
   ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
 
   for (int i = 0; i < 6; i++) {
@@ -271,7 +271,7 @@ void DrawViewShadingModeImGui(const char *label) {
 
     if (tex_id) {
         // 画像サイズを少し小さくして余白を持たせる
-        // 引数: id, tex, size, uv0, uv1, bg_col
+        // 引数: ID、テクスチャ、サイズ、uv0、uv1、背景色
         if (ImGui::ImageButton(str_id, tex_id, ImVec2(20, 20), ImVec2(0,0), ImVec2(1,1), bgCol)) {
             SetViewShadingMode(static_cast<ViewShadingMode>(i));
         }

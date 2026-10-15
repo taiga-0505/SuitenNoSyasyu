@@ -52,6 +52,9 @@ constexpr float kOutlineInsetEm = 0.003f;
 // 文字列ユーティリティ
 // ----------------------------------------------------------------------------
 
+/// @brief UTF-8 文字列を UTF-16 に変換する（フォントパス用）
+/// @param s 変換元（UTF-8。不正な場合は ANSI として解釈し直す）
+/// @return 変換後のワイド文字列
 std::wstring Utf8ToWide_(const std::string &s) {
   if (s.empty()) {
     return {};
@@ -69,7 +72,9 @@ std::wstring Utf8ToWide_(const std::string &s) {
   return w;
 }
 
-/// UTF-8 → UTF-32（不正なバイト列は U+FFFD）
+/// @brief UTF-8 文字列を UTF-32 に変換する
+/// @param s 変換元（UTF-8）
+/// @return コードポイント列（不正なバイト列は U+FFFD に置き換える）
 std::u32string DecodeUtf8_(const std::string &s) {
   std::u32string out;
   out.reserve(s.size());
@@ -121,7 +126,7 @@ std::u32string DecodeUtf8_(const std::string &s) {
 /// @brief Simplify(LINES) の出力（折れ線輪郭）を集めるシンク
 class PolylineSink final : public ID2D1SimplifiedGeometrySink {
 public:
-  std::vector<std::vector<D2D1_POINT_2F>> contours;
+  std::vector<std::vector<D2D1_POINT_2F>> contours; ///< 集めた閉じた折れ線（3 点以上のもののみ）
 
   // IUnknown（スタック寿命なので参照カウントで delete はしない）
   STDMETHODIMP QueryInterface(REFIID riid, void **ppv) override {
@@ -179,15 +184,16 @@ public:
   STDMETHODIMP Close() override { return S_OK; }
 
 private:
-  ULONG ref_ = 1;
-  std::vector<D2D1_POINT_2F> current_;
+  ULONG ref_ = 1;                      ///< 参照カウント（寿命管理には使わない）
+  std::vector<D2D1_POINT_2F> current_; ///< 組み立て中の図形の点列
 };
 
 /// @brief Tessellate の出力（三角形リスト）を集めるシンク
 class TriangleSink final : public ID2D1TessellationSink {
 public:
-  std::vector<D2D1_TRIANGLE> triangles;
+  std::vector<D2D1_TRIANGLE> triangles; ///< 集めた三角形
 
+  // IUnknown（スタック寿命なので参照カウントで delete はしない）
   STDMETHODIMP QueryInterface(REFIID riid, void **ppv) override {
     if (!ppv) return E_POINTER;
     if (riid == __uuidof(IUnknown) || riid == __uuidof(ID2D1TessellationSink)) {
@@ -207,26 +213,33 @@ public:
   STDMETHODIMP Close() override { return S_OK; }
 
 private:
-  ULONG ref_ = 1;
+  ULONG ref_ = 1; ///< 参照カウント（寿命管理には使わない）
 };
 
 // ----------------------------------------------------------------------------
 // ファクトリ / フォントフェイスのキャッシュ
 // ----------------------------------------------------------------------------
 
+/// @struct Factories
+/// @brief DirectWrite / Direct2D のファクトリと読み込み済みフォントフェイスのキャッシュ
 struct Factories {
-  ComPtr<IDWriteFactory> dwrite;
-  ComPtr<ID2D1Factory> d2d;
+  ComPtr<IDWriteFactory> dwrite;        ///< DirectWrite ファクトリ
+  ComPtr<ID2D1Factory> d2d;             ///< Direct2D ファクトリ（ジオメトリ演算のみに使う）
   ComPtr<ID2D1StrokeStyle> roundStroke; ///< 縁取りの Widen 用（丸角・丸キャップ）
-  std::unordered_map<std::string, ComPtr<IDWriteFontFace>> faces;
-  std::mutex mutex;
+  std::unordered_map<std::string, ComPtr<IDWriteFontFace>> faces; ///< "パス#フェイス番号" → フォントフェイス
+  std::mutex mutex;                     ///< キャッシュとファクトリ操作の排他用
 };
 
+/// @brief プロセス全体で共有するファクトリキャッシュを取得する
+/// @return 関数内 static のキャッシュへの参照
 Factories &Fac_() {
   static Factories f;
   return f;
 }
 
+/// @brief DirectWrite / Direct2D のファクトリが未作成なら作成する
+/// @param f ファクトリキャッシュ
+/// @return 両方のファクトリが使える状態なら true
 bool EnsureFactories_(Factories &f) {
   if (!f.dwrite) {
     HRESULT hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
@@ -249,6 +262,11 @@ bool EnsureFactories_(Factories &f) {
   return true;
 }
 
+/// @brief フォントフェイスをキャッシュから取得する（無ければ読み込んで登録する）
+/// @param f         ファクトリキャッシュ（ファクトリ作成済みであること）
+/// @param path      フォントファイルのパス（UTF-8）
+/// @param faceIndex フェイスのインデックス（範囲外なら 0 を使う）
+/// @return フォントフェイス。読み込めなければ nullptr
 ComPtr<IDWriteFontFace> GetFontFace_(Factories &f, const std::string &path, uint32_t faceIndex) {
   const std::string key = path + "#" + std::to_string(faceIndex);
   if (auto it = f.faces.find(key); it != f.faces.end()) {
@@ -294,7 +312,11 @@ ComPtr<IDWriteFontFace> GetFontFace_(Factories &f, const std::string &path, uint
 // グリフ形状（D2D 座標系・1em = kEm・Y 下向き）
 // ----------------------------------------------------------------------------
 
+/// @struct GlyphShape
+/// @brief 1 グリフ分の表面三角形と側面用輪郭（内部座標系）
 struct GlyphShape {
+  /// @struct Contour
+  /// @brief 側面を作るための閉じた輪郭 1 本
   struct Contour {
     std::vector<D2D1_POINT_2F> pts; ///< 閉じた折れ線（終点＝始点の重複なし）
     float outwardSign = 1.0f;       ///< 辺 (a→b) の外向き法線 = sign * (d.y, -d.x) / |d|
@@ -305,7 +327,13 @@ struct GlyphShape {
 };
 
 /// @brief 1 グリフのアウトラインを取得して三角形と輪郭に変換する
-/// @param expand 0 より大きいと、形状を外側へ expand（内部単位）だけ太らせた「縁取り用シェル」を作る
+/// @param f          ファクトリキャッシュ
+/// @param face       フォントフェイス
+/// @param glyphIndex グリフインデックス
+/// @param tolerance  曲線を折れ線化する際の許容誤差（内部単位）
+/// @param expand     0 より大きいと、形状を外側へ expand（内部単位）だけ太らせた「縁取り用シェル」を作る
+/// @param out        結果の形状
+/// @return 成功なら true（空白など形状の無いグリフも true）
 bool BuildGlyphShape_(Factories &f, IDWriteFontFace *face, UINT16 glyphIndex, float tolerance,
                       float expand, GlyphShape &out) {
   // 1. アウトライン → パスジオメトリ
@@ -490,9 +518,17 @@ bool BuildGlyphShape_(Factories &f, IDWriteFontFace *face, UINT16 glyphIndex, fl
 // メッシュ組み立て
 // ----------------------------------------------------------------------------
 
+/// @struct MeshBuilder
+/// @brief ModelData へ頂点と三角形を追加する補助
 struct MeshBuilder {
-  ModelData &out;
+  ModelData &out; ///< 書き込み先
 
+  /// @brief 三角形を追加する（面法線が wantNormal と逆向きなら巻き順を反転する）
+  /// @param i0         頂点インデックス 0
+  /// @param i1         頂点インデックス 1
+  /// @param i2         頂点インデックス 2
+  /// @param wantNormal 表にしたい向き
+  /// @note 面積 0 の退化三角形は追加しない。
   void PushTriangle(uint32_t i0, uint32_t i1, uint32_t i2, const Vector3 &wantNormal) {
     const auto &a = out.vertices[i0].position;
     const auto &b = out.vertices[i1].position;
@@ -511,6 +547,13 @@ struct MeshBuilder {
     out.indices.push_back(i2);
   }
 
+  /// @brief 頂点を追加する
+  /// @param x  位置 X
+  /// @param y  位置 Y
+  /// @param z  位置 Z
+  /// @param n  法線
+  /// @param uv テクスチャ座標
+  /// @return 追加した頂点のインデックス
   uint32_t PushVertex(float x, float y, float z, const Vector3 &n, const Vector2 &uv = {0.0f, 0.0f}) {
     VertexData v{};
     v.position = {x, y, z, 1.0f};
@@ -522,10 +565,13 @@ struct MeshBuilder {
 };
 
 /// @brief 文字メッシュ生成の実体
-/// @param desc 生成パラメータ
+/// @param desc     生成パラメータ
 /// @param expandEm 形状を外側へ太らせる量（em 比、0 で本体）
-/// @param zFront 表面（法線 -Z）の Z 座標
-/// @param zBack 裏面（法線 +Z）の Z 座標。zFront 以下なら板ポリ（表面のみ）
+/// @param zFront   表面（法線 -Z）の Z 座標
+/// @param zBack    裏面（法線 +Z）の Z 座標。zFront 以下なら板ポリ（表面のみ）
+/// @param out      出力先モデルデータ（クリアしてから書き込む）
+/// @param outInfo  AABB・頂点数（不要なら nullptr）
+/// @return 1 つ以上の三角形が生成できたら true
 bool GenerateImpl_(const TextMeshDesc &desc, float expandEm, float zFront, float zBack,
                    ModelData &out, TextMeshInfo *outInfo) {
   out.vertices.clear();
@@ -561,9 +607,9 @@ bool GenerateImpl_(const TextMeshDesc &desc, float expandEm, float zFront, float
 
   // --- 行分割 & グリフインデックス取得 ---
   struct Line {
-    std::vector<UINT16> glyphs;
-    std::vector<float> advances;
-    float width = 0.0f;
+    std::vector<UINT16> glyphs;  ///< グリフインデックス列
+    std::vector<float> advances; ///< 各グリフの送り量（内部単位）
+    float width = 0.0f;          ///< 行全体の幅（内部単位）
   };
   std::vector<Line> lines;
   {
@@ -692,7 +738,7 @@ bool GenerateImpl_(const TextMeshDesc &desc, float expandEm, float zFront, float
         }
 
         // 側面（辺ごとにフラットシェーディング用の独立頂点）
-        // UV: u = 輪郭に沿った周長（1em = 1.0 で繰り返し）、v = 厚さ方向 0..1（表面側が 0）
+        // UV: u = 輪郭に沿った周長（1em = 1.0 で繰り返し）、v = 厚さ方向 0〜1（表面側が 0）
         for (const auto &c : shape->contours) {
           const size_t n = c.pts.size();
           float runLen = 0.0f;
@@ -731,7 +777,7 @@ bool GenerateImpl_(const TextMeshDesc &desc, float expandEm, float zFront, float
     return false;
   }
 
-  // --- バウンディングボックス & 表裏面の UV（文字列全体で 0..1 の平面投影、上が v=0） ---
+  // --- バウンディングボックス & 表裏面の UV（文字列全体で 0〜1 の平面投影、上が v=0） ---
   Vector3 mn{FLT_MAX, FLT_MAX, FLT_MAX};
   Vector3 mx{-FLT_MAX, -FLT_MAX, -FLT_MAX};
   for (const auto &v : out.vertices) {
@@ -763,7 +809,7 @@ bool GenerateImpl_(const TextMeshDesc &desc, float expandEm, float zFront, float
 } // namespace
 
 // ============================================================================
-// public
+// 公開関数
 // ============================================================================
 
 bool TextMeshGenerator::Generate(const TextMeshDesc &desc, ModelData &out, TextMeshInfo *outInfo) {

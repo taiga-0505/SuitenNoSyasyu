@@ -23,20 +23,28 @@ SamplerState gSamplerPoint : register(s1);
 ///          HP バーやマップの上に輪郭が浮いてしまう。UI 側が申告した矩形を素通しにする。
 static const int kMaxExclusions = 16;
 
+/// @struct MaskOutlineParams
+/// @brief マスクアウトラインのパラメータ（b1）
 struct MaskOutlineParams {
     float4 color;     ///< 輪郭色（a は合成の最大不透明度）
-    float thickness;  ///< 輪郭のピクセル幅
+    float thickness;  ///< 輪郭のピクセル幅（シェーダ内で 1〜2 に丸める）
     float strength;   ///< 全体の強さ（0〜1）
     int excludeCount; ///< 有効な除外矩形の数
-    float padding;
+    float padding;    ///< 16 バイト境界合わせ
     float4 excludeRects[kMaxExclusions]; ///< (minU, minV, maxU, maxV)
 };
 ConstantBuffer<MaskOutlineParams> gParams : register(b1);
 
+/// @brief マスクを 1 点サンプリングする（画面外は端の値で clamp）
+/// @param uv サンプリング位置
+/// @return マスク値（0 = 対象外, 1 = 対象）
 float SampleMask(float2 uv) {
     return gMaskTexture.SampleLevel(gSamplerPoint, saturate(uv), 0).r;
 }
 
+/// @brief マスクを膨張させた差分（対象のすぐ外側）に輪郭色を合成する
+/// @param input フルスクリーン VS の出力
+/// @return 出力色
 float4 main(VertexShaderOutput input) : SV_TARGET {
     float4 base = gTexture.Sample(gSampler, input.texcoord);
 

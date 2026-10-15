@@ -36,7 +36,7 @@ void Scene::DrawLightGizmos(uint32_t selectedEntityId) {
       float arrowLen = 3.0f;
       float spread  = 1.0f; // 矢印の間隔
 
-      // direction に直交するベクトルを2本作る
+      // direction に直交するベクトルを 2 本作る
       RC::Vector3 up = {0.0f, 1.0f, 0.0f};
       float dot = d.x * up.x + d.y * up.y + d.z * up.z;
       if (std::abs(dot) > 0.99f) up = {1.0f, 0.0f, 0.0f};
@@ -55,7 +55,7 @@ void Scene::DrawLightGizmos(uint32_t selectedEntityId) {
         right.x * d.y - right.y * d.x
       };
 
-      // 中央 + 上下左右の5本の平行矢印
+      // 中央 + 上下左右の 5 本の平行矢印
       float offsets[][2] = {{0,0}, {1,0}, {-1,0}, {0,1}, {0,-1}};
       for (auto& off : offsets) {
         RC::Vector3 origin = {
@@ -70,7 +70,7 @@ void Scene::DrawLightGizmos(uint32_t selectedEntityId) {
         };
         RC::DrawLine3D(origin, tip, dirLight->color, true);
 
-        // 矢じり（先端から斜め2本）
+        // 矢じり（先端から斜め 2 本）
         float headLen = 0.5f;
         RC::Vector3 back = {-d.x, -d.y, -d.z};
         RC::Vector3 h1 = {
@@ -89,7 +89,7 @@ void Scene::DrawLightGizmos(uint32_t selectedEntityId) {
     }
 
     // ==========================================================
-    // Point Light — 3軸リング球
+    // Point Light — 3 軸リング球
     // ==========================================================
     if (auto* ptLight = e->GetComponent<PointLightComponent>()) {
       if (!ptLight->visible) continue;
@@ -144,7 +144,7 @@ void Scene::DrawLightGizmos(uint32_t selectedEntityId) {
         right.x * d.y - right.y * d.x
       };
 
-      // 底面円 + 4本の側面線
+      // 底面円 + 4 本の側面線
       constexpr int kSeg = 24;
       constexpr float kPi2 = 6.2831853f;
       RC::Vector4 coneColor = {spLight->color.x, spLight->color.y, spLight->color.z, 0.5f};
@@ -164,7 +164,7 @@ void Scene::DrawLightGizmos(uint32_t selectedEntityId) {
         if (i > 0) {
           RC::DrawLine3D(prevPt, pt, coneColor, true);
         }
-        // 4本の側面線（0°, 90°, 180°, 270°）
+        // 4 本の側面線（0°, 90°, 180°, 270°）
         if (i % (kSeg / 4) == 0 && i < kSeg) {
           RC::DrawLine3D(spotPos, pt, spLight->color, true);
         }
@@ -180,7 +180,7 @@ void Scene::DrawLightGizmos(uint32_t selectedEntityId) {
 
       float hw = arLight->halfWidth;
       float hh = arLight->halfHeight;
-      float hr = arLight->range * 0.5f; // rangeの半分をZ方向に
+      float hr = arLight->range * 0.5f; // range の半分を Z 方向に
 
       // AABB（ライトの照射ボリューム）
       RC::Vector3 mn = {pos.x - hw, pos.y - hh, pos.z - hr};
@@ -272,8 +272,8 @@ namespace {
 
 /// @brief コライダーのワールド空間での形状（AABB / 球）
 struct ColliderVolume {
-    bool isSphere = false;
-    RC::Vector3 center{0.0f, 0.0f, 0.0f};
+    bool isSphere = false;              ///< 球なら true、AABB なら false
+    RC::Vector3 center{0.0f, 0.0f, 0.0f}; ///< ワールド空間での中心
     RC::Vector3 half{0.0f, 0.0f, 0.0f}; ///< AABB の半サイズ
     float radius = 0.0f;                ///< 球の半径
 };
@@ -316,9 +316,9 @@ bool BuildColliderVolume(Entity* e, const RC::Vector3& overridePos, float shrink
     return true;
 }
 
-/// @brief 2つの形状が重なっているか判定する
-/// @param a 判定する形状1
-/// @param b 判定する形状2
+/// @brief 2 つの形状が重なっているか判定する
+/// @param a 判定する形状 1
+/// @param b 判定する形状 2
 /// @return 重なっていれば true
 bool VolumesOverlap(const ColliderVolume& a, const ColliderVolume& b) {
     if (!a.isSphere && !b.isSphere) {
@@ -418,7 +418,7 @@ RC::Vector3 Scene::MoveWithCollision(Entity* self, const RC::Vector3& delta, flo
 
     // --- 移動量を maxStep 以下に分割する（トンネリング対策の本体）---
     // 分割数 = 最大成分 / maxStep。deltaTime のスパイクで delta が大きくなっても
-    // 1回の判定で進む距離は必ず maxStep 以下に保たれるため、薄い壁も飛び越えない。
+    // 1 回の判定で進む距離は必ず maxStep 以下に保たれるため、薄い壁も飛び越えない。
     const float maxComponent = (std::max)((std::max)(std::abs(delta.x), std::abs(delta.y)),
                                           std::abs(delta.z));
     if (maxComponent <= 0.0f) return moved;
@@ -610,7 +610,7 @@ void Scene::ResolveCollisions() {
         auto* rb1 = c1->rb;
         auto* nsc1 = c1->nsc;
 
-        // 物理押し出しを行わず、OnCollisionコールバックを受け取るスクリプトも無く、
+        // 物理押し出しを行わず、OnCollision コールバックを受け取るスクリプトも無く、
         // コライダーデバッグ表示も無効なペア（壁 vs 壁 など）は何も起きないので最初に弾く。
         // （isKinematic は実行中に変わり得るので、下で改めて判定する。ここは粗い前振り分け）
         if (!c1->interesting && !c2->interesting && !showColliderGizmos_) {
@@ -632,7 +632,7 @@ void Scene::ResolveCollisions() {
 
         auto* nsc2 = c2->nsc;
 
-        // 物理押し出しを行わず、OnCollisionコールバックを受け取るスクリプトも無く、
+        // 物理押し出しを行わず、OnCollision コールバックを受け取るスクリプトも無く、
         // コライダーデバッグ表示も無効なペアは幾何判定を行わずに早期スキップ
         if (!isDynamic1 && !isDynamic2 && !nsc1 && !nsc2 && !showColliderGizmos_) {
             continue;
@@ -713,7 +713,7 @@ void Scene::ResolveCollisions() {
                 RC::DrawSphereRings3D(result.contactPoint, 0.5f, {1.0f, 0.0f, 0.0f, 1.0f}, 8, false);
             }
 
-            // Triggerの場合は物理的な押し出しを行わない
+            // Trigger の場合は物理的な押し出しを行わない
             if (col1->isTrigger || col2->isTrigger) continue;
 
             // 両方とも動かない場合は物理解決をスキップ

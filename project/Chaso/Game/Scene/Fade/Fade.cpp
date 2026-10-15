@@ -8,10 +8,10 @@ void Fade::Init(SceneContext &ctx, float width, float height) {
   width_ = width;
   height_ = height;
 
-  // 既に作ってたら一旦破棄
+  // 既に作っていたら一旦破棄する（Init の再呼び出しに備える）
   Term();
 
-  // RenderCommon 管理の Sprite を使う（白1x1を黒に乗算してフェード）
+  // RenderCommon 管理の Sprite を使う（白 1x1 を黒に乗算してフェード）
   fadeSpriteHandle_ = RC::LoadSprite("Resources/white1x1.png", ctx, true);
   if (fadeSpriteHandle_ < 0) {
     status_ = Status::None;
@@ -103,12 +103,12 @@ void Fade::Update() {
 }
 
 void Fade::Draw(ID3D12GraphicsCommandList *cl) {
-  (void)cl; // 互換のため残してるだけ
+  (void)cl; // 互換のため残しているだけ
 
   if (fadeSpriteHandle_ < 0)
     return;
 
-  // ※ PreDraw2D が呼ばれて gCL がセットされてる前提
+  // ※ PreDraw2D が呼ばれて gCL がセットされている前提
   RC::DrawSprite(fadeSpriteHandle_);
 }
 

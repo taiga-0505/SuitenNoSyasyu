@@ -6,7 +6,7 @@
 // startColor → endColor のカラー遷移、alpha 減衰を行う。
 // 寿命切れパーティクルは FreeList に返却する。
 //
-// u0 : gParticles      — パーティクルデータ (RWStructuredBuffer)
+// u0 : gParticles      — パーティクルデータ（RWStructuredBuffer）
 // u1 : gFreeListIndex  — FreeList の現在のインデックス
 // u2 : gFreeList       — 空きパーティクルインデックスの配列
 // b0 : gPerFrame       — エミッタパラメータ
@@ -14,51 +14,51 @@
 
 struct Particle
 {
-    float3 translate;
-    float pad0;
-    float3 scale;
-    float lifeTime;
-    float3 velocity;
-    float currentTime;
-    float4 color;
+    float3 translate;   ///< 位置
+    float pad0;         ///< パディング（16 bytes アラインメント）
+    float3 scale;       ///< スケール（0 なら描画時に棄却される）
+    float lifeTime;     ///< 寿命（秒）
+    float3 velocity;    ///< 速度（1 フレームあたりの移動量）
+    float currentTime;  ///< 経過時間（秒）
+    float4 color;       ///< 色（RGBA。alpha が 0 なら死んでいる扱い）
 };
 
 cbuffer PerFrame : register(b0)
 {
-    // 基本パラメータ (16 bytes)
-    float gDeltaTime;
-    uint gMaxParticles;
-    float gMinLifeTime;
-    float gMaxLifeTime;
+    // 基本パラメータ（16 bytes）
+    float gDeltaTime;        ///< フレーム間隔（秒）
+    uint gMaxParticles;      ///< 最大パーティクル数
+    float gMinLifeTime;      ///< 最小寿命（秒）
+    float gMaxLifeTime;      ///< 最大寿命（秒）
 
-    // スケール (16 bytes)
-    float gMinScale;
-    float gMaxScale;
-    float gGravity;
-    uint gEmitterShape;
+    // スケール（16 bytes）
+    float gMinScale;         ///< 最小スケール
+    float gMaxScale;         ///< 最大スケール
+    float gGravity;          ///< 重力の強さ（下方向が正）
+    uint gEmitterShape;      ///< エミッタ形状（0: Point, 1: Sphere, 2: Box, 3: Cone）
 
-    // 速度 (16 bytes)
-    float3 gBaseVelocity;
-    float gVelocityVariance;
+    // 速度（16 bytes）
+    float3 gBaseVelocity;    ///< 基本速度（1 フレームあたりの移動量）
+    float gVelocityVariance; ///< 速度のランダム分散
 
-    // 形状パラメータ (16 bytes)
-    float gShapeRadius;
-    float gConeAngle;
-    float2 gShapePad;
+    // 形状パラメータ（16 bytes）
+    float gShapeRadius;      ///< Sphere / Cone の半径
+    float gConeAngle;        ///< Cone の半角（rad）
+    float2 gShapePad;        ///< パディング
 
-    // 開始色 (16 bytes)
-    float4 gStartColor;
+    // 開始色（16 bytes）
+    float4 gStartColor;      ///< 開始色（RGBA）
 
-    // 終了色 (16 bytes)
-    float4 gEndColor;
+    // 終了色（16 bytes）
+    float4 gEndColor;        ///< 終了色（RGBA）
 
-    // エミッタ位置 (16 bytes)
-    float3 gEmitterPosition;
-    uint gEmitCount;
+    // エミッタ位置（16 bytes）
+    float3 gEmitterPosition; ///< エミッタのワールド座標
+    uint gEmitCount;         ///< 1 フレームの射出数
 
-    // Box形状サイズ (16 bytes)
-    float3 gShapeBoxSize;
-    float gShapeBoxPad;
+    // Box 形状サイズ（16 bytes）
+    float3 gShapeBoxSize;    ///< Box 形状のサイズ（全長 xyz）
+    float gShapeBoxPad;      ///< パディング
 };
 
 
@@ -67,6 +67,8 @@ RWStructuredBuffer<Particle> gParticles     : register(u0);
 RWStructuredBuffer<int>      gFreeListIndex : register(u1);
 RWStructuredBuffer<uint>     gFreeList      : register(u2);
 
+/// @brief エントリポイント。1 スレッドが 1 パーティクルを更新する
+/// @param DTid ディスパッチスレッド ID（x がパーティクル番号）
 [numthreads(1024, 1, 1)]
 void main(uint3 DTid : SV_DispatchThreadID)
 {
@@ -91,7 +93,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
     // 経過時間の更新
     gParticles[particleIndex].currentTime += gDeltaTime;
 
-    // 寿命の進行度 (0.0 ~ 1.0)
+    // 寿命の進行度（0.0〜1.0）
     float lifeRatio = saturate(gParticles[particleIndex].currentTime / gParticles[particleIndex].lifeTime);
 
     // startColor → endColor のカラー遷移 + alpha 減衰

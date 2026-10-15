@@ -32,8 +32,10 @@ cbuffer BloomParams : register(b0) {
     float knee;       ///< 閾値付近の柔らかさ（0 でスパッと切る）
 };
 
+/// @struct PixelShaderOutPut
+/// @brief ピクセル出力
 struct PixelShaderOutPut {
-    float4 color : SV_TARGET0;
+    float4 color : SV_TARGET0; ///< 出力色
 };
 
 // 2 リング分のサンプル方向（8 方向 × 2 半径）。円周を 45 度刻みで取る
@@ -44,11 +46,16 @@ static const float2 kRing[8] = {
     float2( 0.0f, -1.0f), float2( 0.7071f, -0.7071f)
 };
 
+/// @brief BT.709 の係数で輝度を求める
+/// @param color リニア RGB
+/// @return 輝度
 float Luma(float3 color) {
     return dot(color, float3(0.2125f, 0.7154f, 0.0721f));
 }
 
 /// @brief 明部だけを取り出す（soft knee 付き）
+/// @param color リニア RGB
+/// @return 閾値に応じて重み付けした色（暗部は 0）
 float3 BrightPass(float3 color) {
     const float luma = Luma(color);
     // knee = 0 なら threshold でスパッと、knee を上げると threshold 手前から緩やかに出る
@@ -57,6 +64,9 @@ float3 BrightPass(float3 color) {
     return color * weight;
 }
 
+/// @brief 周囲の明部をにじませて元の色に加算する
+/// @param input フルスクリーン VS の出力
+/// @return 出力色
 PixelShaderOutPut main(VertexShaderOutput input) {
     PixelShaderOutPut output;
 

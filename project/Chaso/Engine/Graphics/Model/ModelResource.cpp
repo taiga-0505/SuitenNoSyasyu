@@ -22,7 +22,7 @@ ModelResource::~ModelResource() {
 void ModelResource::Initialize(ID3D12Device *device) {
   device_ = device;
 
-  // Material CB
+  // マテリアル CB
   cbMat_.dyn.Ptr()->color = {1, 1, 1, 1};
   cbMat_.dyn.Ptr()->lightingMode = 2; // 既定 HalfLambert
   cbMat_.dyn.Ptr()->uvTransform = MakeIdentity4x4();
@@ -31,7 +31,7 @@ void ModelResource::Initialize(ID3D12Device *device) {
   cbMat_.dyn.Ptr()->environmentCoefficient = 0.0f; // 通常モデル: 映り込みなし / Glass: IOR（0ならPS側で1.5扱い）
   cbMat_.dyn.Ptr()->useNormalMap = 0;
   cbMat_.dyn.Ptr()->useRoughnessMap = 0;
-  cbMat_.dyn.Ptr()->padding[0] = 0.0f;                // Glass: roughness
+  cbMat_.dyn.Ptr()->padding[0] = 0.0f;                // Glass: 粗さ（roughness）
 
   // Light CB（各Objectが自前で持つ）
   cbLight_.dyn.Ptr()->color = {1, 1, 1, 1};
@@ -124,7 +124,7 @@ ModelResource::GetSrvForMaterial_(uint32_t materialIndex) const {
     return materialSrvs_[materialIndex];
   }
 
-  // fallback：先頭の有効SRV
+  // 見つからなければ先頭の有効 SRV で代用する
   for (const auto &h : materialSrvs_) {
     if (h.ptr != 0)
       return h;
@@ -191,7 +191,7 @@ void ModelResource::Draw(ID3D12GraphicsCommandList *cmdList,
 
     cmdList->SetGraphicsRootConstantBufferView(1, addr);
 
-    // texture
+    // テクスチャ（override 優先）
     const D3D12_GPU_DESCRIPTOR_HANDLE mainSrv =
         (textureSrv_.ptr != 0) ? textureSrv_ : GetSrvForMaterial_(0);
     cmdList->SetGraphicsRootDescriptorTable(2, mainSrv);
@@ -541,13 +541,13 @@ void ModelResource::DrawSkinned(ID3D12GraphicsCommandList *cmdList,
     cmdList->IASetIndexBuffer(&mesh_->IBV());
   }
 
-  // Material CB (PS b0)
+  // マテリアル CB（PS b0）
   cbMat_.dyn.Ptr()->useNormalMap = (normalMapSrv_.ptr != 0) ? 1 : 0;
   cbMat_.dyn.Ptr()->useRoughnessMap = (roughnessMapSrv_.ptr != 0) ? 1 : 0;
   cmdList->SetGraphicsRootConstantBufferView(
       Object3DRootParam::kMaterial, cbMat_.dyn.Address());
 
-  // Light CB (PS b1)
+  // ライト CB（PS b1）
   const D3D12_GPU_VIRTUAL_ADDRESS lightAddr =
       (externalLightCBAddress_ != 0)
           ? externalLightCBAddress_
@@ -753,13 +753,13 @@ void ModelResource::DrawSkinnedCS(ID3D12GraphicsCommandList *cmdList,
     cmdList->IASetIndexBuffer(&mesh_->IBV());
   }
 
-  // Material CB (slot 0, PS)
+  // マテリアル CB（スロット 0, PS）
   cbMat_.dyn.Ptr()->useNormalMap = (normalMapSrv_.ptr != 0) ? 1 : 0;
   cbMat_.dyn.Ptr()->useRoughnessMap = (roughnessMapSrv_.ptr != 0) ? 1 : 0;
   cmdList->SetGraphicsRootConstantBufferView(
       0, cbMat_.dyn.Address());
 
-  // Transform CB (slot 1, VS)
+  // トランスフォーム CB（スロット 1, VS）
   void *dst = nullptr;
   D3D12_GPU_VIRTUAL_ADDRESS addr =
       frame.AllocCB(sizeof(TransformationMatrix), &dst);
@@ -772,7 +772,7 @@ void ModelResource::DrawSkinnedCS(ID3D12GraphicsCommandList *cmdList,
   }
   cmdList->SetGraphicsRootConstantBufferView(1, addr);
 
-  // Light CB (slot 3, PS)
+  // ライト CB（スロット 3, PS）
   const D3D12_GPU_VIRTUAL_ADDRESS lightAddr =
       (externalLightCBAddress_ != 0)
           ? externalLightCBAddress_

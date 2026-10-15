@@ -1,102 +1,115 @@
 // ============================================================================
 // Object3D_WaterBall.PS.hlsl
 // ----------------------------------------------------------------------------
-// Water ball pixel shader for water bullets / splash particles.
-// Features:
-//   - Procedural noise-based surface distortion (no time needed, uses worldPos)
-//   - Fresnel reflection (bright edges like real water)
-//   - Environment map reflection
-//   - Subsurface scattering approximation (light passes through water)
-//   - Premultiplied alpha output for proper transparency compositing
+// 水弾・水しぶきパーティクル用の水球ピクセルシェーダー。
+// 特徴:
+//   - ワールド座標から作るプロシージャルノイズで表面を揺らす（時間は使わない）
+//   - フレネル反射（本物の水のように縁が明るい）
+//   - 環境マップの映り込み
+//   - 表面下散乱の近似（光が水を透けて見える）
+//   - 半透明を正しく重ねるため、プレマルチプライド済みのアルファで出力する
+//
+// PSO は object3d_water（BACK カリング）/ object3d_water_front（FRONT カリング）と、
+// それぞれのインスタンシング版（_inst）。深度書き込み OFF。
+// 点・スポットライトの影（シャドウアトラス）と面光源はこのシェーダーでは使わない。
 // ============================================================================
 
 #include "Object3d.hlsli"
 
-// ---------- Constant Buffers (same layout as Object3D / Glass) ----------
+// ---------- 定数バッファ（Object3D / Glass と同じ並び） ----------
 
+/// @brief マテリアル定数（b0）
 struct Material
 {
-    float4 color;
-    int lightingMode;
-    float shininess;
-    float environmentCoefficient;
-    float padding;
-    float4x4 uvTransform;
+    float4 color;                 ///< 水の色味（rgb）と不透明度（a）
+    int lightingMode;             ///< 未使用（常に Half-Lambert 相当）
+    float shininess;              ///< スペキュラ指数（512 未満なら 512 に引き上げる）
+    float environmentCoefficient; ///< 未使用
+    float padding;                ///< パディング
+    float4x4 uvTransform;         ///< UV 変換
 };
 ConstantBuffer<Material> gMaterial : register(b0);
 
+/// @brief 平行光源と環境光（b1）
 struct DirectionalLight
 {
-    float4 color;
-    float3 direction;
-    float intensity;
-    float3 ambientColor;    // 環境光の色
-    float ambientIntensity; // 環境光の強さ（0 で環境光なし）
+    float4 color;           ///< 光の色
+    float3 direction;       ///< 光の進む向き
+    float intensity;        ///< 強度
+    float3 ambientColor;    ///< 環境光の色
+    float ambientIntensity; ///< 環境光の強さ（0 で環境光なし）
 };
 ConstantBuffer<DirectionalLight> gDirectionalLight : register(b1);
 
+/// @brief カメラ情報（b2）
 struct Camera
 {
-    float3 worldPosition;
+    float3 worldPosition; ///< カメラのワールド座標
 };
 ConstantBuffer<Camera> gCamera : register(b2);
 
+/// @brief 点光源 1 灯ぶんのパラメータ（末尾の shadowIndex は使わないので padding として読む）
 struct PointLight
 {
-    float4 color;
-    float3 position;
-    float intensity;
-    float radius;
-    float decay;
-    float2 padding;
+    float4 color;     ///< 光の色
+    float3 position;  ///< 光の位置
+    float intensity;  ///< 強度
+    float radius;     ///< 届く距離（0 以下なら無効）
+    float decay;      ///< 減衰（指数）
+    float2 padding;   ///< パディング
 };
-static const uint MAX_POINT_LIGHTS = 256;
+static const uint MAX_POINT_LIGHTS = 256; ///< 点光源の最大数
+/// @brief 点光源の配列（b3）
 cbuffer PointLightsCB : register(b3)
 {
-    uint pointCount;
-    float3 _padPoint;
-    PointLight pointLights[MAX_POINT_LIGHTS];
+    uint pointCount;                          ///< 有効な点光源の数
+    float3 _padPoint;                         ///< パディング
+    PointLight pointLights[MAX_POINT_LIGHTS]; ///< 点光源
 };
 
+/// @brief スポットライト 1 灯ぶんのパラメータ（末尾の shadowIndex は使わないので padding として読む）
 struct SpotLight
 {
-    float4 color;
-    float3 position;
-    float intensity;
-    float3 direction;
-    float distance;
-    float decay;
-    float cosAngle;
-    float2 padding;
+    float4 color;     ///< 光の色
+    float3 position;  ///< 光の位置
+    float intensity;  ///< 強度
+    float3 direction; ///< 照射方向
+    float distance;   ///< 届く距離（0 以下なら無効）
+    float decay;      ///< 減衰（指数）
+    float cosAngle;   ///< 照射範囲の境界角の cos（これより外側は 0）
+    float2 padding;   ///< パディング
 };
-static const uint MAX_SPOT_LIGHTS = 256;
+static const uint MAX_SPOT_LIGHTS = 256; ///< スポットライトの最大数
+/// @brief スポットライトの配列（b4）
 cbuffer SpotLightsCB : register(b4)
 {
-    uint spotCount;
-    float3 _padSpot;
-    SpotLight spotLights[MAX_SPOT_LIGHTS];
+    uint spotCount;                        ///< 有効なスポットライトの数
+    float3 _padSpot;                       ///< パディング
+    SpotLight spotLights[MAX_SPOT_LIGHTS]; ///< スポットライト
 };
 
+/// @brief 面光源 1 灯ぶんのパラメータ（並びを合わせるために宣言だけしている）
 struct AreaLight
 {
-    float4 color;
-    float3 position;
-    float intensity;
-    float3 right;
-    float halfWidth;
-    float3 up;
-    float halfHeight;
-    float range;
-    float decay;
-    uint twoSided;
-    uint pad;
+    float4 color;     ///< 光の色
+    float3 position;  ///< 面の中心位置
+    float intensity;  ///< 強度
+    float3 right;     ///< 面の右方向
+    float halfWidth;  ///< 右方向の半幅
+    float3 up;        ///< 面の上方向
+    float halfHeight; ///< 上方向の半高
+    float range;      ///< 影響距離
+    float decay;      ///< 減衰（指数）
+    uint twoSided;    ///< 1 なら両面
+    uint pad;         ///< パディング
 };
-static const uint MAX_AREA_LIGHTS = 256;
+static const uint MAX_AREA_LIGHTS = 256; ///< 面光源の最大数
+/// @brief 面光源の配列（b5。このシェーダーでは未使用）
 cbuffer AreaLightsCB : register(b5)
 {
-    uint areaCount;
-    float3 _padArea;
-    AreaLight areaLights[MAX_AREA_LIGHTS];
+    uint areaCount;                        ///< 有効な面光源の数
+    float3 _padArea;                       ///< パディング
+    AreaLight areaLights[MAX_AREA_LIGHTS]; ///< 面光源
 };
 
 Texture2D<float4> gTexture : register(t0);
@@ -105,14 +118,16 @@ SamplerState gSampler : register(s0);
 
 struct PixelShaderOutput
 {
-    float4 color : SV_TARGET0;
+    float4 color : SV_TARGET0; ///< 出力色（プレマルチプライド済み）
 };
 
 // ==========================================================================
-// Utility functions
+// ユーティリティ関数
 // ==========================================================================
 
-// Simple hash-based pseudo-random (deterministic, no time needed)
+/// @brief ハッシュによる簡易な疑似乱数（決定的で、時間は使わない）
+/// @param p 入力座標
+/// @return 0〜1 の乱数
 float hash31(float3 p)
 {
     p = frac(p * 0.1031);
@@ -120,12 +135,14 @@ float hash31(float3 p)
     return frac((p.x + p.y) * p.z);
 }
 
-// 3D value noise
+/// @brief 3D バリューノイズ
+/// @param p サンプル位置
+/// @return 0〜1 のノイズ値
 float noise3D(float3 p)
 {
     float3 i = floor(p);
     float3 f = frac(p);
-    f = f * f * (3.0 - 2.0 * f); // smoothstep
+    f = f * f * (3.0 - 2.0 * f); // smoothstep 補間
 
     float n000 = hash31(i + float3(0, 0, 0));
     float n100 = hash31(i + float3(1, 0, 0));
@@ -147,7 +164,9 @@ float noise3D(float3 p)
     return lerp(nxy0, nxy1, f.z);
 }
 
-// Fractional Brownian Motion (3 octaves) for surface detail
+/// @brief 表面の細部用の fBm（Fractional Brownian Motion、3 オクターブ）
+/// @param p サンプル位置
+/// @return ノイズ値（おおよそ 0〜0.875）
 float fbm3(float3 p)
 {
     float val = 0.0;
@@ -162,7 +181,10 @@ float fbm3(float3 p)
     return val;
 }
 
-// Schlick Fresnel
+/// @brief Schlick 近似のフレネル反射率
+/// @param cosTheta 法線と視線の内積
+/// @param F0       正面から見たときの反射率
+/// @return 反射率（0〜1）
 float FresnelSchlick(float cosTheta, float F0)
 {
     float x = 1.0 - saturate(cosTheta);
@@ -172,14 +194,17 @@ float FresnelSchlick(float cosTheta, float F0)
 }
 
 // ==========================================================================
-// Main
+// エントリポイント
 // ==========================================================================
 
+/// @brief 水球の色・反射・透明度を合成して出力する
+/// @param input 頂点シェーダーからの補間値
+/// @return 出力色（プレマルチプライド済み）
 PixelShaderOutput main(VertexShaderOutput input)
 {
     PixelShaderOutput output;
 
-    // UV
+    // UV 変換＆テクスチャサンプル
     float4 uv = mul(float4(input.texcoord, 0.0, 1.0), gMaterial.uvTransform);
     float4 tex = gTexture.Sample(gSampler, uv.xy);
     float4 base = gMaterial.color * tex * input.instColor;
@@ -188,41 +213,41 @@ PixelShaderOutput main(VertexShaderOutput input)
         discard;
 
     // ==================
-    // Water color tint
+    // 水の色
     // ==================
-    // Override base color with a rich water blue-cyan palette
-    float3 waterDeep   = float3(0.02, 0.15, 0.45);  // Deep ocean blue
-    float3 waterBright = float3(0.15, 0.55, 0.95);   // Bright water surface
-    float3 waterFoam   = float3(0.6, 0.85, 1.0);     // Foam/highlight color
+    // ベース色を、深みのある青〜シアンの水の配色で置き換える
+    float3 waterDeep   = float3(0.02, 0.15, 0.45);  // 深い海の青
+    float3 waterBright = float3(0.15, 0.55, 0.95);   // 明るい水面
+    float3 waterFoam   = float3(0.6, 0.85, 1.0);     // 泡・ハイライトの色
 
-    // Use world position for procedural noise pattern
+    // ワールド座標でプロシージャルノイズの模様を作る
     float3 wp = input.worldPosition;
-    float noiseVal = fbm3(wp * 8.0); // High frequency detail
+    float noiseVal = fbm3(wp * 8.0); // 高周波の細部
 
-    // Mix between deep and bright water based on noise
+    // ノイズに応じて深い水と明るい水を混ぜる
     float3 waterColor = lerp(waterDeep, waterBright, noiseVal);
 
-    // Add subtle foam-like highlights at peaks
+    // ノイズの山に、泡のような淡いハイライトを足す
     float foamMask = smoothstep(0.55, 0.75, noiseVal);
     waterColor = lerp(waterColor, waterFoam, foamMask * 0.4);
 
-    // Apply material tint (user can shift color via material.color)
-    waterColor *= base.rgb * 2.5; // Boost to compensate for dark base
+    // マテリアルの色味を掛ける（material.color で色を寄せられる）
+    waterColor *= base.rgb * 2.5; // 暗めのベース色を補うため持ち上げる
 
     // ==================
-    // Vectors
+    // ベクトル
     // ==================
     float3 N = normalize(input.normal);
     float3 V = normalize(gCamera.worldPosition - input.worldPosition);
 
-    // Perturb normal with noise for ripple effect
+    // さざ波に見せるため、ノイズの勾配で法線を揺らす
     float eps = 0.02;
     float nx = fbm3((wp + float3(eps, 0, 0)) * 8.0) - fbm3((wp - float3(eps, 0, 0)) * 8.0);
     float ny = fbm3((wp + float3(0, eps, 0)) * 8.0) - fbm3((wp - float3(0, eps, 0)) * 8.0);
     float nz = fbm3((wp + float3(0, 0, eps)) * 8.0) - fbm3((wp - float3(0, 0, eps)) * 8.0);
     float3 noiseNormal = normalize(float3(nx, ny, nz));
 
-    // Blend noise normal with geometry normal
+    // ノイズ法線を形状の法線に混ぜる
     N = normalize(N + noiseNormal * 0.35);
 
     if (dot(N, V) < 0.0)
@@ -231,23 +256,23 @@ PixelShaderOutput main(VertexShaderOutput input)
     float NdotV = saturate(dot(N, V));
 
     // ==================
-    // Fresnel (water IOR ~1.33)
+    // フレネル（水の IOR ≒ 1.33）
     // ==================
     float ior = 1.33;
     float f = (1.0 - ior) / (1.0 + ior);
-    float F0 = f * f; // ~0.02 for water
+    float F0 = f * f; // 水ならおよそ 0.02
     float fresnel = FresnelSchlick(NdotV, F0);
 
-    // Water is smooth: high shininess
+    // 水面はなめらかなので、スペキュラ指数を高くする
     float shininess = max(gMaterial.shininess, 512.0);
 
     // ==================
-    // Lighting
+    // ライティング
     // ==================
     float3 diffuseSum = 0.0;
     float3 specularSum = 0.0;
 
-    // Directional light
+    // 平行光源
     {
         float3 L = normalize(-gDirectionalLight.direction);
         float NdotL = dot(N, L);
@@ -265,7 +290,7 @@ PixelShaderOutput main(VertexShaderOutput input)
         }
     }
 
-    // Point lights
+    // 点光源
     [loop]
     for (uint i = 0; i < MAX_POINT_LIGHTS; ++i)
     {
@@ -299,7 +324,7 @@ PixelShaderOutput main(VertexShaderOutput input)
         }
     }
 
-    // Spot lights
+    // スポットライト
     [loop]
     for (uint j = 0; j < MAX_SPOT_LIGHTS; ++j)
     {
@@ -339,34 +364,35 @@ PixelShaderOutput main(VertexShaderOutput input)
     }
 
     // ==================
-    // Environment reflection
+    // 環境マップの映り込み
     // ==================
     float3 cameraToSurface = normalize(input.worldPosition - gCamera.worldPosition);
     float3 reflectedVec = reflect(cameraToSurface, N);
     float4 envColor = gEnvironmentTexture.Sample(gSampler, reflectedVec);
 
     // ==================
-    // Subsurface scattering approximation
+    // 表面下散乱の近似
     // ==================
+    // 光源が水の向こう側にある（逆光で見る）ときほど、光が透けて明るく見える
     float3 L_dir = normalize(-gDirectionalLight.direction);
     float sss = saturate(dot(V, -L_dir)) * 0.3;
     float3 subsurface = waterBright * gDirectionalLight.color.rgb * gDirectionalLight.intensity * sss;
 
     // ==================
-    // Composite
+    // 合成
     // ==================
-    // Reflection (Fresnel-weighted: edges reflect more)
+    // 反射（フレネルで重み付け。縁ほど強く映る）
     float3 reflection = specularSum * (0.3 + 2.5 * fresnel);
     reflection += envColor.rgb * fresnel * 0.8;
 
-    // Water opacity: semi-transparent, edges become more opaque (Fresnel)
+    // 水の不透明度: 半透明で、縁ほど不透明になる（フレネル）
     float opacity = saturate(base.a * 0.7 + fresnel * 0.5);
 
-    // Inner glow: subtle bright core
+    // 内側の光: 中心をほんのり明るくする
     float innerGlow = smoothstep(0.0, 0.6, NdotV) * 0.15;
     float3 glowColor = waterBright * innerGlow;
 
-    // Final color (premultiplied alpha)
+    // 最終色（プレマルチプライド済みアルファ。反射は不透明度で薄めない）
     float3 finalColor = diffuseSum + subsurface + glowColor;
     output.color.rgb = saturate(finalColor * opacity + reflection);
     output.color.a = opacity;

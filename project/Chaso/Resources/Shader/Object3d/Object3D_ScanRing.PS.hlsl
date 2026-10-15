@@ -19,40 +19,44 @@
 //   (object3d_scanring) 専用。ライティングもテクスチャも参照しない。
 // ============================================================================
 
+/// @brief マテリアル定数（b0）。エフェクト用に一部を流用する
 struct Material
 {
-    float4 color;                 // 発光色 (RGB) + 明度スケール (A)
-    int lightingMode;             // 未使用
-    float shininess;              // スキャン進捗 0..1 として流用
-    float environmentCoefficient; // 経過秒数として流用
-    int useNormalMap;             // 未使用
-    int useRoughnessMap;          // 未使用
-    float2 padding;
-    float4x4 uvTransform;         // 未使用（恒等行列のまま）
+    float4 color;                 ///< 発光色（RGB）＋ 明度スケール（A）
+    int lightingMode;             ///< 未使用
+    float shininess;              ///< スキャン進捗（0〜1）として流用
+    float environmentCoefficient; ///< 経過秒数として流用
+    int useNormalMap;             ///< 未使用
+    int useRoughnessMap;          ///< 未使用
+    float2 padding;               ///< パディング
+    float4x4 uvTransform;         ///< 未使用（恒等行列のまま）
 };
 
 ConstantBuffer<Material> gMaterial : register(b0);
 
 struct PixelShaderOutput
 {
-    float4 color : SV_TARGET0;
+    float4 color : SV_TARGET0; ///< 出力色（加算合成。rgb は発光色、a が強さ）
 };
 
 // 外周のグロー。アウトラインを引くようになったので、そちらに主役を譲るため
 // 「細く鋭い光」から「線の内側へ広くにじむ弱い光」に変えている。
-static const float kRimPower = 10.0f;      // 外周グローの広がり（小さいほど内側まで広がる）
-static const float kRimLevel = 0.5f;       // 外周グローの明るさ（アウトラインより暗くする）
-static const float kInnerRingPos = 0.17f;  // 内側の二重リング位置（半径比）
-static const float kDashCount = 24.0f;     // 円周方向の破線数
-static const float kSpokeCount = 8.0f;     // 放射スポーク数
-static const float kBandSpeed = 0.55f;     // 走査バンドが半径方向へ流れる速さ
-static const float kIdleLevel = 0.30f;     // 未点灯側（進捗より先の角度）の明るさ
+static const float kRimPower = 10.0f;      ///< 外周グローの広がり（小さいほど内側まで広がる）
+static const float kRimLevel = 0.5f;       ///< 外周グローの明るさ（アウトラインより暗くする）
+static const float kInnerRingPos = 0.17f;  ///< 内側の二重リング位置（半径比）
+static const float kDashCount = 24.0f;     ///< 円周方向の破線数
+static const float kSpokeCount = 8.0f;     ///< 放射スポーク数
+static const float kBandSpeed = 0.55f;     ///< 走査バンドが半径方向へ流れる速さ
+static const float kIdleLevel = 0.30f;     ///< 未点灯側（進捗より先の角度）の明るさ
 
-// 外周アウトライン（境界を示すキレのある1本線）
-static const float kOutlinePixels = 2.5f;  // 線の太さ（ピクセル）
-static const float kOutlineLevel = 1.0f;   // 線の明るさ（0〜1）
-static const float kOutlineMaxWidth = 0.15f; // radial 換算の太さ上限（真横から見たときの暴走防止）
+// 外周アウトライン（境界を示すキレのある 1 本線）
+static const float kOutlinePixels = 2.5f;  ///< 線の太さ（ピクセル）
+static const float kOutlineLevel = 1.0f;   ///< 線の明るさ（0〜1）
+static const float kOutlineMaxWidth = 0.15f; ///< radial 換算の太さ上限（真横から見たときの暴走防止）
 
+/// @brief 場所指定ホログラムのリングの発光を出力する
+/// @param input 頂点シェーダーからの補間値（texcoord だけを使う）
+/// @return 出力色
 PixelShaderOutput main(VertexShaderOutput input)
 {
     const float angle = frac(input.texcoord.x);       // 0..1 円周

@@ -36,17 +36,17 @@ void Skydome::Initialize(ID3D12Device *device, float radius, UINT sliceCount,
   UploadVB_();
   UploadIB_();
 
-  // CB: WVP
+  // 定数バッファ: WVP
   cbWvp_.dyn.Ptr()->WVP = MakeIdentity4x4();
   cbWvp_.dyn.Ptr()->World = MakeIdentity4x4();
   cbWvp_.dyn.Ptr()->worldInverseTranspose = MakeIdentity4x4();
 
-  // CB: Material
+  // 定数バッファ: マテリアル
   cbMat_.dyn.Ptr()->color = {1, 1, 1, 1};
   cbMat_.dyn.Ptr()->uvTransform = MakeIdentity4x4();
   cbMat_.dyn.Ptr()->lightingMode = 0; // 天球なので初期はライティング無効
 
-  // CB: Light（天球ごとに持つが一応残す）
+  // 定数バッファ: ライト（天球ごとに持つが一応残す）
   cbLight_.dyn.Ptr()->color = {1, 1, 1, 1};
   cbLight_.dyn.Ptr()->direction = {0.0f, -1.0f, 0.0f};
   cbLight_.dyn.Ptr()->intensity = 1.0f;
@@ -75,14 +75,14 @@ void Skydome::Draw(ID3D12GraphicsCommandList *cmdList) {
   cmdList->IASetIndexBuffer(&ib_.view);
   cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-  // RootParam: 0:Material, 1:WVP, 2:SRV, 3:Light
+  // ルートパラメータ: 0 = マテリアル、1 = WVP、2 = SRV、3 = ライト
   cmdList->SetGraphicsRootConstantBufferView(
       0, cbMat_.dyn.Address());
   cmdList->SetGraphicsRootConstantBufferView(
       1, cbWvp_.dyn.Address());
   cmdList->SetGraphicsRootDescriptorTable(2, textureSrv_);
 
-  // Light CB（b1）: 外部ライトが指定されていればそちらを使う
+  // ライト CB（b1）: 外部ライトが指定されていればそちらを使う
   const D3D12_GPU_VIRTUAL_ADDRESS lightAddr =
       (externalLightCBAddress_ != 0)
           ? externalLightCBAddress_

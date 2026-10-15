@@ -28,6 +28,15 @@ void UnloadFont(int fontHandle) {
 
 namespace {
 
+/// @brief デコード済みの文字列を "font" パイプラインで描画する（DrawString の共通処理）
+/// @param fontHandle  フォントハンドル
+/// @param text        UTF-32 の文字列
+/// @param pos         描画位置（スクリーン座標）
+/// @param color       文字色
+/// @param scale       拡大率
+/// @param align       揃え方
+/// @param lineSpacing 行間
+/// @note 未初期化・コマンドリスト無し・無効なハンドル・空文字列・PSO が無いときは何もしない。
 void DrawStringImpl_(int fontHandle, std::u32string_view text,
                      const Vector2 &pos, const Vector4 &color, float scale,
                      TextAlign align, float lineSpacing) {

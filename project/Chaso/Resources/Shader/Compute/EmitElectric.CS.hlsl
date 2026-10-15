@@ -1,15 +1,15 @@
 // ============================================================================
 // EmitElectric.CS.hlsl
 // ----------------------------------------------------------------------------
-// 電撃 (ParticleType::Electric) 用の射出 Compute Shader。
+// 電撃（ParticleType::Electric）用の射出 Compute Shader。
 // 「モデルの周りをビリビリと電流がまとう」演出を想定し、
 // エミッタ位置を中心とした殻（丸みのある箱 / 球。ElectricShell.hlsli 参照）の
 // 表面から少し外側にパーティクルを発生させ、表面に沿う方向（接線方向）へ初速を与える。
 //
-// Default (EmitParticle.CS) との違い:
+// Default（EmitParticle.CS）との違い:
 //   - 発生位置は体積の中ではなく「殻の表面 + マージン」。モデルの中に埋まって隠れない
 //   - 初速は殻の接線方向（法線に直交）。UpdateElectric がこの上を這わせる
-//   - pad0 にパーティクル固有の乱数 (0〜1) を書き込み、
+//   - pad0 にパーティクル固有の乱数（0〜1）を書き込み、
 //     浮かせる距離 / UpdateElectric のジッター位相 / ElectricParticle.PS の稲妻シードに使う
 //
 // u0 : gParticles      — パーティクルデータ
@@ -17,59 +17,59 @@
 // u2 : gFreeList       — 空きパーティクルインデックスの配列
 // b0 : gPerFrame       — エミッタパラメータ
 //
-// Dispatch(1, 1, 1) で emitCount スレッド（最大1024）実行。
+// Dispatch(1, 1, 1) で emitCount スレッド（最大 1024）実行。
 // ============================================================================
 
 struct Particle
 {
-    float3 translate;
-    float pad0;      ///< 電撃ではパーティクル固有の乱数 (0〜1) として使う
-    float3 scale;
-    float lifeTime;
-    float3 velocity;
-    float currentTime;
-    float4 color;
+    float3 translate;   ///< 位置
+    float pad0;         ///< 電撃ではパーティクル固有の乱数（0〜1）として使う
+    float3 scale;       ///< スケール（0 なら描画時に棄却される）
+    float lifeTime;     ///< 寿命（秒）
+    float3 velocity;    ///< 速度（1 フレームあたりの移動量）
+    float currentTime;  ///< 経過時間（秒）
+    float4 color;       ///< 色（RGBA。alpha が 0 なら死んでいる扱い）
 };
 
 cbuffer PerFrame : register(b0)
 {
-    // 基本パラメータ (16 bytes)
-    float gDeltaTime;
-    uint gMaxParticles;
-    float gMinLifeTime;
-    float gMaxLifeTime;
+    // 基本パラメータ（16 bytes）
+    float gDeltaTime;        ///< フレーム間隔（秒）
+    uint gMaxParticles;      ///< 最大パーティクル数
+    float gMinLifeTime;      ///< 最小寿命（秒）
+    float gMaxLifeTime;      ///< 最大寿命（秒）
 
-    // スケール (16 bytes)
-    float gMinScale;
-    float gMaxScale;
-    float gGravity;
-    uint gEmitterShape;
+    // スケール（16 bytes）
+    float gMinScale;         ///< 最小スケール
+    float gMaxScale;         ///< 最大スケール
+    float gGravity;          ///< 重力の強さ（電撃では参照しない）
+    uint gEmitterShape;      ///< エミッタ形状（2: Box なら箱の殻、それ以外は球の殻）
 
-    // 速度 (16 bytes)
-    float3 gBaseVelocity;
-    float gVelocityVariance;
+    // 速度（16 bytes）
+    float3 gBaseVelocity;    ///< 基本速度（電撃では長さだけを初速の速さとして使う）
+    float gVelocityVariance; ///< 速さのランダム分散
 
-    // 形状パラメータ (16 bytes)
+    // 形状パラメータ（16 bytes）
     // ※ 他タイプの gShapePad.xy に当たる 2 つを、電撃では殻の丸みとマージンに使う
-    float gShapeRadius;
-    float gConeAngle;
-    float gShellRoundness;
-    float gShellMargin;
+    float gShapeRadius;      ///< 球の殻の半径
+    float gConeAngle;        ///< Cone の半角（rad。電撃では参照しない）
+    float gShellRoundness;   ///< 殻の角の丸み（0〜1。0 で角のある箱、1 で最短辺いっぱいまで丸める）
+    float gShellMargin;      ///< 殻を表面から外側へ浮かせる距離（m）
 
-    // 開始色 (16 bytes)
-    float4 gStartColor;
+    // 開始色（16 bytes）
+    float4 gStartColor;      ///< 開始色（RGBA）
 
-    // 終了色 (16 bytes)
-    float4 gEndColor;
+    // 終了色（16 bytes）
+    float4 gEndColor;        ///< 終了色（RGBA）
 
-    // エミッタ位置 (16 bytes)
-    float3 gEmitterPosition;
-    uint gEmitCount;
+    // エミッタ位置（16 bytes）
+    float3 gEmitterPosition; ///< エミッタのワールド座標（殻の中心）
+    uint gEmitCount;         ///< 1 フレームの射出数
 
-    // Box形状サイズ (16 bytes)
+    // Box 形状サイズ（16 bytes）
     // ※ 他タイプの gShapeBoxPad に当たる 1 つを、電撃では殻の Y 軸回転に使う
-    float3 gShapeBoxSize;
-    float gShellYaw;
+    float3 gShapeBoxSize;    ///< Box の殻のサイズ（全長 xyz）
+    float gShellYaw;         ///< 殻の Y 軸回転（rad）
 };
 
 RWStructuredBuffer<Particle> gParticles     : register(u0);
@@ -78,6 +78,8 @@ RWStructuredBuffer<uint>     gFreeList      : register(u2);
 
 #include "ElectricShell.hlsli"
 
+/// @brief エントリポイント。1 スレッドが 1 パーティクルを射出する
+/// @param DTid ディスパッチスレッド ID（x が射出番号。gEmitCount 以上は何もしない）
 [numthreads(1024, 1, 1)]
 void main(uint3 DTid : SV_DispatchThreadID)
 {
@@ -86,7 +88,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
         return;
     }
 
-    // FreeList のインデックスを1つ前に設定し、現在のインデックスを取得
+    // FreeList のインデックスを 1 つ前に設定し、現在のインデックスを取得
     int freeListIndex;
     InterlockedAdd(gFreeListIndex[0], -1, freeListIndex);
 

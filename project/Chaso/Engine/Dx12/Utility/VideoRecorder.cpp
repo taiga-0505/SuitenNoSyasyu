@@ -42,7 +42,7 @@ bool VideoRecorder::Start(ID3D12Device* device, ID3D12CommandQueue* queue, UINT 
 
     if (!InitializeMF()) return false;
 
-    // Create directory
+    // 保存先フォルダを作成
     if (!std::filesystem::exists("../media")) {
         std::filesystem::create_directory("../media");
     }
@@ -66,7 +66,7 @@ bool VideoRecorder::Start(ID3D12Device* device, ID3D12CommandQueue* queue, UINT 
         return false;
     }
 
-    // Setup Readback buffers
+    // 読み戻し用バッファの準備
     D3D12_RESOURCE_DESC desc = {};
     desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
     desc.Alignment = 0;
@@ -79,7 +79,7 @@ bool VideoRecorder::Start(ID3D12Device* device, ID3D12CommandQueue* queue, UINT 
     desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
     desc.Flags = D3D12_RESOURCE_FLAG_NONE;
 
-    // Calculate footprint
+    // コピー時のレイアウト（フットプリント）を計算
     D3D12_RESOURCE_DESC texDesc = {};
     texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
     texDesc.Width = width;
@@ -150,7 +150,7 @@ bool VideoRecorder::SetupSinkWriter(const std::wstring& path, UINT width, UINT h
         return false;
     }
 
-    // Output media type
+    // 出力のメディアタイプ（H.264）
     Microsoft::WRL::ComPtr<IMFMediaType> mediaTypeOut;
     MFCreateMediaType(&mediaTypeOut);
     mediaTypeOut->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
@@ -167,11 +167,11 @@ bool VideoRecorder::SetupSinkWriter(const std::wstring& path, UINT width, UINT h
         return false;
     }
 
-    // Input media type
+    // 入力のメディアタイプ（ARGB32）
     Microsoft::WRL::ComPtr<IMFMediaType> mediaTypeIn;
     MFCreateMediaType(&mediaTypeIn);
     mediaTypeIn->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-    mediaTypeIn->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_ARGB32); // Expected as BGRA
+    mediaTypeIn->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_ARGB32); // メモリ上は BGRA の並びを期待する
     mediaTypeIn->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
     MFSetAttributeSize(mediaTypeIn.Get(), MF_MT_FRAME_SIZE, width, height);
     MFSetAttributeRatio(mediaTypeIn.Get(), MF_MT_FRAME_RATE, fps, 1);
@@ -235,12 +235,12 @@ void VideoRecorder::Update(ID3D12Resource* backBuffer) {
 
     auto& currentBuf = readbackBuffers_[currentBufferIndex_];
 
-    // Wait for the buffer if it's still in use
+    // バッファがまだ使用中なら、完了を待って書き出す
     if (currentBuf.inUse) {
         ProcessReadbackBuffer(currentBuf);
     }
 
-    // Record copy command
+    // コピーコマンドを記録
     // currentBuf のフェンスは上で待機済みなので、このアロケータの前回実行は完了している
     currentBuf.allocator->Reset();
     commandList_->Reset(currentBuf.allocator.Get(), nullptr);
@@ -317,7 +317,7 @@ void VideoRecorder::WriteFrame(const void* data, UINT rowPitch) {
     if (SUCCEEDED(hr)) {
         const BYTE* pSrc = static_cast<const BYTE*>(data);
         if (videoFormat_ == DXGI_FORMAT_R8G8B8A8_UNORM || videoFormat_ == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) {
-            // R8G8B8A8 (RGBA memory) -> ARGB32 (BGRA memory)
+            // R8G8B8A8（メモリ上は RGBA）→ ARGB32（メモリ上は BGRA）へ R と B を入れ替える
             for (UINT y = 0; y < videoHeight_; ++y) {
                 const UINT32* srcRow = reinterpret_cast<const UINT32*>(pSrc + y * rowPitch);
                 UINT32* dstRow = reinterpret_cast<UINT32*>(pData + y * cbWidth);
@@ -338,7 +338,7 @@ void VideoRecorder::WriteFrame(const void* data, UINT rowPitch) {
     hr = buffer->SetCurrentLength(cbBuffer);
     hr = sample->AddBuffer(buffer.Get());
 
-    LONGLONG rtTimestamp = (LONGLONG)frameCount_ * 10 * 1000 * 1000 / videoFps_; // 100ns units
+    LONGLONG rtTimestamp = (LONGLONG)frameCount_ * 10 * 1000 * 1000 / videoFps_; // 100ns 単位
     sample->SetSampleTime(rtTimestamp);
     sample->SetSampleDuration(10 * 1000 * 1000 / videoFps_);
 

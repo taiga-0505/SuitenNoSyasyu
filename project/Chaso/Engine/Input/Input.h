@@ -10,22 +10,27 @@ class Controller;
 
 /// @class Input
 /// @brief 全ての入力デバイス（キーボード、マウス、コントローラー）を統合管理するクラス
-/// @details DirectInput と XInput をラップし、各デバイスの状態更新とアクセスを提供します。
-/// 従来のフラットな API との互換性維持のためのメソッドも提供しています。
+/// @details DirectInput と XInput をラップし、各デバイスの状態更新とアクセスを提供する。
+///          従来のフラットな API との互換性維持のためのメソッドも提供している。
 class Input {
 public:
-    /// @brief 初期化
+    /// @brief DirectInput を初期化し、各デバイスを生成する
     /// @param hwnd ウィンドウハンドル
+    /// @note 生成したインスタンスを GetInstance() で取れるように登録する。
     Input(HWND hwnd);
+
+    /// @brief カーソルロックを解除し、インスタンスの登録を外す
     ~Input();
 
-    /// @brief 全てのデバイスの状態を更新する（毎フレーム呼び出す必要があります）
+    /// @brief 全てのデバイスの状態を更新する（毎フレーム呼び出す必要がある）
     void Update();
 
-    /// @brief Viewportがホバーされているか設定する
+    /// @brief Viewport がホバーされているかを設定する
+    /// @param hovered ホバーされていれば true
     void SetViewportHovered(bool hovered) { viewportHovered_ = hovered; }
 
-    /// @brief Viewportがホバーされているか取得する
+    /// @brief Viewport がホバーされているかを取得する
+    /// @return ホバーされていれば true
     bool IsViewportHovered() const { return viewportHovered_; }
 
     // デバイスへのアクセス
@@ -43,7 +48,7 @@ public:
     Controller* GetController() const { return controller_.get(); }
 
     // ============================
-    // キーボード入力 (互換性維持用)
+    // キーボード入力（互換性維持用）
     // ============================
 
     /// @brief 指定したキーが押されているか判定する
@@ -67,7 +72,7 @@ public:
     bool IsKeyRelease(uint8_t keyCode) const;
 
     // ============================
-    // マウス入力 (互換性維持用)
+    // マウス入力（互換性維持用）
     // ============================
 
     /// @brief マウスの X 軸移動量を取得する
@@ -83,7 +88,7 @@ public:
     LONG GetMouseZ() const;
 
     /// @brief マウスボタンが押されているか判定する
-    /// @param button ボタン番号 (0:左, 1:右, 2:中)
+    /// @param button ボタン番号（0: 左, 1: 右, 2: 中）
     /// @return 押されていれば true
     bool IsMousePressed(int button) const;
 
@@ -98,7 +103,7 @@ public:
     bool IsMouseRelease(int button) const;
 
     // ============================
-    // コントローラー入力 (互換性維持用)
+    // コントローラー入力（互換性維持用）
     // ============================
 
     /// @brief コントローラーが接続されているか確認する
@@ -121,48 +126,52 @@ public:
     bool IsXInputButtonRelease(WORD button) const;
 
     /// @brief 左スティックの X 軸入力を取得する
-    /// @return -32768 ～ 32767 の値
+    /// @return -32768〜32767 の値
     SHORT GetXInputThumbLX() const;
 
     /// @brief 左スティックの Y 軸入力を取得する
-    /// @return -32768 ～ 32767 の値
+    /// @return -32768〜32767 の値
     SHORT GetXInputThumbLY() const;
 
     /// @brief 右スティックの X 軸入力を取得する
-    /// @return -32768 ～ 32767 の値
+    /// @return -32768〜32767 の値
     SHORT GetXInputThumbRX() const;
 
     /// @brief 右スティックの Y 軸入力を取得する
-    /// @return -32768 ～ 32767 の値
+    /// @return -32768〜32767 の値
     SHORT GetXInputThumbRY() const;
 
     /// @brief 左トリガーの押し込み量を取得する
-    /// @return 0 ～ 255 の値
+    /// @return 0〜255 の値
     BYTE GetXInputLeftTrigger() const;
 
     /// @brief 右トリガーの押し込み量を取得する
-    /// @return 0 ～ 255 の値
+    /// @return 0〜255 の値
     BYTE GetXInputRightTrigger() const;
 
     /// @brief コントローラーの振動を設定する
-    /// @param leftMotor 左モーター強度 (0 ～ 65535)
-    /// @param rightMotor 右モーター強度 (0 ～ 65535)
+    /// @param leftMotor 左モーター強度（0〜65535）
+    /// @param rightMotor 右モーター強度（0〜65535）
     void SetXInputVibration(WORD leftMotor, WORD rightMotor);
 
     /// @brief コントローラーのデバッグ UI を表示する
     /// @param label ウィンドウラベル
     void ControllerImGui(const char* label = "コントローラー");
 
-    /// @brief Inputインスタンスを取得する（シングルトンアクセス用）
-    /// @return Input ポインタ
+    /// @brief Input インスタンスを取得する（シングルトンアクセス用）
+    /// @return Input ポインタ（未生成・破棄後は nullptr）
     static Input* GetInstance() { return instance_; }
 
     /// @brief ゲーム解像度基準のマウス座標を取得する
     /// @param outX 取得した X 座標
     /// @param outY 取得した Y 座標
+    /// @note SetGameMousePosition で上書きされていなければ、カーソルのクライアント座標を返す（取得失敗時は 0）。
     void GetGameMousePosition(float& outX, float& outY) const;
 
     /// @brief エディタ等からゲーム解像度基準のマウス座標を強制上書きする
+    /// @param x ゲーム解像度基準の X 座標
+    /// @param y ゲーム解像度基準の Y 座標
+    /// @note 一度呼ぶと以後は GetGameMousePosition がこの値を返し続ける。
     void SetGameMousePosition(float x, float y) {
         gameMouseX_ = x;
         gameMouseY_ = y;
@@ -183,12 +192,15 @@ public:
     void SetCursorLocked(bool locked);
 
     /// @brief カーソルがロック中か
+    /// @return ロック中なら true
     bool IsCursorLocked() const { return cursorLocked_; }
 
     /// @brief ロック中にカーソルを戻す位置をクライアント座標で指定する
     /// @details エディタでは Viewport 画像の中央を渡す。中央に戻しておけば ImGui 側で
     ///          Viewport がホバー状態のままになり、ゲームのクリック判定が通る。
     ///          指定が無ければウィンドウのクライアント領域の中央を使う。
+    /// @param x ロック中心の X（クライアント座標）
+    /// @param y ロック中心の Y（クライアント座標）
     void SetCursorLockCenter(float x, float y) {
         lockCenterX_ = x;
         lockCenterY_ = y;
@@ -203,7 +215,7 @@ private:
     void UpdateCursorLock();
 
     /// @brief ロック状態に合わせてカーソルの表示/非表示を切り替える
-    /// @details ShowCursor は表示カウンタなので、状態が変わったときに一度だけ増減する
+    /// @details ShowCursor は表示カウンタなので、状態が変わったときに一度だけ増減する。
     void ApplyCursorVisibility();
 
 private:
@@ -215,11 +227,11 @@ private:
     std::unique_ptr<Controller> controller_; ///< コントローラー
 
     HWND hwnd_ = nullptr;                    ///< ウィンドウハンドル
-    bool viewportHovered_ = false;           ///< Viewportウィンドウがホバーされているか
+    bool viewportHovered_ = false;           ///< Viewport ウィンドウがホバーされているか
 
-    float gameMouseX_ = 0.0f;
-    float gameMouseY_ = 0.0f;
-    bool isGameMousePosSet_ = false;
+    float gameMouseX_ = 0.0f;                ///< 上書きされたゲーム解像度基準のマウス X
+    float gameMouseY_ = 0.0f;                ///< 上書きされたゲーム解像度基準のマウス Y
+    bool isGameMousePosSet_ = false;         ///< SetGameMousePosition で上書き済みか
 
     bool cursorLocked_ = false;    ///< カーソルロック要求中か
     bool cursorHidden_ = false;    ///< ShowCursor(FALSE) を発行済みか（表示カウンタの二重操作防止）

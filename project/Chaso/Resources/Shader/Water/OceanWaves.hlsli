@@ -1,3 +1,4 @@
+// =============================================================================
 // OceanWaves.hlsli - 海面の「詳細波」（主波の上に重ねる短い波の群れ）
 //
 // 主波 3 本（Water.VS.hlsl の GetWaveDef）だけだと周期が見えて「プールの波」に見える。
@@ -16,31 +17,40 @@
 //
 // ★ CPU 側 RC::WaterSurface（Engine/Common/Water/WaterSurface.h）にも同じ表を持たせている。
 //   片方だけ変えると、見た目の水面と浮力の水面がずれるので必ず両方直すこと。
+// =============================================================================
 
 #ifndef OCEAN_WAVES_HLSLI
 #define OCEAN_WAVES_HLSLI
 
-static const int   kDetailWaveCount = 8;
-static const float kWindAngle       = 0.620249486; // atan2(0.5, 0.7) = 主波 0 の向き
-static const float kDetailAngle[kDetailWaveCount] = { -0.62, 0.47, -0.21, 0.83, 0.12, -0.97, 0.58, -0.41 };
-static const float kDetailRatio[kDetailWaveCount] = {  1.37, 1.79,  2.23, 2.71, 3.29,  3.97, 4.81,  5.83 };
-static const float kDetailPhase[kDetailWaveCount] = {  0.0,  1.7,   4.1,  2.3,  5.5,   0.9,  3.3,   6.0  };
-static const float kDetailAmpScale  = 0.35; // 主波の振幅に対する詳細波の振幅（1/ratio を掛ける前）
-static const float kDetailMaxSlope  = 0.10; // 1 本あたりの k*A の上限（波が尖りすぎてループしないように）
-static const float kTwoPi           = 6.28318530718;
+static const int   kDetailWaveCount = 8;           ///< 詳細波の本数
+static const float kWindAngle       = 0.620249486; ///< 風向き（rad）。atan2(0.5, 0.7) = 主波 0 の向き
+static const float kDetailAngle[kDetailWaveCount] = { -0.62, 0.47, -0.21, 0.83, 0.12, -0.97, 0.58, -0.41 }; ///< 風向きからの角度のずれ（rad）
+static const float kDetailRatio[kDetailWaveCount] = {  1.37, 1.79,  2.23, 2.71, 3.29,  3.97, 4.81,  5.83 }; ///< 主波に対する波数の比（非整数）
+static const float kDetailPhase[kDetailWaveCount] = {  0.0,  1.7,   4.1,  2.3,  5.5,   0.9,  3.3,   6.0  }; ///< 初期位相（rad）
+static const float kDetailAmpScale  = 0.35; ///< 主波の振幅に対する詳細波の振幅（1/ratio を掛ける前）
+static const float kDetailMaxSlope  = 0.10; ///< 1 本あたりの k*A の上限（波が尖りすぎてループしないように）
+static const float kTwoPi           = 6.28318530718; ///< 2π
 
+/// @struct DetailWave
+/// @brief 詳細波 1 本分のパラメータ（GetDetailWave で作る）
 struct DetailWave
 {
-    float2 dir;   // 進行方向
-    float  k;     // 波数 (rad/m)
-    float  omega; // 角速度 (rad/s)
-    float  amp;   // 鉛直振幅 (m)
-    float  qa;    // 水平変位の振幅 (m)  = Gerstner の Q*A
-    float  phase0;
+    float2 dir;   ///< 進行方向（正規化済み）
+    float  k;     ///< 波数（rad/m）
+    float  omega; ///< 角速度（rad/s）
+    float  amp;   ///< 鉛直振幅（m）
+    float  qa;    ///< 水平変位の振幅（m）= Gerstner の Q*A
+    float  phase0; ///< 初期位相（rad）
 };
 
-// baseFreq/baseSpeed/baseHeight は主波 0 のパラメータ（gWaveFreq, gWaveSpeed, gWaveHeight）
-// detail: 詳細波の強さ (0 で無効) / choppy: 尖り具合 (0..1)
+/// @brief i 本目の詳細波のパラメータを求める
+/// @param i          詳細波の番号（0〜kDetailWaveCount-1）
+/// @param baseFreq   主波 0 の周波数（gWaveFreq）
+/// @param baseSpeed  主波 0 の速度（gWaveSpeed）
+/// @param baseHeight 主波 0 の高さ（gWaveHeight）
+/// @param detail     詳細波の強さ（0 で無効）
+/// @param choppy     尖り具合（0〜1）
+/// @return 詳細波 1 本分のパラメータ
 DetailWave GetDetailWave(int i, float baseFreq, float baseSpeed, float baseHeight,
                          float detail, float choppy)
 {
@@ -50,18 +60,27 @@ DetailWave GetDetailWave(int i, float baseFreq, float baseSpeed, float baseHeigh
     w.k      = max(baseFreq, 1e-3) * kDetailRatio[i];
     w.omega  = baseSpeed * sqrt(kDetailRatio[i]);
     w.amp    = min(baseHeight * kDetailAmpScale / kDetailRatio[i], kDetailMaxSlope / w.k) * detail;
-    // Σ(Q*A*k) = choppy * detail になるよう配分 → choppy=1 でも全波の山が揃わない限り折り返さない
+    // Σ(Q*A*k) = choppy * detail になるよう配分 → choppy = 1 でも全波の山が揃わない限り折り返さない
     w.qa     = choppy * detail / (kDetailWaveCount * w.k);
     w.phase0 = kDetailPhase[i];
     return w;
 }
 
+/// @brief 詳細波の位置 xz・時刻 time での位相を求める
+/// @param w    詳細波のパラメータ
+/// @param xz   変位前のワールド XZ
+/// @param time 経過時間（秒）
+/// @return 位相（rad）
 float DetailPhase(DetailWave w, float2 xz, float time)
 {
     return w.k * dot(w.dir, xz) - w.omega * time + w.phase0;
 }
 
-// 詳細波の鉛直振幅の合計（PS の高さ正規化に使う）
+/// @brief 詳細波の鉛直振幅の合計（PS の高さ正規化に使う）
+/// @param baseFreq   主波 0 の周波数（gWaveFreq）
+/// @param baseHeight 主波 0 の高さ（gWaveHeight）
+/// @param detail     詳細波の強さ（0 で無効）
+/// @return 全詳細波の鉛直振幅の合計（m）
 float DetailAmplitudeSum(float baseFreq, float baseHeight, float detail)
 {
     float sum = 0.0;

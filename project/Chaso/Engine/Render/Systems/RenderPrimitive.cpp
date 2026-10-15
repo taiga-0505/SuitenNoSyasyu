@@ -108,9 +108,13 @@ void DrawTriangle(const Vector2 &pos1, const Vector2 &pos2,
 }
 
 namespace {
-/// <summary>
-/// 頂点が追加された後の範囲をコマンドキューに登録するヘルパー
-/// </summary>
+/// @brief 直前に追加された頂点の範囲を描画コマンドとしてキューに登録する
+/// @param ctx       描画コンテキスト
+/// @param prim      頂点を追加した Primitive3D
+/// @param depth     深度テストありのバッファか
+/// @param prevCount 追加前の頂点数
+/// @param sortKey   コマンドのソートキー
+/// @note 追加された頂点が無ければ何も積まない。
 static void AddPrimitiveCommand_(RenderContext &ctx, Primitive3D *prim,
                                  bool depth, uint32_t prevCount,
                                  uint64_t sortKey = 0) {
@@ -121,14 +125,12 @@ static void AddPrimitiveCommand_(RenderContext &ctx, Primitive3D *prim,
   }
 }
 
-/// <summary>
-/// 現在のモード（BeginOverlay3D 〜 EndOverlay3D の内側か）に応じたソートキーを返す
-/// </summary>
-/// <remarks>
-/// sortKey==0 のコマンドは安定ソートで先頭（モデル描画の前）に回るため、
-/// オーバーレイ中に 0 のまま積むと地形・モデルに塗り潰されて見えなくなる。
-/// 3D プリミティブ描画は必ずこれを経由して sortKey を決めること。
-/// </remarks>
+/// @brief 現在のモード（BeginOverlay3D 〜 EndOverlay3D の内側か）に応じたソートキーを返す
+/// @param ctx 描画コンテキスト
+/// @return オーバーレイ中なら kLayerOverlay のソートキー、それ以外は 0
+/// @note sortKey == 0 のコマンドは安定ソートで先頭（モデル描画の前）に回るため、
+///       オーバーレイ中に 0 のまま積むと地形・モデルに塗り潰されて見えなくなる。
+///       3D プリミティブ描画は必ずこれを経由して sortKey を決めること。
 static uint64_t CurrentPrimitiveSortKey_(const RenderContext &ctx) {
   return ctx.IsOverlayMode() ? SortKey::Make(SortKey::kLayerOverlay, 0, 0) : 0;
 }
@@ -148,7 +150,7 @@ void DrawLine3D(const Vector3 &a, const Vector3 &b, const Vector4 &color,
   if (!prim) {
     return;
   }
-  // Overlay モードでも depth は引数の指定に従う
+  // オーバーレイモードでも depth は引数の指定に従う
   bool useDepth = depth;
   uint64_t sortKey = ctx.IsOverlayMode()
       ? SortKey::Make(SortKey::kLayerOverlay, 0, 0) : 0;
@@ -183,25 +185,25 @@ void DrawFrustum3D(const Vector3 &position, const Vector3 &rotation,
   auto *prim = ctx.EnsurePrimitive3D();
   if (!prim) return;
 
-  // Near/Far面の半分のサイズを計算
+  // Near / Far 面の半分のサイズを計算
   float tanHalfFov = std::tan(fovY * 0.5f);
   float nearH = nearZ * tanHalfFov;
   float nearW = nearH * aspect;
   float farH = farZ * tanHalfFov;
   float farW = farH * aspect;
 
-  // ローカル空間での8頂点（左手座標系: カメラは +Z を向いている）
+  // ローカル空間での 8 頂点（左手座標系: カメラは +Z を向いている）
   Vector3 localVerts[8] = {
-    // Near face (z = +nearZ)
-    {-nearW,  nearH, nearZ},   // 0: near top-left
-    { nearW,  nearH, nearZ},   // 1: near top-right
-    { nearW, -nearH, nearZ},   // 2: near bottom-right
-    {-nearW, -nearH, nearZ},   // 3: near bottom-left
-    // Far face (z = +farZ)
-    {-farW,  farH, farZ},      // 4: far top-left
-    { farW,  farH, farZ},      // 5: far top-right
-    { farW, -farH, farZ},      // 6: far bottom-right
-    {-farW, -farH, farZ},      // 7: far bottom-left
+    // Near 面（z = +nearZ）
+    {-nearW,  nearH, nearZ},   // 0: Near 左上
+    { nearW,  nearH, nearZ},   // 1: Near 右上
+    { nearW, -nearH, nearZ},   // 2: Near 右下
+    {-nearW, -nearH, nearZ},   // 3: Near 左下
+    // Far 面（z = +farZ）
+    {-farW,  farH, farZ},      // 4: Far 左上
+    { farW,  farH, farZ},      // 5: Far 右上
+    { farW, -farH, farZ},      // 6: Far 右下
+    {-farW, -farH, farZ},      // 7: Far 左下
   };
 
   // カメラのワールド行列を作成
@@ -218,23 +220,23 @@ void DrawFrustum3D(const Vector3 &position, const Vector3 &rotation,
     w[i] = {r.x, r.y, r.z};
   }
 
-  // depth=false で描画（深度テストなし = 常にモデルの上に表示）
+  // depth = false で描画（深度テストなし = 常にモデルの上に表示）
   const bool useDepth = false;
   uint32_t prev = prim->GetVertexCount(useDepth);
 
-  // Near面 (4辺)
+  // Near 面（4 辺）
   prim->AddLine(w[0], w[1], color, useDepth);
   prim->AddLine(w[1], w[2], color, useDepth);
   prim->AddLine(w[2], w[3], color, useDepth);
   prim->AddLine(w[3], w[0], color, useDepth);
 
-  // Far面 (4辺)
+  // Far 面（4 辺）
   prim->AddLine(w[4], w[5], color, useDepth);
   prim->AddLine(w[5], w[6], color, useDepth);
   prim->AddLine(w[6], w[7], color, useDepth);
   prim->AddLine(w[7], w[4], color, useDepth);
 
-  // Near-Far接続 (4辺)
+  // Near と Far をつなぐ辺（4 辺）
   prim->AddLine(w[0], w[4], color, useDepth);
   prim->AddLine(w[1], w[5], color, useDepth);
   prim->AddLine(w[2], w[6], color, useDepth);
@@ -426,7 +428,7 @@ void FlushPrimitive3D() {
 
 
 // ============================================================================
-// Fog (画面オーバーレイ)
+// フォグ（画面オーバーレイ）
 // ============================================================================
 
 void DrawFogOverlay(float timeSec, float intensity, float scale, float speed,

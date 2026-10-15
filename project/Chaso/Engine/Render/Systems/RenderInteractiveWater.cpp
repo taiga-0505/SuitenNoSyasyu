@@ -16,71 +16,79 @@ namespace RC {
 
 /// @brief WaveSimulation.CS.hlsl の SimulationParams と同じ並び（16 バイト境界を崩さないこと）
 struct WaveSimCB {
-  float alpha;
-  float damping;
-  int sourceCount;
-  float padding; // リセットフラグ
-  Vector4 sources[64];
+  float alpha;         ///< 波の伝播速度
+  float damping;       ///< 毎フレームの速度減衰率
+  int sourceCount;     ///< sources の有効数
+  float padding;       ///< リセットフラグ（1 ならハイトマップを 0 クリアする）
+  Vector4 sources[64]; ///< 波源（xy: UV、z: 半径、w: 強さ）
   // ---- 引き波の泡（G チャンネル）----
-  float foamDecay;
-  float foamSpread;
-  int foamSourceCount;
-  float crestDecay; // 波頭（B チャンネル）の残存率
-  Vector4 foamSources[64];
+  float foamDecay;         ///< 引き波の泡の毎フレーム残存率
+  float foamSpread;        ///< 引き波の泡の毎フレームの滲み
+  int foamSourceCount;     ///< foamSources の有効数
+  float crestDecay;        ///< 波頭（B チャンネル）の残存率
+  Vector4 foamSources[64]; ///< 引き波の泡の波源（xy: UV、z: 半径、w: 足す量）
   // ---- 波頭の白波（B チャンネル）----
-  int crestSourceCount;
-  float crestPad[3];
-  Vector4 crestSources[128];
+  int crestSourceCount;      ///< crestSources の有効数
+  float crestPad[3];         ///< 16 バイト境界合わせ
+  Vector4 crestSources[128]; ///< 波頭の白波の波源（xy: UV、z: 半径、w: 足す量）
 };
 static_assert(sizeof(WaveSimCB) == 16 + 16 * 64 + 16 + 16 * 64 + 16 + 16 * 128,
               "WaveSimCB layout must match WaveSimulation.CS.hlsl");
 
-static constexpr int TEX_SIZE = 256;
+static constexpr int TEX_SIZE = 256; ///< ハイトマップの一辺（テクセル）
 /// @brief ハイトマップの形式。R = 高さ / G = 引き波の泡 / B = 波頭の白波 / A = 未使用
-/// @details 3 チャンネルの UAV 形式は無いので 4 チャンネル
+/// @details 3 チャンネルの UAV 形式は無いので 4 チャンネルにしている。
 static constexpr DXGI_FORMAT kHeightMapFormat = DXGI_FORMAT_R32G32B32A32_FLOAT;
-static constexpr int kHeightMapChannels = 4;
-static constexpr int kMaxFoamSources = 64;
-static constexpr int kMaxCrestSources = 128;
-static Microsoft::WRL::ComPtr<ID3D12Resource> s_heightMaps[3];
-static SRVManager::Handle s_srvs[3];
-static SRVManager::Handle s_uavs[3];
-static int s_currIdx = 0; // 最新のハイトマップのインデックス
+static constexpr int kHeightMapChannels = 4;   ///< 1 テクセルあたりの float 数
+static constexpr int kMaxFoamSources = 64;     ///< 引き波の泡の波源の上限（1 フレーム）
+static constexpr int kMaxCrestSources = 128;   ///< 波頭の白波の波源の上限（1 フレーム）
+static Microsoft::WRL::ComPtr<ID3D12Resource> s_heightMaps[3]; ///< ハイトマップ（最新・1 つ前・書き込み先の 3 枚を回す）
+static SRVManager::Handle s_srvs[3]; ///< 各ハイトマップの SRV
+static SRVManager::Handle s_uavs[3]; ///< 各ハイトマップの UAV
+static int s_currIdx = 0; ///< 最新のハイトマップのインデックス
 
 /// @brief 波シミュレーションの CB。値は CPU 側に持ち、バインド時に今フレームの領域へ送る
-/// @details 以前は Map しっぱなしの固定 CB だった（CPU と GPU を並行させると上書き競合が起きる）
+/// @details 以前は Map しっぱなしの固定 CB だった（CPU と GPU を並行させると上書き競合が起きる）。
 static RC::DynamicCB<WaveSimCB> s_simCB;
 static WaveSimCB* s_simCBMapped = nullptr; ///< 書き込み先（= s_simCB.Ptr()）
 
-static std::vector<WaveSource> s_pendingSources;
+static std::vector<WaveSource> s_pendingSources;      ///< 次の Update で消費する波源
 static std::vector<WaveSource> s_pendingFoamSources;  ///< 引き波の泡の波源（strength = 足す量）
 static std::vector<WaveSource> s_pendingCrestSources; ///< 波頭の白波の波源（strength = 足す量）
 static float s_foamDecay = 0.992f; ///< 引き波の泡の毎フレーム残存率
 static float s_foamSpread = 0.10f; ///< 引き波の泡の毎フレームの滲み
 static float s_crestDecay = 0.80f; ///< 波頭の白波の毎フレーム残存率
-static bool s_initialized = false;
-static int s_resetFrames = 3; // 最初の3フレームはテクスチャを0クリアする
+static bool s_initialized = false; ///< InitInteractiveWater 済みか
+static int s_resetFrames = 3; ///< 残りのリセットフレーム数（最初の 3 フレームはテクスチャを 0 クリアする）
 
 // ---- CPU 読み戻し（任意） ----
 // GPU が書き終えたハイトマップを READBACK ヒープへコピーし、フェンスが通ったものだけ CPU 配列へ写す。
 // スロットはリングで回す。同じスロットへ再コピーするのは kReadbackCount フレーム後で、
 // CommandContext::BeginFrame が (frameCount) フレーム前の完了を待つので kReadbackCount >= kMaxFrames なら
 // 「GPU がまだ読み書き中のバッファ」を CPU が触ることはない。
-static constexpr int kReadbackCount = 4; // >= CommandContext::kMaxFrames (3)
+static constexpr int kReadbackCount = 4; ///< 読み戻しスロット数（CommandContext::kMaxFrames（3）以上にする）
+/// @struct ReadbackSlot
+/// @brief 読み戻しリングの 1 スロット
 struct ReadbackSlot {
-  Microsoft::WRL::ComPtr<ID3D12Resource> buffer;
+  Microsoft::WRL::ComPtr<ID3D12Resource> buffer; ///< READBACK ヒープのバッファ
   uint64_t fenceValue = 0; ///< このスロットへのコピーを含むコマンドが完了するフェンス値（0 = 未使用）
 };
-static ReadbackSlot s_readback[kReadbackCount];
-static int s_readbackWriteIdx = 0;
-static D3D12_PLACED_SUBRESOURCE_FOOTPRINT s_readbackFootprint{};
-static UINT64 s_readbackTotalBytes = 0;
-static bool s_readbackEnabled = false;
+static ReadbackSlot s_readback[kReadbackCount]; ///< 読み戻しリング
+static int s_readbackWriteIdx = 0;              ///< 次にコピーを書き込むスロット
+static D3D12_PLACED_SUBRESOURCE_FOOTPRINT s_readbackFootprint{}; ///< ハイトマップをバッファへコピーするときの配置
+static UINT64 s_readbackTotalBytes = 0;         ///< 読み戻しバッファ 1 つのサイズ（バイト）
+static bool s_readbackEnabled = false;          ///< CPU 読み戻しが有効か
 static bool s_readbackHasData = false;   ///< s_cpuHeight に有効なデータが入っているか
 static uint64_t s_readbackLastFence = 0; ///< 最後に CPU へ写したスロットのフェンス値
 static std::vector<float> s_cpuHeight;   ///< TEX_SIZE*TEX_SIZE、行優先（y*TEX_SIZE+x）
 
-// ヘルパー: D3D12リソース作成
+/// @brief UAV を許可した 2D テクスチャを DEFAULT ヒープに作る
+/// @param device D3D12 デバイス
+/// @param width  幅（テクセル）
+/// @param height 高さ（テクセル）
+/// @param format テクスチャ形式
+/// @return 作成したリソース。失敗したら nullptr
+/// @note 初期状態はシェーダーリソース（ピクセル／非ピクセル両方）。
 static Microsoft::WRL::ComPtr<ID3D12Resource> CreateUAVTexture2D(ID3D12Device* device, int width, int height, DXGI_FORMAT format) {
   Microsoft::WRL::ComPtr<ID3D12Resource> res;
   D3D12_RESOURCE_DESC desc = {};
@@ -114,13 +122,14 @@ static Microsoft::WRL::ComPtr<ID3D12Resource> CreateUAVTexture2D(ID3D12Device* d
   return res;
 }
 
-// CreateBufferResource is already defined in function.h
+// CreateBufferResource は function.h に定義済みなので、ここでは定義しない
 
 // ---------------------------------------------------------------------------
 // CPU 読み戻し
 // ---------------------------------------------------------------------------
 
 /// @brief READBACK バッファを（初回だけ）作る
+/// @return バッファが用意できていれば true。未初期化・作成失敗なら false（失敗時は読み戻しを無効にする）
 static bool EnsureReadbackBuffers() {
   if (s_readback[0].buffer) return true;
   auto& ctx = GetRenderContext();
@@ -205,7 +214,9 @@ static void ConsumeReadback() {
 }
 
 /// @brief CPU 配列を Water.VS.hlsl の gSamplerClamp（linear, clamp）と同じ規則で読む
-/// @param u,v UV（0〜1。範囲外はクランプ）
+/// @param u UV の u（0〜1。範囲外はクランプ）
+/// @param v UV の v（0〜1。範囲外はクランプ）
+/// @return 双線形補間した高さ（m）
 static float SampleCpuHeightMap(float u, float v) {
   // テクセル中心は (i + 0.5) / N
   const float fx = std::clamp(u * TEX_SIZE - 0.5f, 0.0f, static_cast<float>(TEX_SIZE - 1));
@@ -360,6 +371,13 @@ bool AddWaveSourceAtWorld(float worldX, float worldZ, float radius, float streng
 }
 
 /// @brief 泡系の波源をリストへ積む（範囲外・上限超えは捨てる）
+/// @param list     積む先のリスト
+/// @param maxCount リストの上限
+/// @param worldX   ワールド X（m）
+/// @param worldZ   ワールド Z（m）
+/// @param radius   半径（UV 空間。0.01 = 1m）
+/// @param amount   足す量（0 以下なら捨てる）
+/// @return 積めたら true
 static bool PushFoamLike(std::vector<WaveSource>& list, size_t maxCount, float worldX, float worldZ, float radius,
                          float amount) {
   if (amount <= 0.0f) return false;
@@ -402,12 +420,12 @@ void UpdateInteractiveWater() {
   // インデックスのローテーション
   // s_currIdx は前フレームでレンダリングした「最新(h1)」のテクスチャ
   int h1Idx = s_currIdx;
-  // 2フレーム前の「古い(h2)」テクスチャ
+  // 2 フレーム前の「古い(h2)」テクスチャ
   int h2Idx = (s_currIdx + 2) % 3;
   // 今回レンダリングする「次(out)」のテクスチャ
   int nextIdx = (s_currIdx + 1) % 3;
 
-  // CBの更新
+  // CB の更新
   if (s_simCBMapped) {
     s_simCBMapped->alpha = 0.15f;   // 波の伝播速度（穏やかな広がり）
     s_simCBMapped->damping = 0.95f; // 速度減衰（0.95^60≈0.05、約1秒でほぼ消滅）
@@ -459,7 +477,7 @@ void UpdateInteractiveWater() {
   const int readbackSlot = s_readbackWriteIdx;
   if (doReadback) s_readbackWriteIdx = (s_readbackWriteIdx + 1) % kReadbackCount;
 
-  // リソースバリアから先のGPUコマンドをキューイング (SortKey=0で最初に処理させる)
+  // リソースバリアから先の GPU コマンドをキューに積む（sortKey 0 で最初に処理させる）
   ctx.PushCommand3D(0, [h1Idx, h2Idx, nextIdx, doReadback, readbackSlot](ID3D12GraphicsCommandList* cl) {
     auto& renderCtx = GetRenderContext();
     if (!cl) return;
@@ -474,7 +492,7 @@ void UpdateInteractiveWater() {
     barrierToUAV.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     cl->ResourceBarrier(1, &barrierToUAV);
 
-    // Compute Shaderのディスパッチ
+    // Compute Shader のディスパッチ
     ID3D12PipelineState* pso = nullptr;
     ID3D12RootSignature* root = nullptr;
     if (renderCtx.Ctx() && renderCtx.Ctx()->pipelineManager) {
@@ -486,21 +504,21 @@ void UpdateInteractiveWater() {
       cl->SetPipelineState(pso);
       cl->SetComputeRootSignature(root);
 
-      // b0
+      // b0: シミュレーションの定数バッファ
       cl->SetComputeRootConstantBufferView(0, s_simCB.Address());
 
-      // t0 (h1: 最新のハイトマップ)
+      // t0（h1: 最新のハイトマップ）
       cl->SetComputeRootDescriptorTable(1, s_srvs[h1Idx].gpu);
-      // t1 (h2: 1つ前のハイトマップ)
+      // t1（h2: 1 つ前のハイトマップ）
       cl->SetComputeRootDescriptorTable(2, s_srvs[h2Idx].gpu);
-      // u0 (next)
+      // u0（next: 今回書き込むハイトマップ）
       cl->SetComputeRootDescriptorTable(3, s_uavs[nextIdx].gpu);
 
-      // Dispatch (256x256のテクスチャで16x16のスレッドグループ)
+      // 256x256 のテクスチャを 16x16 のスレッドグループで覆う
       cl->Dispatch(TEX_SIZE / 16, TEX_SIZE / 16, 1);
     }
 
-    // UAVバリアで完了待ち
+    // UAV バリアで書き込みの完了を待つ
     D3D12_RESOURCE_BARRIER uavBarrier = {};
     uavBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
     uavBarrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
@@ -517,7 +535,7 @@ void UpdateInteractiveWater() {
     barrierToSRV.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 
     if (doReadback && s_readback[readbackSlot].buffer) {
-      // UAV -> COPY_SOURCE -> READBACK バッファへコピー -> SRV
+      // UAV → COPY_SOURCE → READBACK バッファへコピー → SRV の順に遷移させる
       D3D12_RESOURCE_BARRIER toCopy = barrierToSRV;
       toCopy.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
       cl->ResourceBarrier(1, &toCopy);

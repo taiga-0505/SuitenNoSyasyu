@@ -26,5 +26,5 @@ protected:
 };
 
 // これを書くことで、自動的に ScriptRegistry に "TestRotatorScript" として登録され、
-// インスペクタの Native Script のプルダウンに表示されます。
+// インスペクタの Native Script のプルダウンに表示される。
 REGISTER_SCRIPT(TestRotatorScript)

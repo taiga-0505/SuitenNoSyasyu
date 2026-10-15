@@ -24,8 +24,8 @@ void DepthStencil::Resize(UINT width, UINT height, DescriptorHeap &dsvHeap) {
   if (tex_) {
     tex_.Reset();
   }
-  // DSVスロットは再確保せず、同じ場所を上書きでもOK
-  // （別スロットにしたい場合は dsvHeap.AllocateCPU() し直しても良い）
+  // DSV のスロットは再確保せず、同じ場所を上書きする
+  // （別スロットにしたい場合は dsvHeap.AllocateCPU() し直してもよい）
   createResource();
   // 既存スロットに上書き
   D3D12_DEPTH_STENCIL_VIEW_DESC desc{};
@@ -73,7 +73,7 @@ void DepthStencil::createResource() {
 }
 
 void DepthStencil::createView(DescriptorHeap &dsvHeap) {
-  // 外部ヒープから1スロット確保して DSV を作る
+  // 外部ヒープから 1 スロット確保して DSV を作る
   dsv_ = dsvHeap.AllocateCPU();
 
   D3D12_DEPTH_STENCIL_VIEW_DESC desc{};

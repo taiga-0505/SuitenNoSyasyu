@@ -11,6 +11,9 @@
 #include <iomanip>
 
 namespace {
+  /// @brief 未処理例外をログに書き出してからプロセスを終了させる例外フィルター
+  /// @param exceptionPointers 例外情報
+  /// @return EXCEPTION_EXECUTE_HANDLER（プロセスを終了させる）
   LONG WINAPI UnhandledExceptionFilterFunc(EXCEPTION_POINTERS* exceptionPointers) {
     std::stringstream ss;
     ss << "========================================\n";
@@ -43,7 +46,7 @@ std::mutex Log::sHistoryMutex_;
 
 void Log::AddHistory(const std::string& message) {
   std::lock_guard<std::mutex> lock(sHistoryMutex_);
-  // 最大1000行程度に制限
+  // メモリを食い続けないよう最大 1000 件に制限し、古いものから捨てる
   if (sHistory_.size() >= 1000) {
     sHistory_.erase(sHistory_.begin());
   }
@@ -77,14 +80,14 @@ void Log::Initialize() {
   // ログのディレクトリを用意
   std::filesystem::create_directory("../logs");
   std::filesystem::create_directory("../logs/app");
-  // 現在の時間を取得(UTC)
+  // 現在の時間を取得（UTC）
   std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
   // ログファイルの名前にコンマ何秒はいらないので、削って秒にする
   std::chrono::time_point<std::chrono::system_clock, std::chrono::seconds>
       nowSeconds = std::chrono::time_point_cast<std::chrono::seconds>(now);
-  // 日本時間に変換
+  // PC のタイムゾーン（日本なら JST）のローカル時間に変換
   std::chrono::zoned_time localTime{std::chrono::current_zone(), nowSeconds};
-  // formatを使って年月日_時分秒の文字列に変換
+  // format を使って「年月日_時分秒」の文字列に変換
   std::string dateString = std::format("{:%Y-%m-%d_%H-%M-%S}", localTime);
   // 時間を使ってファイル名を決定
   std::string logFilePath = std::string("../logs/app/") + dateString + ".log";
@@ -145,30 +148,30 @@ void Log::Print(const std::string &message) {
 
   AddHistory(msg);
 
-  // ファイルにも書き込む（UTF-8のまま）
+  // ファイルにも書き込む（UTF-8 のまま）
   if (sLogFile_.is_open()) {
     sLogFile_ << msg << std::flush;
   }
 }
 
 std::wstring Log::ConvertString(const std::string &str) {
-  // stringのサイズを取得
+  // 変換後に必要な文字数（終端 NUL 込み）を取得
   int size = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, nullptr, 0);
-  // wstringのサイズを取得
+  // その文字数で wstring を確保
   std::wstring wstr(size, L'\0');
-  // stringをwstringに変換
+  // string を wstring に変換
   MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, &wstr[0], size);
   return wstr;
 }
 
-// wstringをstringに変換する関数
+// wstring を string に変換する
 std::string Log::ConvertString(const std::wstring &wstr) {
-  // wstringのサイズを取得
+  // 変換後に必要なバイト数（終端 NUL 込み）を取得
   int size = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, nullptr, 0,
                                  nullptr, nullptr);
-  // stringのサイズを取得
+  // そのバイト数で string を確保
   std::string str(size, '\0');
-  // wstringをstringに変換
+  // wstring を string に変換
   WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, &str[0], size, nullptr,
                       nullptr);
   return str;
@@ -191,7 +194,7 @@ std::string Log::ConvertString(const std::wstring &wstr) {
                   MB_OK | MB_ICONERROR | MB_TOPMOST);
   }
 
-  // デストラクタを走らせず即座に落とす（半端に初期化されたGPUリソースに触らない）
+  // デストラクタを走らせず即座に落とす（半端に初期化された GPU リソースに触らない）
   ::TerminateProcess(::GetCurrentProcess(), 1);
   ::ExitProcess(1); // TerminateProcess が返った場合の保険（[[noreturn]] 担保）
 }

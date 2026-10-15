@@ -31,60 +31,86 @@ namespace RC {
 
 class ModelManager;
 
+/// @struct ModelProxyHandle
 /// @brief ModelProxyPool のハンドル（VirtualEntity）
 struct ModelProxyHandle {
   uint32_t index = UINT32_MAX; ///< スロット番号
   uint32_t generation = 0;     ///< 世代番号（スロット再利用の検出用）
 
   /// @brief 一度でも作られたハンドルか（生存しているかは ModelProxyPool::IsAlive で確認）
+  /// @return スロット番号が設定されていれば true
   bool IsValid() const { return index != UINT32_MAX; }
+  /// @brief 同じハンドルか（スロット番号と世代番号の両方が一致するか）
+  /// @param o 比較相手
+  /// @return 両方一致すれば true
   bool operator==(const ModelProxyHandle &o) const {
     return index == o.index && generation == o.generation;
   }
 };
 
+/// @class ModelProxyPool
 /// @brief 大量の静的／準静的モデルを SoA で保持するプール
 class ModelProxyPool {
 public:
   /// @brief プロキシを作る
   /// @param modelHandle 見た目のテンプレート（RC::LoadModel のハンドル）。メッシュ・テクスチャ・マテリアルを借りる
-  /// @return ハンドル
+  /// @return 作成したプロキシのハンドル
+  /// @note 作成直後は表示・影ありで、ワールド行列は単位行列。
   ModelProxyHandle Create(int modelHandle);
 
   /// @brief プロキシを破棄する（無効なハンドルなら何もしない）
+  /// @param h 破棄するハンドル
   void Destroy(ModelProxyHandle h);
 
   /// @brief 生存しているハンドルか
+  /// @param h 確認するハンドル
+  /// @return スロットが使用中で世代番号も一致すれば true
   bool IsAlive(ModelProxyHandle h) const {
     return h.index < generation_.size() && generation_[h.index] == h.generation &&
            (flags_[h.index] & kAlive) != 0;
   }
 
   /// @brief ワールド行列を設定する（行ベクトル規約）
+  /// @param h     対象のハンドル
+  /// @param world ワールド行列
   void SetWorld(ModelProxyHandle h, const Matrix4x4 &world);
   /// @brief Transform（SRT）からワールド行列を設定する
+  /// @param h 対象のハンドル
+  /// @param t スケール・回転・平行移動
   void SetTransform(ModelProxyHandle h, const Transform &t);
   /// @brief 乗算カラーを設定する（テンプレートのマテリアル色にさらに掛かる）
+  /// @param h     対象のハンドル
+  /// @param color 乗算カラー（RGBA）
   void SetColor(ModelProxyHandle h, const Vector4 &color);
-  /// @brief 表示／非表示
+  /// @brief 表示／非表示を切り替える
+  /// @param h       対象のハンドル
+  /// @param visible true で表示
   void SetVisible(ModelProxyHandle h, bool visible);
-  /// @brief 影を落とすか
+  /// @brief 影を落とすかを切り替える
+  /// @param h    対象のハンドル
+  /// @param cast true で影を落とす
   void SetCastShadow(ModelProxyHandle h, bool cast);
 
   /// @brief 生存数
+  /// @return 生存しているプロキシの数
   uint32_t Count() const { return aliveCount_; }
 
-  /// @brief 全削除
+  /// @brief 全プロキシを削除する
+  /// @note 世代番号は進めて残すので、Clear 前のハンドルは Clear 後も無効と判定される。
   void Clear();
 
-  /// @brief 変更されたスロットの逆転置行列・境界箱・BVH を更新する
+  /// @brief 変更されたスロットの境界箱・BVH を更新する
   /// @details テンプレートのメッシュが未ロードのスロットは境界箱が決まらないので
   ///          次回へ持ち越す（ロードが終わるまで描かれない）。
+  ///          逆転置行列はここでは計算せず、WorldInverseTranspose で要求されたときに計算する。
+  /// @param models テンプレートのモデルを引くための ModelManager
   void UpdateDirty(ModelManager &models);
 
   /// @brief 視錐台にかかるスロットを列挙する（保守的）
+  /// @tparam Callback void(uint32_t slot) の形で呼べる関数オブジェクト
+  /// @param frustum    判定に使う視錐台
   /// @param shadowPass true なら castShadow の物だけ
-  /// @param cb void(uint32_t slot)
+  /// @param cb         見つかったスロットごとに呼ぶコールバック
   template <class Callback>
   void QueryVisible(const Frustum &frustum, bool shadowPass, Callback &&cb) const {
     const uint8_t need = static_cast<uint8_t>(kAlive | kVisible | (shadowPass ? kCastShadow : 0));
@@ -95,11 +121,19 @@ public:
   }
 
   // ── SoA の読み出し（slot は QueryVisible が返した番号） ──
+  /// @brief テンプレートのモデルハンドル
+  /// @param slot スロット番号
+  /// @return モデルハンドル
   int ModelHandle(uint32_t slot) const { return modelHandle_[slot]; }
+  /// @brief ワールド行列
+  /// @param slot スロット番号
+  /// @return ワールド行列
   const Matrix4x4 &World(uint32_t slot) const { return world_[slot]; }
   /// @brief 法線用の逆転置行列。行列が変わった後、最初に要求されたときだけ計算する
   /// @details 毎フレーム全プロキシを動かしても、逆行列を計算するのはカメラに映った物だけで済む
   ///          （影パスは World しか使わないので要求しない）。
+  /// @param slot スロット番号
+  /// @return ワールド行列の逆転置行列
   const Matrix4x4 &WorldInverseTranspose(uint32_t slot) {
     if ((flags_[slot] & kWitValid) == 0) {
       worldInvTranspose_[slot] = ComputeInverseTranspose_(world_[slot]);
@@ -107,12 +141,18 @@ public:
     }
     return worldInvTranspose_[slot];
   }
+  /// @brief 乗算カラー
+  /// @param slot スロット番号
+  /// @return 乗算カラー（RGBA）
   const Vector4 &Color(uint32_t slot) const { return color_[slot]; }
 
   /// @brief BVH（デバッグ表示・検証用）
+  /// @return カリングに使っている BVH
   const DynamicBVH &Bvh() const { return bvh_; }
 
 private:
+  /// @enum Flag
+  /// @brief スロットごとの状態ビット
   enum Flag : uint8_t {
     kAlive = 1 << 0,      ///< 使用中
     kVisible = 1 << 1,    ///< 表示する
@@ -121,7 +161,12 @@ private:
     kWitValid = 1 << 4,   ///< worldInvTranspose_ が world_ に対して計算済み
   };
 
+  /// @brief スロットを UpdateDirty 待ちにし、逆転置行列を無効にする
+  /// @param slot スロット番号
   void MarkDirty_(uint32_t slot);
+  /// @brief 逆転置行列を計算する
+  /// @param w ワールド行列
+  /// @return w の逆行列の転置
   static Matrix4x4 ComputeInverseTranspose_(const Matrix4x4 &w);
 
   // SoA（スロット番号で揃える）
@@ -139,10 +184,10 @@ private:
 
   /// @brief 葉を太らせる量 0.25m、移動量の先読み 4 倍
   /// @details 小さく揺れ続ける物（風に揺れる草木、浮き沈みする物など）が毎フレーム
-  ///          fat AABB をはみ出して木を組み替えないよう、やや大きめに取る。
+  ///          太らせた AABB をはみ出して木を組み替えないよう、やや大きめに取る。
   ///          太らせた分だけカリングが甘くなる（余分に描く）が、取りこぼしは起きない。
   DynamicBVH bvh_{0.25f, 4.0f};
-  uint32_t aliveCount_ = 0;
+  uint32_t aliveCount_ = 0; ///< 生存しているプロキシの数
 };
 
 } // namespace RC

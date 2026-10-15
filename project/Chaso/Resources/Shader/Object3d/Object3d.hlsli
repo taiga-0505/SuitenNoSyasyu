@@ -1,36 +1,51 @@
+// =============================================================================
+// Object3D 系シェーダーの共通定義
+//
+// Object3D 系の VS / PS がすべて include する。
+//   - VS → PS の受け渡し構造体（VertexShaderOutput）
+//   - 平行光源のシャドウマップ（b6 / t4）と PCF による影判定
+//   - スポット・点・面光源の影（シャドウアトラス b7 / t5）の判定
+// =============================================================================
+
+/// @brief VS → PS へ渡す補間値（Object3D 系の VS / PS で共通）
 struct VertexShaderOutput {
-    float4 position : SV_POSITION;
-    float2 texcoord : TEXCOORD0;
-    float3 normal : NORMAL0;
-    float3 worldPosition : POSITION0;
-    float4 instColor : COLOR0;
-    float4 lightSpacePos : TEXCOORD1;
+    float4 position : SV_POSITION;    ///< クリップ空間位置
+    float2 texcoord : TEXCOORD0;      ///< UV（uvTransform 適用前）
+    float3 normal : NORMAL0;          ///< ワールド空間の法線
+    float3 worldPosition : POSITION0; ///< ワールド座標
+    float4 instColor : COLOR0;        ///< インスタンスごとの乗算色（単体描画では白）
+    float4 lightSpacePos : TEXCOORD1; ///< 平行光源のライト空間座標（シャドウマップ参照用）
 };
 
 // ----------------------------------------------------------------------------
-// Shadow Params
+// シャドウパラメータ（平行光源のシャドウマップ）
 // ----------------------------------------------------------------------------
+/// @brief 平行光源のシャドウマップ設定（b6）
 struct ShadowData {
-    matrix lightViewProjection;
-    float3 lightDirection;
-    float bias;
-    float4 color;
-    int shadowMapEnabled;
-    float2 shadowMapTexelSize; // 1テクセルのUVサイズ (1/width, 1/height)
-    float pcfRadius;           // PCFのタップ間隔（テクセル単位。0以下なら1タップ＝PCF無効）
+    matrix lightViewProjection; ///< ライト視点の ViewProjection
+    float3 lightDirection;      ///< ライトの向き（光の進む方向）
+    float bias;                 ///< 深度比較のバイアス（PS 側で面の傾きに応じてスケールして使う）
+    float4 color;               ///< 影の色（rgb を乗算）と濃さ（a）
+    int shadowMapEnabled;       ///< 0 以外でシャドウマップによる影を有効にする
+    float2 shadowMapTexelSize;  ///< 1 テクセルの UV サイズ（1/width, 1/height）
+    float pcfRadius;            ///< PCF のタップ間隔（テクセル単位。0 以下なら 1 タップ＝PCF 無効）
 };
 
 ConstantBuffer<ShadowData> gShadowParams : register(b6);
 Texture2D<float> gShadowMap : register(t4);
-SamplerState gShadowSampler : register(s2);              // s2 = Linear Clamp
-SamplerComparisonState gShadowCmpSampler : register(s3); // s3 = 深度比較サンプラ (PCF用)
+SamplerState gShadowSampler : register(s2);              // s2 = リニア＋クランプ
+SamplerComparisonState gShadowCmpSampler : register(s3); // s3 = 深度比較サンプラ（PCF 用）
 
 // ----------------------------------------------------------------------------
-// PCF (Percentage Closer Filtering)
+// PCF（Percentage Closer Filtering）による影判定
 //   3x3 のタップを比較サンプラで取り、「光が当たっている率」を 0〜1 で返す。
 //   比較サンプラ自体が 1 タップあたり 2x2 のバイリニア比較を行うため、
 //   3x3 タップと合わせて実質 6x6 相当の滑らかさが得られる。
 // ----------------------------------------------------------------------------
+/// @brief 平行光源のシャドウマップを PCF で引き、「光が当たっている率」を求める
+/// @param uv           シャドウマップ上の UV
+/// @param compareDepth 比較する深度（受光点のライト空間深度からバイアスを引いた値）
+/// @return 光が当たっている率（0: 完全に影、1: 影なし）
 float SampleShadowPCF(float2 uv, float compareDepth)
 {
     // PCF 無効時（半径0以下）は 1 タップだけ取る
@@ -63,31 +78,33 @@ float SampleShadowPCF(float2 uv, float compareDepth)
 //   Object3d.PS 側でスポットライトの寄与に「光が当たっている率」を掛けることで、
 //   壁を挟んだ向こう側へ光が漏れなくなる。
 // ----------------------------------------------------------------------------
-static const uint MAX_SPOT_SHADOWS = 32;
+static const uint MAX_SPOT_SHADOWS = 32; ///< 影を持てるライト（＝アトラスのタイル）の最大数
 
+/// @brief 影を落とすライト 1 灯ぶんの投影情報
 struct SpotShadowEntry
 {
-    matrix lightViewProjection; // ライト視点の ViewProjection
-    float nearZ;                // ライト視点の near
-    float farZ;                 // ライト視点の far（= 到達距離）
-    float tanHalfFov;           // 照射半角の tan
-    float pad;
-    float3 lightPosition;       // ライトのワールド座標（真下向きモードで使う）
-    float pad2;
+    matrix lightViewProjection; ///< ライト視点の ViewProjection
+    float nearZ;                ///< ライト視点の near
+    float farZ;                 ///< ライト視点の far（＝到達距離）
+    float tanHalfFov;           ///< 照射半角の tan
+    float pad;                  ///< パディング
+    float3 lightPosition;       ///< ライトのワールド座標（真下向きモードで使う）
+    float pad2;                 ///< パディング
 };
 
+/// @brief シャドウアトラスの設定（b7）
 cbuffer SpotShadowCB : register(b7)
 {
-    SpotShadowEntry gSpotShadowEntries[MAX_SPOT_SHADOWS];
-    uint gSpotShadowCount;
-    uint gSpotShadowTilesX;
-    uint gSpotShadowTilesY;
-    float gSpotShadowTileSizePx;      // タイル 1 枚の解像度 (px)
-    float2 gSpotShadowAtlasTexelSize; // アトラス 1 テクセルの UV サイズ
-    float gSpotShadowBias;            // 定数バイアス（ワールド単位の線形距離）
-    float gSpotShadowSlopeBias;       // 斜面バイアス係数
-    float gSpotShadowPcfRadius;       // PCF タップ間隔（テクセル単位。0以下で1タップ）
-    float3 _padSpotShadow;
+    SpotShadowEntry gSpotShadowEntries[MAX_SPOT_SHADOWS]; ///< ライトごとの投影情報（shadowIndex で引く）
+    uint gSpotShadowCount;            ///< 有効なエントリ数
+    uint gSpotShadowTilesX;           ///< アトラスの横方向のタイル数
+    uint gSpotShadowTilesY;           ///< アトラスの縦方向のタイル数
+    float gSpotShadowTileSizePx;      ///< タイル 1 枚の解像度（px）
+    float2 gSpotShadowAtlasTexelSize; ///< アトラス 1 テクセルの UV サイズ
+    float gSpotShadowBias;            ///< 定数バイアス（ワールド単位の線形距離）
+    float gSpotShadowSlopeBias;       ///< 斜面バイアス係数
+    float gSpotShadowPcfRadius;       ///< PCF のタップ間隔（テクセル単位。0 以下で 1 タップ）
+    float3 _padSpotShadow;            ///< パディング
 };
 
 Texture2D<float> gSpotShadowAtlas : register(t5);
@@ -97,6 +114,7 @@ Texture2D<float> gSpotShadowAtlas : register(t5);
 /// @param samplePos   遮蔽を調べる位置（ワールド座標）
 /// @param N           受光点の法線（正規化済み）
 /// @param L           受光点 → ライトの方向（正規化済み）
+/// @return 光が当たっている率（0: 完全に影、1: 影なし。タイル範囲外・無効な番号は 1）
 float SampleShadowTile(int shadowIndex, float3 samplePos, float3 N, float3 L)
 {
     if (shadowIndex < 0 || (uint)shadowIndex >= gSpotShadowCount)
@@ -162,7 +180,7 @@ float SampleShadowTile(int shadowIndex, float3 samplePos, float3 N, float3 L)
     float2 uv = tileOrigin + tileUV * tileScale;
 
     // -----------------
-    // PCF 3x3
+    // PCF（3x3 タップ）
     // -----------------
     if (gSpotShadowPcfRadius <= 0.0f)
     {
@@ -189,6 +207,7 @@ float SampleShadowTile(int shadowIndex, float3 samplePos, float3 N, float3 L)
 /// @param worldPos    受光点のワールド座標
 /// @param N           受光点の法線（正規化済み）
 /// @param L           受光点 → ライトの方向（正規化済み）
+/// @return 光が当たっている率（0: 完全に影、1: 影なし）
 float SampleSpotShadow(int shadowIndex, float3 worldPos, float3 N, float3 L)
 {
     return SampleShadowTile(shadowIndex, worldPos, N, L);
@@ -206,6 +225,7 @@ float SampleSpotShadow(int shadowIndex, float3 worldPos, float3 N, float3 L)
 /// @param worldPos    受光点のワールド座標
 /// @param N           受光点の法線（正規化済み）
 /// @param L           受光点 → ライトの方向（正規化済み）
+/// @return 光が当たっている率（0: 完全に影、1: 影なし）
 float SampleOmniShadowDown(int shadowIndex, float3 worldPos, float3 N, float3 L)
 {
     if (shadowIndex < 0 || (uint)shadowIndex >= gSpotShadowCount)

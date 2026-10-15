@@ -35,11 +35,11 @@ int SkyboxManager::Create(const std::string &ddsPath) {
     return -1;
   }
 
-  // テクスチャのロード（DDS cubemap）
+  // テクスチャのロード（DDS のキューブマップ）
   D3D12_GPU_DESCRIPTOR_HANDLE srv = texman_->Load(ddsPath, false);
 
   // Skybox.PS は TextureCube でサンプリングする。
-  // ファイルが見つからないと TextureManager は白1x1 の Texture2D で代替するが、
+  // ファイルが見つからないと TextureManager は白 1x1 の Texture2D で代替するが、
   // Texture2D の SRV を TextureCube として読むのは D3D12 では未定義動作で、
   // GPU が無関係な VRAM（前フレームのレンダーターゲット等）を読んでしまい
   // 空の部分に残像・縞模様が出る。ここで弾いて絶対に描かせない。

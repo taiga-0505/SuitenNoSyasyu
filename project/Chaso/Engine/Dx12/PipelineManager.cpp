@@ -9,7 +9,7 @@
 void PipelineManager::Init(ID3D12Device *device, DXGI_FORMAT rtvFmt,
                            DXGI_FORMAT dsvFmt) {
   // ====================
-  // Device
+  // デバイス
   // ====================
   // デバイス設定
   device_ = device;
@@ -17,7 +17,7 @@ void PipelineManager::Init(ID3D12Device *device, DXGI_FORMAT rtvFmt,
   dsvFmt_ = dsvFmt;
 
   // ====================
-  // Compiler
+  // コンパイラ
   // ====================
   // シェーダーコンパイラ初期化
   if (!compiler_.Init()) {
@@ -28,7 +28,7 @@ void PipelineManager::Init(ID3D12Device *device, DXGI_FORMAT rtvFmt,
 
 void PipelineManager::Term() {
   // ====================
-  // Pipeline Release
+  // パイプライン解放
   // ====================
   // 登録済みパイプライン解放
   for (auto &kv : pipelines_) {
@@ -43,7 +43,7 @@ void PipelineManager::Term() {
 GraphicsPipeline *PipelineManager::Create(const std::string &key,
                                           const PipelineDesc &desc) {
   // ====================
-  // Validate
+  // 入力チェック
   // ====================
   // シェーダーパス確認
   assert(!desc.vsPath.empty());
@@ -141,7 +141,7 @@ GraphicsPipeline *PipelineManager::CreateFromFiles(
     const std::wstring &psPath, InputLayoutType layoutType,
     const GPipelineOptions &opt) {
   // ====================
-  // Desc
+  // 設定
   // ====================
   // パイプライン設定生成
   PipelineDesc d{};
@@ -159,7 +159,7 @@ GraphicsPipeline *PipelineManager::CreateFromFiles(
 #endif
 
   // ====================
-  // Create
+  // 作成
   // ====================
   // パイプライン作成
   return Create(key, d);
@@ -167,7 +167,7 @@ GraphicsPipeline *PipelineManager::CreateFromFiles(
 
 GraphicsPipeline *PipelineManager::Get(const std::string &key) {
   // ====================
-  // Find
+  // 検索
   // ====================
   // 登録済みパイプライン取得
   auto it = pipelines_.find(key);
@@ -176,7 +176,7 @@ GraphicsPipeline *PipelineManager::Get(const std::string &key) {
 
 bool PipelineManager::Rebuild(const std::string &key) {
   // ====================
-  // Find
+  // 検索
   // ====================
   // 対象パイプライン取得
   auto it = pipelines_.find(key);
@@ -186,7 +186,7 @@ bool PipelineManager::Rebuild(const std::string &key) {
   const PipelineDesc &d = it->second.desc;
 
   // ====================
-  // Compile
+  // コンパイル
   // ====================
   // シェーダー設定
   ShaderDesc vs{};
@@ -217,7 +217,7 @@ bool PipelineManager::Rebuild(const std::string &key) {
   }
 
   // ====================
-  // Rebuild
+  // 再構築
   // ====================
   // パイプライン再構築
   it->second.pipeline->Term();
@@ -239,7 +239,7 @@ bool PipelineManager::Rebuild(const std::string &key) {
 
 void PipelineManager::RebuildAll() {
   // ====================
-  // Rebuild
+  // 再構築
   // ====================
   // 全パイプライン再ビルド
   for (auto &kv : pipelines_) {
@@ -251,7 +251,7 @@ GraphicsPipeline *PipelineManager::createFromBlobs_(
     const std::string &key, const PipelineDesc &desc, IDxcBlob *vs,
     IDxcBlob *ps, const D3D12_CACHED_PIPELINE_STATE &cachedPSO) {
   // ====================
-  // Create
+  // 作成
   // ====================
   // パイプライン登録
   Entry e;
@@ -277,15 +277,15 @@ GraphicsPipeline *PipelineManager::createFromBlobs_(
       const std::string cacheKey = makePsoCacheKey_(key, desc);
       auto &cache = psoCache_[cacheKey];
 
-      // PSOデータ
+      // PSO データ
       cache.psoData.assign((uint8_t *)blob->GetBufferPointer(),
                            (uint8_t *)blob->GetBufferPointer() +
                                blob->GetBufferSize());
-      // VSデータ
+      // VS データ
       cache.vsData.assign((uint8_t *)vs->GetBufferPointer(),
                           (uint8_t *)vs->GetBufferPointer() +
                               vs->GetBufferSize());
-      // PSデータ
+      // PS データ
       cache.psData.assign((uint8_t *)ps->GetBufferPointer(),
                           (uint8_t *)ps->GetBufferPointer() +
                               ps->GetBufferSize());
@@ -328,25 +328,25 @@ void PipelineManager::LoadCache(const std::string &filePath) {
 
     PsoCache cache;
 
-    // PSO
+    // PSO データ
     size_t psoSize = 0;
     ifs.read((char *)&psoSize, sizeof(psoSize));
     cache.psoData.resize(psoSize);
     ifs.read((char *)cache.psoData.data(), psoSize);
 
-    // VS
+    // VS データ
     size_t vsSize = 0;
     ifs.read((char *)&vsSize, sizeof(vsSize));
     cache.vsData.resize(vsSize);
     ifs.read((char *)cache.vsData.data(), vsSize);
 
-    // PS
+    // PS データ
     size_t psSize = 0;
     ifs.read((char *)&psSize, sizeof(psSize));
     cache.psData.resize(psSize);
     ifs.read((char *)cache.psData.data(), psSize);
 
-    // 日時
+    // 更新日時
     ifs.read((char *)&cache.vsTime, sizeof(cache.vsTime));
     ifs.read((char *)&cache.psTime, sizeof(cache.psTime));
 
@@ -379,22 +379,22 @@ void PipelineManager::SaveCache(const std::string &filePath) {
     ofs.write((const char *)&keyLen, sizeof(keyLen));
     ofs.write(kv.first.data(), keyLen);
 
-    // PSO
+    // PSO データ
     size_t psoSize = kv.second.psoData.size();
     ofs.write((const char *)&psoSize, sizeof(psoSize));
     ofs.write((const char *)kv.second.psoData.data(), psoSize);
 
-    // VS
+    // VS データ
     size_t vsSize = kv.second.vsData.size();
     ofs.write((const char *)&vsSize, sizeof(vsSize));
     ofs.write((const char *)kv.second.vsData.data(), vsSize);
 
-    // PS
+    // PS データ
     size_t psSize = kv.second.psData.size();
     ofs.write((const char *)&psSize, sizeof(psSize));
     ofs.write((const char *)kv.second.psData.data(), psSize);
 
-    // 日時
+    // 更新日時
     ofs.write((const char *)&kv.second.vsTime, sizeof(kv.second.vsTime));
     ofs.write((const char *)&kv.second.psTime, sizeof(kv.second.psTime));
   }
@@ -413,7 +413,7 @@ std::string PipelineManager::makePsoCacheKey_(const std::string &key,
 std::vector<D3D12_INPUT_ELEMENT_DESC>
 PipelineManager::MakeInputLayout(InputLayoutType type) {
   // ====================
-  // InputLayout
+  // 入力レイアウト
   // ====================
   // レイアウト生成
   switch (type) {
@@ -504,7 +504,7 @@ PipelineManager::MakeInputLayout(InputLayoutType type) {
 
 std::string PipelineManager::MakeKey(std::string_view prefix, BlendMode mode) {
   // ====================
-  // Key
+  // キー
   // ====================
   // ブレンドモード別キー生成
   const char *suffix = "normal";
@@ -548,7 +548,7 @@ void PipelineManager::RegisterDefaultPipelines() {
   LoadCache("Resources/Shader/pso_cache.bin");
 
   // ====================
-  // Shader Paths
+  // シェーダーパス
   // ====================
   // 既定シェーダーパス
   const std::wstring objVs =
@@ -574,11 +574,11 @@ void PipelineManager::RegisterDefaultPipelines() {
   const std::wstring prim3dPs =
       L"Resources/Shader/Primitive3D/Primitive3D.PS.hlsl";
 
-  // fullscreen fog overlay (cold mist)
+  // 画面全体に掛けるフォグオーバーレイ（冷たい霧）
   const std::wstring fogFx = L"Resources/Shader/Post/FogOverlay.hlsl";
 
   // ====================
-  // Helpers
+  // ヘルパー
   // ====================
   // 登録ヘルパー
   auto regSet = [&](std::string_view prefix, const std::wstring &vs,
@@ -619,7 +619,7 @@ void PipelineManager::RegisterDefaultPipelines() {
   };
 
   // ====================
-  // Register
+  // 登録
   // ====================
   // object3d：深度ON、書き込みON、基本BACKカリング
   regSet("object3d", objVs, objPs, InputLayoutType::Object3D,
@@ -684,7 +684,7 @@ void PipelineManager::RegisterDefaultPipelines() {
     GPipelineOptions opt{};
     opt.rootType = RootSignatureType::Object3D;
     opt.enableDepth = true;
-    opt.enableDepthWrite = false; // DepthWriteMask = ZERO
+    opt.enableDepthWrite = false; // 深度は書き込まない（DepthWriteMask = ZERO）
     opt.enableAlphaBlend = false;
     opt.blendMode = kBlendModeNone;
     opt.cull = D3D12_CULL_MODE_NONE; // 内側を見るためカリング無し
@@ -762,7 +762,7 @@ void PipelineManager::RegisterDefaultPipelines() {
     // インスタンシング (Object3DInstancing)
     opt.rootType = RootSignatureType::Object3DInstancing;
     CreateFromFiles(MakeKey("shadow_inst", kBlendModeNone), shadowInstVs, shadowPs,
-                    InputLayoutType::Object3D, opt); // インスタンス用レイアウトは通常と同じか確認（Object3DInstancingの場合はSRVで受け取るので通常と同じでOK）
+                    InputLayoutType::Object3D, opt); // Object3DInstancing はインスタンスデータを SRV で受け取るので、入力レイアウトは通常と同じでよい
 
     // スキニング (Object3DSkin)
     opt.rootType = RootSignatureType::Object3DSkin;
@@ -807,7 +807,7 @@ void PipelineManager::RegisterDefaultPipelines() {
                     InputLayoutType::Object3DSkin, opt);
   }
 
-  // 単体
+  // ガラス：単体
   {
     GPipelineOptions opt{};
     opt.rootType = RootSignatureType::Object3D;
@@ -835,7 +835,7 @@ void PipelineManager::RegisterDefaultPipelines() {
                     objVs, glassPs, InputLayoutType::Object3D, opt);
   }
 
-  // instancing版も欲しければ
+  // ガラス：インスタンシング版
   {
     GPipelineOptions opt{};
     opt.rootType = RootSignatureType::Object3DInstancing;
@@ -849,7 +849,7 @@ void PipelineManager::RegisterDefaultPipelines() {
                     objVsInst, glassPs, InputLayoutType::Object3D, opt);
   }
 
-  // instancing背面用
+  // ガラス：インスタンシング版の背面用
   {
     GPipelineOptions opt{};
     opt.rootType = RootSignatureType::Object3DInstancing;
@@ -865,7 +865,7 @@ void PipelineManager::RegisterDefaultPipelines() {
   }
 
   // ====================
-  // Water Ball Shader
+  // 水球シェーダー（Water Ball）
   // ====================
   const std::wstring waterBallPs =
       L"Resources/Shader/Object3d/Object3D_WaterBall.PS.hlsl";
@@ -899,7 +899,7 @@ void PipelineManager::RegisterDefaultPipelines() {
   }
 
   // ====================
-  // Water Column Shader
+  // 水柱シェーダー（Water Column）
   // ====================
   const std::wstring waterColumnPs =
       L"Resources/Shader/Object3d/Object3D_WaterColumn.PS.hlsl";
@@ -1020,7 +1020,7 @@ void PipelineManager::RegisterDefaultPipelines() {
   }
 
   // ============================================================
-  // View Shading デバッグパイプライン
+  // ビューシェーディング（View Shading）のデバッグパイプライン
   // ============================================================
   {
     const std::wstring faceOriPs =
@@ -1030,7 +1030,7 @@ void PipelineManager::RegisterDefaultPipelines() {
     const std::wstring solidShadingPs =
         L"Resources/Shader/Object3d/Object3D_SolidShading.PS.hlsl";
 
-    // --- FaceOrientation (カリング無し：裏面を可視化する必要がある) ---
+    // --- FaceOrientation（カリング無し：裏面を可視化する必要がある） ---
     {
       GPipelineOptions opt{};
       opt.rootType = RootSignatureType::Object3D;
@@ -1054,7 +1054,7 @@ void PipelineManager::RegisterDefaultPipelines() {
                       objVsSkin, faceOriPs, InputLayoutType::Object3DSkin, opt);
     }
 
-    // --- RandomColor ---
+    // --- RandomColor（マテリアル色から決めたランダム色で塗り分ける） ---
     {
       GPipelineOptions opt{};
       opt.rootType = RootSignatureType::Object3D;
@@ -1078,7 +1078,7 @@ void PipelineManager::RegisterDefaultPipelines() {
                       objVsSkin, randColorPs, InputLayoutType::Object3DSkin, opt);
     }
 
-    // --- SolidShading (Half-Lambert) ---
+    // --- SolidShading（ハーフランバート） ---
     {
       GPipelineOptions opt{};
       opt.rootType = RootSignatureType::Object3D;
@@ -1112,7 +1112,7 @@ void PipelineManager::RegisterDefaultPipelines() {
     const std::wstring waterPs =
         L"Resources/Shader/Water/Water.PS.hlsl";
 
-    // αブレンド ON / 深度テスト ON / 深度書き込み OFF / カリング無し
+    // αブレンド ON / 深度テスト OFF / 深度書き込み OFF / カリング無し
     GPipelineOptions opt{};
     opt.rootType = RootSignatureType::Water;
     opt.enableDepth = false; // DSVをnullptrで描画できるように深度テストを無効化
@@ -1126,9 +1126,9 @@ void PipelineManager::RegisterDefaultPipelines() {
   }
 
   // ====================
-  // PostProcess
+  // ポストプロセス
   // ====================
-  // 共通フルスクリーンVS
+  // 共通フルスクリーン VS
   const std::wstring fullscreenVs =
       L"Resources/Shader/Fullscreen/Fullscreen.VS.hlsl";
 
@@ -1444,7 +1444,7 @@ void PipelineManager::RegisterDefaultPipelines() {
   }
 
   // ====================
-  // Compute Shader
+  // コンピュートシェーダー
   // ====================
   // skinning_cs: Compute Shader スキニング
   CreateCompute("skinning_cs",
@@ -1621,13 +1621,13 @@ void PipelineManager::RegisterDefaultPipelines() {
   SaveCache("Resources/Shader/pso_cache.bin");
 
   // ============================================================
-  // Compute Pipelines
+  // コンピュートパイプライン
   // ============================================================
   CreateCompute("wave_simulation", L"Resources/Shader/Water/WaveSimulation.CS.hlsl", RootSignatureType::WaveSimulationCS);
 }
 
 // ============================================================================
-// Compute Pipeline
+// コンピュートパイプライン
 // ============================================================================
 
 void PipelineManager::CreateCompute(const std::string &key,
@@ -1653,7 +1653,7 @@ void PipelineManager::CreateCompute(const std::string &key,
                            key, logger.ConvertString(csPath), CS.Log()));
   }
 
-  // --- Root Signature 構築 ---
+  // --- ルートシグネチャ構築 ---
   D3D12_ROOT_PARAMETER params[5] = {};
   D3D12_DESCRIPTOR_RANGE ranges[3] = {};
   UINT paramCount = 0;
@@ -1661,7 +1661,7 @@ void PipelineManager::CreateCompute(const std::string &key,
   if (rootType == RootSignatureType::InitParticleCS ||
       rootType == RootSignatureType::UpdateParticleCS ||
       rootType == RootSignatureType::EmitParticleCS) {
-    // InitParticleCS / UpdateParticleCS / EmitParticleCS:
+    // InitParticleCS / UpdateParticleCS / EmitParticleCS 共通の構成:
     // UAV u0 (Particles) + UAV u1 (FreeListIndex) + UAV u2 (FreeList) + CBV b0 (PerFrame)
     ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
     ranges[0].BaseShaderRegister = 0;
@@ -1685,25 +1685,25 @@ void PipelineManager::CreateCompute(const std::string &key,
       params[i].DescriptorTable.pDescriptorRanges = &ranges[i];
     }
 
-    // CBV b0: PerFrame (deltaTime)
+    // CBV b0: フレームごとの定数（PerFrame。deltaTime など）
     params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     params[3].Descriptor.ShaderRegister = 0;
 
     paramCount = 4;
   } else if (rootType == RootSignatureType::SkinningCS) {
-    // SkinningCS: SRV t0, SRV t1, UAV u0, CBV b0
-    // 0: SRV t0 MatrixPalette
+    // SkinningCS の構成: SRV t0, SRV t1, UAV u0, CBV b0
+    // 0: SRV t0 行列パレット（MatrixPalette）
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
     params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     params[0].Descriptor.ShaderRegister = 0;
 
-    // 1: SRV t1 InputVertices
+    // 1: SRV t1 入力頂点（InputVertices）
     params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
     params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     params[1].Descriptor.ShaderRegister = 1;
 
-    // 2: UAV u0 OutputVertices (descriptor table)
+    // 2: UAV u0 出力頂点（OutputVertices。ディスクリプタテーブル）
     ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
     ranges[0].BaseShaderRegister = 0;
     ranges[0].NumDescriptors = 1;
@@ -1714,20 +1714,20 @@ void PipelineManager::CreateCompute(const std::string &key,
     params[2].DescriptorTable.NumDescriptorRanges = 1;
     params[2].DescriptorTable.pDescriptorRanges = &ranges[0];
 
-    // 3: CBV b0 SkinningInformation
+    // 3: CBV b0 スキニング情報（SkinningInformation）
     params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     params[3].Descriptor.ShaderRegister = 0;
 
     paramCount = 4;
   } else if (rootType == RootSignatureType::WaveSimulationCS) {
-    // WaveSimulationCS: CBV b0, SRV t0 (table), SRV t1 (table), UAV u0 (table)
-    // 0: CBV b0 SimulationParams
+    // WaveSimulationCS の構成: CBV b0, SRV t0（テーブル）, SRV t1（テーブル）, UAV u0（テーブル）
+    // 0: CBV b0 シミュレーションのパラメータ（SimulationParams）
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     params[0].Descriptor.ShaderRegister = 0;
 
-    // 1: SRV table t0 gPrevHeight
+    // 1: SRV table t0 1 ステップ前の高さ（gPrevHeight）
     ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[0].BaseShaderRegister = 0;
     ranges[0].NumDescriptors = 1;
@@ -1738,7 +1738,7 @@ void PipelineManager::CreateCompute(const std::string &key,
     params[1].DescriptorTable.NumDescriptorRanges = 1;
     params[1].DescriptorTable.pDescriptorRanges = &ranges[0];
 
-    // 2: SRV table t1 gPrevPrevHeight
+    // 2: SRV table t1 2 ステップ前の高さ（gPrevPrevHeight）
     ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[1].BaseShaderRegister = 1;
     ranges[1].NumDescriptors = 1;
@@ -1749,7 +1749,7 @@ void PipelineManager::CreateCompute(const std::string &key,
     params[2].DescriptorTable.NumDescriptorRanges = 1;
     params[2].DescriptorTable.pDescriptorRanges = &ranges[1];
 
-    // 3: UAV table u0 gOutHeight
+    // 3: UAV table u0 出力する高さ（gOutHeight）
     ranges[2].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
     ranges[2].BaseShaderRegister = 0;
     ranges[2].NumDescriptors = 1;
@@ -1791,7 +1791,7 @@ void PipelineManager::CreateCompute(const std::string &key,
   std::wstring rootName = std::wstring(key.begin(), key.end()) + L"::RootSignature";
   entry.root->SetName(rootName.c_str());
 
-  // --- Compute PSO 構築 ---
+  // --- コンピュート PSO 構築 ---
   D3D12_COMPUTE_PIPELINE_STATE_DESC psoDesc{};
   psoDesc.pRootSignature = entry.root.Get();
   psoDesc.CS = {CS.Blob()->GetBufferPointer(), CS.Blob()->GetBufferSize()};

@@ -235,10 +235,10 @@ void NormalState::Update(Scene::SceneManager &sm, SceneContext &ctx) {
     Log::Print("[SceneState] NormalState -> FadeOutState (requested: " + sm.requested_ + ", " +
                TransitionLogName(sm.transition_) + ")");
 
-    // Dissolveエフェクトを開始
+    // Dissolve エフェクトを開始
     RC::AddPostEffect(PostEffectType::Dissolve);
 
-    // 固定ノイズ (インデックス0) を使用する
+    // 固定ノイズ（インデックス 0）を使用する
     RC::SetDissolveNoiseIndex(0);
 
     RC::SetDissolveThreshold(0.0f);
@@ -293,11 +293,11 @@ void FadeOutState::Render(Scene::SceneManager &sm, SceneContext &ctx,
 // =================================================================
 void LoadingState::Update(Scene::SceneManager &sm, SceneContext &ctx) {
   if (!loaded_) {
-    // 画面が真っ黒（完全にDissolveされた状態）でシーン切り替え
+    // 画面が真っ黒（完全に Dissolve された状態）でシーン切り替え
     sm.ChangeImmediately(sm.requested_, ctx);
     loaded_ = true;
 
-    // ChangeImmediately内でClearPostEffectsが呼ばれるため、再度Dissolveを適用
+    // ChangeImmediately 内で ClearPostEffects が呼ばれるため、再度 Dissolve を適用
     RC::AddPostEffect(PostEffectType::Dissolve);
     RC::SetDissolveThreshold(1.0f);
     ApplyDissolveLook(sm.transition_);
@@ -309,10 +309,10 @@ void LoadingState::Update(Scene::SceneManager &sm, SceneContext &ctx) {
       ctx.postProcess->SetGrayscaleLerpFactor(1.0f);
     }
 
-    // フェードインを開始（Dissolveから復帰）
+    // フェードインを開始（Dissolve から復帰）
     sm.ChangeState(std::make_unique<FadeInState>());
 
-    // 新しいシーンの初期位置構成のため1回目だけUpdateを呼び、各オブジェクトの位置を決定
+    // 新しいシーンの初期位置構成のため 1 回目だけ Update を呼び、各オブジェクトの位置を決定
     if (sm.current_) {
       sm.current_->Update(sm, ctx);
 
@@ -329,7 +329,7 @@ void LoadingState::Update(Scene::SceneManager &sm, SceneContext &ctx) {
 }
 void LoadingState::Render(Scene::SceneManager &sm, SceneContext &ctx,
                           ID3D12GraphicsCommandList *cl) {
-  // 画面は完全にDissolveされた状態
+  // 画面は完全に Dissolve された状態
   RC::PreDraw3D(ctx, cl);
   RC::PreDraw2D(ctx, cl);
 }
@@ -447,7 +447,7 @@ void Scene::SceneManager::Init(SceneContext &ctx) {
     return RequestChange(name, transition);
   });
 
-  // Fadeコンポーネントを初期化
+  // Fade コンポーネントを初期化
   fade_ = std::make_unique<Fade>();
   fade_->Init(ctx, width, height);
 
@@ -587,12 +587,12 @@ void Scene::SceneManager::RestoreCurrentScene(SceneContext &ctx) {
 }
 
 void Scene::SceneManager::Update(SceneContext &ctx) {
-  // 常にFadeの更新は行う
+  // 常に Fade の更新は行う
   if (fade_) {
     fade_->Update();
   }
 
-  // 現在の状態に更新処理を委譲（シーンのUpdate内でカメラモード切替等が行われる）
+  // 現在の状態に更新処理を委譲（シーンの Update 内でカメラモード切替等が行われる）
   if (state_) {
     state_->Update(*this, ctx);
   }
@@ -683,7 +683,7 @@ bool Scene::SceneManager::CreateNewScene(const std::string& name, const std::str
     // 新しいシーン名で保存し直す。
     scene->Save();
   } else {
-    // デフォルトのエンティティを追加 (Unityライクな初期状態)
+    // デフォルトのエンティティを追加（Unity ライクな初期状態）
     // NOTE: Scene::CreateEntity() は TransformComponent を自動付与しないため、
     //       呼び出し側で必ず明示的に AddComponent すること。
     //       Transform が無いと DataDrivenScene 側の同期ループ・FindMainCamera・

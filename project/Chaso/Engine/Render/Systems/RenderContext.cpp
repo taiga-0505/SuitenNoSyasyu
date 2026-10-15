@@ -9,7 +9,7 @@
 #include "Common/SceneContext.h"
 #include "AppConfig.h" // SceneContext::app の画面サイズを参照する
 #include "Graphics/PostProcess/PostProcess.h"
-#include "Graphics/Texture/RenderTexture/RenderTexture.h" // マスクRT（unique_ptr の実体化に必要）
+#include "Graphics/Texture/RenderTexture/RenderTexture.h" // マスク RT（unique_ptr の実体化に必要）
 #include "RenderCommon.h"
 #include <algorithm>
 #include <cassert>
@@ -59,22 +59,22 @@ void RenderContext::Init(SceneContext &ctx) {
   spLightMan_.Init(device_.Get());
   arLightMan_.Init(device_.Get());
 
-  // CameraCB
+  // カメラ CB
   cameraCBMapped_ = cameraCB_.Ptr(); // DynamicCB（バインド時に今フレームの領域へ送る）
 
-  // FogOverlayCB
+  // フォグオーバーレイ CB
   fogCBMapped_ = fogCB_.Ptr(); // DynamicCB（バインド時に今フレームの領域へ送る）
   if (fogCBMapped_) {
     *fogCBMapped_ = FogOverlayCB{};
   }
 
-  // ShadowCB
+  // シャドウ CB
   shadowCBMapped_ = shadowCB_.Ptr(); // DynamicCB（バインド時に今フレームの領域へ送る）
   if (shadowCBMapped_) {
     *shadowCBMapped_ = ShadowParams{};
   }
 
-  // ShadowMap 初期化 (例: 2048x2048)
+  // シャドウマップ初期化（2048x2048）
   shadowMap_.Create(ctx.core, 2048, 2048);
   shadowCBBoundAddr_ = 0; // 0 = 平行光源の影の CB（shadowCB_）を使う
 
@@ -133,7 +133,7 @@ void RenderContext::Init(SceneContext &ctx) {
     modelMan_.SetSkinningCS(ctxRef_->pipelineManager, &ctx.core->SRVMan());
   }
 
-  // Dissolve ノイズテクスチャ初期化 (TextureManager が有効な状態で行う)
+  // Dissolve ノイズテクスチャ初期化（TextureManager が有効な状態で行う）
   if (postProcess_) {
     postProcess_->InitDissolveNoiseTextures();
   }
@@ -220,7 +220,7 @@ void RenderContext::Term() {
 }
 
 // ============================================================================
-// Camera
+// カメラ
 // ============================================================================
 
 void RenderContext::SetCamera(const Matrix4x4 &view, const Matrix4x4 &proj,
@@ -309,7 +309,7 @@ void RenderContext::PreDraw3D(SceneContext &ctx, ID3D12GraphicsCommandList *cl) 
   spotShadowAtlasOpen_ = false;
   currentSpotShadowTile_ = -1;
 
-  // CS スキニングの一括Dispatch
+  // CS スキニングを一括で Dispatch する
   modelMan_.DispatchAllSkinning(cl, CurrentFrame());
 
   if (auto *prim = EnsurePrimitive3D()) {
@@ -330,7 +330,7 @@ void RenderContext::PreDraw2D(SceneContext &ctx, ID3D12GraphicsCommandList *cl) 
   spotShadowCBMapped_ = nullptr;
   spotShadowCBAddr_ = spotShadowFallbackCB_ ? spotShadowFallbackCB_->GetGPUVirtualAddress() : 0;
 
-  // 2D Viewport / Scissor
+  // 2D 用のビューポート／シザー矩形（画面全体）
   D3D12_VIEWPORT viewport{};
   viewport.TopLeftX = 0.0f;
   viewport.TopLeftY = 0.0f;
@@ -376,7 +376,7 @@ void RenderContext::ResumeDraw2D(SceneContext &ctx, ID3D12GraphicsCommandList *c
 
   // ※ Execute3DCommands / BeginFrame は呼ばない（PreDraw2D 済みの続きとして描く）
 
-  // 2D Viewport / Scissor（ポストプロセスが張り替えているので戻す）
+  // 2D 用のビューポート／シザー矩形（ポストプロセスが張り替えているので戻す）
   D3D12_VIEWPORT viewport{};
   viewport.TopLeftX = 0.0f;
   viewport.TopLeftY = 0.0f;
@@ -414,10 +414,10 @@ void RenderContext::PreDraw2DBackground(SceneContext &ctx,
   // ※ ここでは Execute3DCommands() を呼ばない。
   //    3D の描画コマンドは PreDraw2D の中でまとめて発行されるので、
   //    この時点で記録したスプライトは必ず 3D より前に実行される。
-  //    スプライトPSOは深度書き込みOFFなので深度バッファを汚さず、
+  //    スプライト PSO は深度書き込み OFF なので深度バッファを汚さず、
   //    後続のモデルが深度テストに通ってそのまま上書きする＝奥に見える。
 
-  // 2D Viewport / Scissor
+  // 2D 用のビューポート／シザー矩形（画面全体）
   D3D12_VIEWPORT viewport{};
   viewport.TopLeftX = 0.0f;
   viewport.TopLeftY = 0.0f;
@@ -443,7 +443,7 @@ void RenderContext::PreDraw2DBackground(SceneContext &ctx,
   }
 
   // Primitive2D / FontManager の BeginFrame はここでは行わない。
-  // （1フレームに2回呼ぶと頂点リングが二重に進んでしまうため）
+  // （1 フレームに 2 回呼ぶと頂点リングが二重に進んでしまうため）
 
   cl->SetGraphicsRootSignature(pso->Root());
   cl->SetPipelineState(pso->PSO());
@@ -547,14 +547,14 @@ GraphicsPipeline *RenderContext::BindPipeline(std::string_view prefix) {
   cl_->SetGraphicsRootSignature(pso->Root());
   cl_->SetPipelineState(pso->PSO());
 
-  // シャドウマップ・スポット影アトラス（またはHazard回避用ダミー）のバインド
+  // シャドウマップ・スポット影アトラス（またはハザード回避用ダミー）のバインド
   //
   // "mask" も対象に含める。マスク用 PSO は object3d と同じルートシグネチャで、
-  // VS が b6(ShadowParams) を読むため、載せずに描くとルートCBV未設定になる。
+  // VS が b6（ShadowParams）を読むため、載せずに描くとルート CBV 未設定になる。
   if (actualPrefix.find("object3d") != std::string_view::npos ||
       actualPrefix.find("shadow") != std::string_view::npos ||
       actualPrefix.find("mask") != std::string_view::npos) {
-    // Object3DSkin ルートシグネチャだけ 13 番が SkinMatrices(SRV) なので、後続のスロットが 1 つずれる
+    // Object3DSkin ルートシグネチャだけ 13 番が SkinMatrices（SRV）なので、後続のスロットが 1 つずれる
     const bool isSkinRoot = (actualPrefix.find("skin") != std::string_view::npos);
 
     D3D12_GPU_DESCRIPTOR_HANDLE shadowSrv = {};
@@ -620,7 +620,7 @@ GraphicsPipeline *RenderContext::BindPipeline(std::string_view prefix) {
   } else if (actualPrefix == "water") {
     // 水面にも平行光源の影を落とす。
     // Water ルートシグネチャは b6 / t4 を WaterParams / 波紋ハイトマップに使っているので、
-    // 影は 15: b7 (ShadowParams) / 16: t7 (ShadowMap) に載せる（GraphicsPipeline 参照）。
+    // 影は 15: b7（ShadowParams）/ 16: t7（ShadowMap）に載せる（GraphicsPipeline 参照）。
     // 水面はシャドウパス・スポット影アトラスの最中には描かれない（その間 "water" は
     // "shadow" へ振り替わる）ので、ここでのシャドウマップは常に SRV 状態。
     cl_->SetGraphicsRootConstantBufferView(15, shadowCB_.Address());
@@ -660,7 +660,7 @@ void RenderContext::BindAllLightCBs() {
     return;
   }
 
-  // ※ ここではバインドのみ行う。CPU→GPU の転送は SyncLightCBs()（Execute3DCommands の先頭）で 1 回
+  // ※ ここではバインドのみ行う。CPU → GPU の転送は SyncLightCBs()（Execute3DCommands の先頭）で 1 回
   // PointLightCB → RootParam[5]
   if (const D3D12_GPU_VIRTUAL_ADDRESS addr = ptLightMan_.GetCBAddress()) {
     cl_->SetGraphicsRootConstantBufferView(5, addr);
@@ -715,13 +715,13 @@ void RenderContext::UpdateShadowParams(const ShadowParams& params) {
 }
 
 void RenderContext::BindShadow() {
-  // BindPipeline 側でバインドするようになったため、ここでは何もしません。
+  // BindPipeline 側でバインドするようになったため、ここでは何もしない。
 }
 
 void RenderContext::BeginShadowPass() {
   if (!cl_) return;
 
-  // Viewport / Scissor をシャドウマップに合わせる
+  // ビューポート／シザー矩形をシャドウマップに合わせる
   D3D12_VIEWPORT viewport{};
   viewport.TopLeftX = 0.0f;
   viewport.TopLeftY = 0.0f;
@@ -749,7 +749,7 @@ void RenderContext::BeginShadowPass() {
     cl_->SetPipelineState(pso->PSO());
     cl_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-    // Dummy texture binding is now handled inside BindPipeline
+    // ダミーテクスチャのバインドは BindPipeline の中で行う
   }
 }
 
@@ -775,7 +775,7 @@ void RenderContext::EndShadowPass() {
 }
 
 // ============================================================================
-// マスクパス（強調したいオブジェクトのシルエットを白く別RTへ書く）
+// マスクパス（強調したいオブジェクトのシルエットを白く別 RT へ書く）
 // ============================================================================
 
 bool RenderContext::BeginMaskPass() {
@@ -832,7 +832,7 @@ bool RenderContext::BeginMaskPass() {
 }
 
 void RenderContext::EndMaskPass() {
-  // フラグは何があっても必ず降ろす（立ったまま残ると以降の全描画がマスクPSOになる）
+  // フラグは何があっても必ず降ろす（立ったまま残ると以降の全描画がマスク PSO になる）
   isMaskPass_ = false;
   if (!cl_) return;
 
@@ -869,7 +869,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE RenderContext::GetMaskSRVGPU() const {
 }
 
 // ============================================================================
-// Spot Light Shadow（灯ごとの影アトラス）
+// スポットライトの影（灯ごとの影アトラス）
 // ============================================================================
 
 void RenderContext::ApplySpotShadowAtlasInfo_(SpotShadowCB &cb) const {
@@ -929,7 +929,7 @@ void RenderContext::BeginSpotShadowTile(int tileIndex) {
                        static_cast<D3D12_GPU_VIRTUAL_ADDRESS>(kShadowParamsSliceStride) *
                            static_cast<D3D12_GPU_VIRTUAL_ADDRESS>(tileIndex);
 
-  // ビューポート / シザーをこのタイルの矩形へ
+  // ビューポート／シザー矩形をこのタイルの矩形へ
   const uint32_t tileW = spotShadowAtlas_.GetWidth() / kSpotShadowTilesX;
   const uint32_t tileH = spotShadowAtlas_.GetHeight() / kSpotShadowTilesY;
   const uint32_t tx = static_cast<uint32_t>(tileIndex) % kSpotShadowTilesX;
@@ -999,7 +999,7 @@ void RenderContext::EndSpotShadowAtlas() {
 }
 
 // ============================================================================
-// Primitive 遅延生成
+// プリミティブの遅延生成
 // ============================================================================
 
 Primitive2D *RenderContext::EnsurePrimitive2D() {
@@ -1033,7 +1033,7 @@ Primitive3D *RenderContext::EnsurePrimitive3D() {
 }
 
 // ============================================================================
-// Fog CB
+// フォグ CB・3D コマンドキュー
 // ============================================================================
 
 void RenderContext::UpdateFogCB(float timeSec, float intensity, float scale,
@@ -1112,7 +1112,7 @@ void RenderContext::Execute3DCommands() {
   // BindShadow(); // BindPipeline に移行したため不要
 
 
-  // 最初の1フレームだけ自動でダンプを要求する
+  // 最初の 1 フレームだけ自動でダンプを要求する
   static bool s_firstDump = false;
   if (!s_firstDump) {
     dumpCommandOrder_ = true;
@@ -1129,7 +1129,7 @@ void RenderContext::Execute3DCommands() {
   // （影タイル 32 枚 × 全オブジェクトで毎フレーム数千回）。
   SyncLightCBs();
 
-  // 0) ソートキーで安定ソート（sortKey==0 は push 順を維持）
+  // 0) ソートキーで安定ソート（sortKey == 0 は push 順を維持）
   //    深度／マスクだけを書くパスは描く順番で結果が変わらないので並べ替えない
   //    （stable_sort は呼ぶたびに作業バッファを確保する）
   if (!geometryOnlyPass || dumpCommandOrder_) {
@@ -1189,12 +1189,12 @@ void RenderContext::Execute3DCommands() {
     dumpCommandOrder_ = false;
   }
 
-  // 1) プリミティブの頂点転送 (メインパスのみ)
+  // 1) プリミティブの頂点転送（メインパスのみ）
   if (prim3D_ && prim3D_->HasAny() && !geometryOnlyPass) {
     prim3D_->TransferVertices();
   }
 
-  // 持ち越し先はメンバを使い回す（毎パス new/delete しない）
+  // 持ち越し先はメンバを使い回す（毎パス new / delete しない）
   deferredCommands3D_.clear();
 
   // 2) キューに積まれたコマンドを順に実行
@@ -1240,7 +1240,7 @@ void RenderContext::ExecuteOverlay3DCommands() {
     return;
   }
 
-  // 2D の状態（正射影ビューポート・スプライトPSO）から一旦 3D を実行する。
+  // 2D の状態（正射影ビューポート・スプライト PSO）から一旦 3D を実行する。
   // 各コマンドは自前で BindPipeline / BindCameraCB / BindAllLightCBs を行うため、
   // ここで 3D 用のバインドを張り直す必要はない。
   const BlendMode prevBlend = currentBlendMode_;

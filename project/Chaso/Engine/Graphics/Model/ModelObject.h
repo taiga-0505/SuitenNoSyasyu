@@ -23,19 +23,19 @@ class FrameResource; // 前方宣言
 
 // ============================================================
 // ModelObject
-// - 1つのModelMesh(共有)を配置して描画する
-// - ModelMeshが持つ Node/DrawItem を使って「Node行列を反映」して描画できる
-// - Textureは「override（SetTexture）」があればそれを優先。
-//   overrideが無ければ、materialIndexに応じてTextureManagerでロードして使う。
+// - 1 つの ModelMesh（共有）を配置して描画する
+// - ModelMesh が持つ Node / DrawItem を使って「Node 行列を反映」して描画できる
+// - テクスチャは「オーバーライド（SetTexture）」があればそれを優先する。
+//   オーバーライドが無ければ、materialIndex に応じて TextureManager でロードして使う。
 //
-// 内部的に ModelResource（GPUリソース管理）に委譲している。
+// 内部的に ModelResource（GPU リソース管理）に委譲している。
 // このクラスは Transform / 可視性 / ImGui / ライティング設定 を保持するラッパー。
 // ============================================================
 /// @class ModelObject
 /// @brief 共有モデルリソース（ModelMesh）を配置・管理するためのオブジェクトクラス
 /// @details トランスフォーム（座標・回転・スケール）、可視性、ライティング設定、
-/// およびテクスチャのオーバーライド機能を持ちます。
-/// 描画ロジックの詳細は内部の ModelResource クラスに委譲されています。
+///          およびテクスチャのオーバーライド機能を持つ。
+///          描画ロジックの詳細は内部の ModelResource クラスに委譲している。
 class ModelObject {
 public:
   /// @struct LightingConfig
@@ -46,14 +46,23 @@ public:
     float dir[3] = {0.0f, -1.0f, 0.0f};  ///< ライト方向
     float intensity = 1.0f;              ///< ライト強度
 
+    /// @brief 既定値（HalfLambert・白・真下向き・強度 1）で構築する
     constexpr LightingConfig() = default;
+    /// @brief ライティングモードだけを指定して構築する
+    /// @param m ライティングモード
     constexpr LightingConfig(LightingMode m) : mode(m) {}
+    /// @brief 整数のモード値から構築する
+    /// @param m モード値（0〜3 に丸める）
     constexpr LightingConfig(int m)
         : mode(static_cast<LightingMode>(m < 0 ? 0 : (m > 3 ? 3 : m))) {}
   };
 
+  /// @brief コンストラクタ（既定のライティング設定を使う）
   ModelObject() = default;
+  /// @brief ライティング設定を指定して構築する
+  /// @param cfg 初期のライティング設定
   explicit ModelObject(const LightingConfig &cfg) : initialLighting_(cfg) {}
+  /// @brief デストラクタ
   ~ModelObject() = default;
 
   /// @brief オブジェクトを初期化する
@@ -72,10 +81,10 @@ public:
     return resource_.GetMesh();
   }
 
-  /// @brief モデルにUV座標がない場合、球面投影UVを生成する
+  /// @brief モデルに UV 座標がない場合、球面投影 UV を生成する
   void EnsureSphericalUVIfMissing();
 
-  /// @brief モデル全体のテクスチャを1つのハンドルでオーバーライドする
+  /// @brief モデル全体のテクスチャを 1 つのハンドルでオーバーライドする
   /// @param srvGPUHandle 使用するテクスチャの GPU ハンドル
   void SetTexture(D3D12_GPU_DESCRIPTOR_HANDLE srvGPUHandle) {
     resource_.SetTexture(srvGPUHandle);
@@ -106,9 +115,9 @@ public:
   }
 
   /// @brief ライティング設定を個別のパラメータで指定する
-  /// @param mode ライティングモード
-  /// @param color ライトカラー
-  /// @param dir ライト方向
+  /// @param mode      ライティングモード
+  /// @param color     ライトカラー
+  /// @param dir       ライト方向
   /// @param intensity ライト強度
   /// @return 自身への参照
   ModelObject &SetLightingConfig(LightingMode mode,
@@ -139,7 +148,7 @@ public:
   }
 
   /// @brief ライティングモードのオーバーライド値を取得する
-  /// @return -1: DirectionalLight に追従 / 0以上: 固定された LightingMode
+  /// @return -1: DirectionalLight に追従 / 0 以上: 固定された LightingMode
   int GetLightingModeOverride() const { return lightingModeOverride_; }
 
   /// @brief トランスフォーム情報を取得する（読み書き可能）
@@ -149,6 +158,8 @@ public:
   /// @brief マテリアル情報を取得する（読み書き可能）
   /// @return Material ポインタ
   Material *Mat() { return resource_.Mat(); }
+  /// @brief マテリアル情報を取得する（const 版）
+  /// @return Material ポインタ
   const Material *Mat() const { return resource_.Mat(); }
 
   /// @brief オブジェクトのベースカラーを設定する
@@ -158,9 +169,11 @@ public:
   /// @brief ライト情報を取得する（読み書き可能）
   /// @return DirectionalLight ポインタ
   DirectionalLight *Light() { return resource_.Light(); }
+  /// @brief ライト情報を取得する（const 版）
+  /// @return DirectionalLight ポインタ
   const DirectionalLight *Light() const { return resource_.Light(); }
 
-  /// @brief 光沢度（Shininess）を設定する (0.0: 鏡面反射なし)
+  /// @brief 光沢度（Shininess）を設定する（0.0: 鏡面反射なし）
   /// @param shininess 光沢度
   void SetShininess(float shininess) {
     initialShininess_ = shininess;
@@ -179,7 +192,7 @@ public:
   }
 
   /// @brief 環境マップ映り込み係数を設定する（非同期ロード対応）
-  /// @param coeff 係数 (0.0: なし, 1.0: 最大)
+  /// @param coeff 係数（0.0: なし, 1.0: 最大）
   void SetEnvironmentCoefficient(float coeff) {
     initialEnvCoeff_ = coeff;
     if (Material *mat = resource_.Mat()) {
@@ -191,13 +204,13 @@ public:
   /// @return 係数値
   float GetEnvironmentCoefficient() const { return initialEnvCoeff_; }
 
-  /// @brief 外部のライトCBアドレスを指定してライト設定を共有する
-  /// @param addr ライトCBの GPU 仮想アドレス（0 で自前ライトに戻る）
+  /// @brief 外部のライト CB アドレスを指定してライト設定を共有する
+  /// @param addr ライト CB の GPU 仮想アドレス（0 で自前ライトに戻る）
   void SetExternalLightCBAddress(D3D12_GPU_VIRTUAL_ADDRESS addr) {
     resource_.SetExternalLightCBAddress(addr);
   }
 
-  /// @brief 外部ライトCBの GPU 仮想アドレスを取得する
+  /// @brief 外部ライト CB の GPU 仮想アドレスを取得する
   /// @return アドレス値
   D3D12_GPU_VIRTUAL_ADDRESS GetExternalLightCBAddress() const {
     return resource_.GetExternalLightCBAddress();
@@ -237,20 +250,20 @@ public:
   void Update(const RC::Matrix4x4 &view, const RC::Matrix4x4 &proj);
 
   /// @brief ワールド行列を指定してオブジェクトを描画する
-  /// @param cmdList グラフィックスコマンドリスト
-  /// @param world 描画に使用するワールド行列
-  /// @param frame フレームリソース（一時メモリ用）
+  /// @param cmdList   グラフィックスコマンドリスト
+  /// @param world     描画に使用するワールド行列
+  /// @param frame     フレームリソース（一時メモリ用）
   /// @param worldOnly true なら World 行列だけを転送する（シャドウパス用。VS が World しか読まないため
-  ///        WVP / 逆転置行列の計算を省いても結果は変わらない）
+  ///                  WVP / 逆転置行列の計算を省いても結果は変わらない）
   void Draw(ID3D12GraphicsCommandList *cmdList, const RC::Matrix4x4 &world,
             RC::FrameResource &frame, bool worldOnly = false);
 
-  /// @brief 複数のインスタンス（Transformリスト）を一括描画する
-  /// @param cmdList グラフィックスコマンドリスト
-  /// @param view ビュー行列
-  /// @param proj プロジェクション行列
+  /// @brief 複数のインスタンス（Transform リスト）を一括描画する
+  /// @param cmdList   グラフィックスコマンドリスト
+  /// @param view      ビュー行列
+  /// @param proj      プロジェクション行列
   /// @param instances インスタンスごとの Transform 配列
-  /// @param frame フレームリソース
+  /// @param frame     フレームリソース
   /// @param worldOnly true なら World 行列だけを転送する（シャドウパス用）
   void DrawBatch(ID3D12GraphicsCommandList *cmdList, const RC::Matrix4x4 &view,
                  const RC::Matrix4x4 &proj,
@@ -258,12 +271,12 @@ public:
                  RC::FrameResource &frame, bool worldOnly = false);
 
   /// @brief インスタンス一括描画（単色オーバーライド付き）
-  /// @param cmdList グラフィックスコマンドリスト
-  /// @param view ビュー行列
-  /// @param proj プロジェクション行列
+  /// @param cmdList   グラフィックスコマンドリスト
+  /// @param view      ビュー行列
+  /// @param proj      プロジェクション行列
   /// @param instances インスタンスごとの Transform 配列
-  /// @param color 全インスタンスに適用するオーバーライドカラー
-  /// @param frame フレームリソース
+  /// @param color     全インスタンスに適用するオーバーライドカラー
+  /// @param frame     フレームリソース
   /// @param worldOnly true なら World 行列だけを転送する（シャドウパス用）
   void DrawBatch(ID3D12GraphicsCommandList *cmdList, const RC::Matrix4x4 &view,
                  const RC::Matrix4x4 &proj,
@@ -277,17 +290,19 @@ public:
   /// @brief 内部の ModelResource インスタンスを取得する
   /// @return ModelResource への参照
   ModelResource &Resource() { return resource_; }
+  /// @brief 内部の ModelResource インスタンスを取得する（const 版）
+  /// @return ModelResource への const 参照
   const ModelResource &Resource() const { return resource_; }
 
 private:
   /// @brief ライティング設定を GPU リソースに反映する（準備完了時のみ）
   void ApplyLightingIfReady_();
 
-  /// @brief 現在のアニメーションのルートモーション担当Jointを（未判定なら）解決する
-  /// @details スケルトン構築後に一度だけ判定し、結果を rootMotionJointName_ に保持する
+  /// @brief 現在のアニメーションのルートモーション担当 Joint を（未判定なら）解決する
+  /// @details スケルトン構築後に一度だけ判定し、結果を rootMotionJointName_ に保持する。
   void ResolveRootMotionJoint_();
 
-  /// @brief バインドポーズ（rest）のJoint平行移動量を控えておく
+  /// @brief バインドポーズ（rest）の Joint 平行移動量を控えておく
   /// @details CreateSkeleton 直後（アニメーション適用前）に呼ぶこと。
   ///          joint.transform はフレームごとにアニメーション値で上書きされるため、
   ///          後からでは rest 値を取得できない。
@@ -305,11 +320,11 @@ private:
 
   LightingConfig initialLighting_{}; ///< 初期化時または外部から設定されたライティング情報
 
-  int lightingModeOverride_ = -1; ///< -1: DirectionalLight に追従 / 0以上: 固定 LightingMode
+  int lightingModeOverride_ = -1; ///< -1: DirectionalLight に追従 / 0 以上: 固定 LightingMode
 
   float initialShininess_ = 32.0f; ///< 光沢度の初期設定値
   float initialEnvCoeff_ = 0.0f; ///< 環境マップ映り込み係数の初期設定値
-  float lastEnvCoeff_ = 0.5f;    ///< ImGui用：環境マップトグル時の係数保存用
+  float lastEnvCoeff_ = 0.5f;    ///< ImGui 用：環境マップトグル時の係数保存用
 
   std::string filePath_; ///< モデルのアセットパス
 
@@ -319,27 +334,27 @@ public:
   void AttachAnimation();
 
   /// @brief 指定したファイルからアニメーションをロード・アタッチする
-  /// @param filePath アニメーションファイル(.gltf等)のパス
+  /// @param filePath アニメーションファイル（.gltf 等）のパス
   void AttachAnimation(const std::string& filePath);
 
   /// @brief 指定したファイルからインデックス指定でアニメーションをロード・アタッチする
-  /// @param filePath アニメーションファイル(.gltf/.glb等)のパス
-  /// @param animIndex アニメーションインデックス（0始まり）
+  /// @param filePath  アニメーションファイル（.gltf / .glb 等）のパス
+  /// @param animIndex アニメーションインデックス（0 始まり）
   void AttachAnimation(const std::string& filePath, int animIndex);
 
   /// @brief 指定したファイルからアニメーションをロードし、現在のアニメーションからクロスフェード（ブレンド）して切り替える
-  /// @param filePath 新しいアニメーションファイル(.gltf等)のパス
-  /// @param blendDuration 切り替えにかけるブレンド秒数 (例: 0.2f)
+  /// @param filePath      新しいアニメーションファイル（.gltf 等）のパス
+  /// @param blendDuration 切り替えにかけるブレンド秒数（例: 0.2f）
   void CrossfadeAnimation(const std::string& filePath, float blendDuration = 0.2f);
 
   /// @brief 指定したファイルからインデックス指定でアニメーションをロードし、クロスフェードで切り替える
-  /// @param filePath アニメーションファイル(.gltf/.glb等)のパス
-  /// @param animIndex アニメーションインデックス（0始まり）
-  /// @param blendDuration 切り替えにかけるブレンド秒数 (例: 0.2f)
+  /// @param filePath      アニメーションファイル（.gltf / .glb 等）のパス
+  /// @param animIndex     アニメーションインデックス（0 始まり）
+  /// @param blendDuration 切り替えにかけるブレンド秒数（例: 0.2f）
   void CrossfadeAnimation(const std::string& filePath, int animIndex, float blendDuration = 0.2f);
 
-  /// @brief アニメーションを更新し、Skeletonに適用する
-  /// @param dt 経過時間
+  /// @brief アニメーションを更新し、Skeleton に適用する
+  /// @param dt 経過時間（秒）
   void UpdateAnimation(float dt);
 
   /// @brief 現在ロードしているアニメーションの再生時間（秒）を取得する
@@ -347,20 +362,22 @@ public:
   float GetAnimationDuration() const { return animation_.duration; }
 
   /// @brief スケルトンのデバッグ描画を行う
-  /// @details 各Jointを球で、親子関係のあるJoint同士を線で描画する
+  /// @details 各 Joint を球で、親子関係のある Joint 同士を線で描画する。
   void DrawSkeleton();
 
   /// @brief Skeleton が有効かどうか
+  /// @return スケルトン構築済みなら true
   bool HasSkeleton() const { return hasSkeleton_; }
 
   /// @brief スケルトンを取得する（読み取り専用）
+  /// @return スケルトンへの const 参照
   const Skeleton &GetSkeleton() const { return skeleton_; }
 
-  /// @brief 指定Jointのスケルトン空間行列（モデルローカル）を取得する
-  /// @param jointName Joint名（例: "R_Hand"）
-  /// @param out 取得先。ワールドに変換するには Multiply(out, モデルのワールド行列) とする
+  /// @brief 指定 Joint のスケルトン空間行列（モデルローカル）を取得する
+  /// @param jointName Joint 名（例: "R_Hand"）
+  /// @param out       取得先。ワールドに変換するには Multiply(out, モデルのワールド行列) とする
   /// @return 見つかれば true
-  /// @details 武器などをボーンに追従させる（ソケット）用途に使う
+  /// @details 武器などをボーンに追従させる（ソケット）用途に使う。
   bool TryGetJointMatrix(const std::string &jointName, RC::Matrix4x4 &out) const {
     if (!hasSkeleton_) return false;
     auto it = skeleton_.jointMap.find(jointName);
@@ -375,6 +392,7 @@ public:
   /// @details ボーン追従のように「行列でしか表せない姿勢」を与えるための機能。
   ///          Transform 経由だとオイラー角へ分解する必要があり誤差やジンバルの問題が出るため、
   ///          行列をそのまま渡せるようにしている。
+  /// @param world 描画に使うワールド行列
   void SetWorldOverride(const RC::Matrix4x4 &world) {
     worldOverride_ = world;
     hasWorldOverride_ = true;
@@ -384,9 +402,11 @@ public:
   void ClearWorldOverride() { hasWorldOverride_ = false; }
 
   /// @brief ワールド行列が上書きされているか
+  /// @return 上書き中なら true
   bool HasWorldOverride() const { return hasWorldOverride_; }
 
-  /// @brief 上書き中のワールド行列
+  /// @brief 上書き中のワールド行列を取得する
+  /// @return 上書き用ワールド行列
   const RC::Matrix4x4 &WorldOverride() const { return worldOverride_; }
 
   // === ワールド行列のキャッシュ（インスタンス描画用） ===
@@ -394,20 +414,24 @@ public:
   /// @brief 描画に使うワールド行列（WorldOverride があればそれ、無ければ Transform から）
   /// @details Transform / WorldOverride が前回と同じなら再計算しない。
   ///          影パス × 灯数ぶん同じ物を描いても、行列の計算は 1 フレーム 1 回で済む。
+  /// @return ワールド行列
   const RC::Matrix4x4 &CachedWorld();
 
   /// @brief CachedWorld の逆転置行列（法線変換用）。必要になったときに 1 回だけ計算する
+  /// @return 逆転置行列
   const RC::Matrix4x4 &CachedWorldInverseTranspose();
 
   /// @brief スキンデータが有効かどうか（ボーンウェイト付きモデルか）
+  /// @return スキンデータがあれば true
   bool HasSkinData() const;
 
   /// @brief スキニング行列パレットを取得する
+  /// @return ボーンごとのスキニング行列
   const std::vector<RC::Matrix4x4> &GetSkinMatrices() const { return skinMatrices_; }
 
   /// @brief ルートモーション（アニメーションに焼き込まれた移動量）の除去を切り替える
   /// @param enable true でルートモーションを打ち消し、その場アニメーションとして再生する
-  /// @details Walk/Run などのアニメーションにはキーフレーム自体に前進移動が
+  /// @details Walk / Run などのアニメーションにはキーフレーム自体に前進移動が
   ///          含まれている場合がある。スクリプト側で Transform を動かしていると
   ///          二重適用になり、見た目だけが先に進んでループの瞬間に Transform
   ///          位置へ戻る現象が起きるため、既定では除去する。
@@ -419,6 +443,7 @@ public:
   }
 
   /// @brief ルートモーション除去が有効かどうか
+  /// @return 除去が有効なら true
   bool IsRemoveRootMotion() const { return removeRootMotion_; }
 
   /// @brief 現在のアニメーションでルートモーション担当と判定された Joint 名
@@ -427,15 +452,15 @@ public:
 
 private:
   RC::Animation animation_;   ///< ロードしたアニメーションデータ（現在・切り替え後）
-  float animationTime_ = 0.0f;///< アニメーション再生時間
+  float animationTime_ = 0.0f;///< アニメーション再生時間（秒）
   bool isAnimated_ = false;   ///< アニメーションが有効かどうか
-  bool animationRequested_ = false; ///< AttachAnimationが呼ばれたか（遅延ロード用）
+  bool animationRequested_ = false; ///< AttachAnimation が呼ばれたか（遅延ロード用）
 
   // === アニメーション補間（クロスフェード）関連 ===
-  RC::Animation prevAnimation_;       ///< 切り替え前のアニメーションデータ (ブレンド用A)
-  float prevAnimationTime_ = 0.0f;    ///< 切り替え前のアニメーション再生時間
-  float blendFactor_ = 1.0f;          ///< ブレンド割合 t (0.0=Aのみ, 1.0=B/完了)
-  float blendDuration_ = 0.2f;        ///< クロスフェードの所要時間 (秒)
+  RC::Animation prevAnimation_;       ///< 切り替え前のアニメーションデータ（ブレンド用 A）
+  float prevAnimationTime_ = 0.0f;    ///< 切り替え前のアニメーション再生時間（秒）
+  float blendFactor_ = 1.0f;          ///< ブレンド割合 t（0.0 = A のみ, 1.0 = B / 完了）
+  float blendDuration_ = 0.2f;        ///< クロスフェードの所要時間（秒）
 
   Skeleton skeleton_;          ///< スケルトンデータ
   bool hasSkeleton_ = false;   ///< スケルトンが構築済みか
@@ -445,6 +470,8 @@ private:
   bool hasWorldOverride_ = false;      ///< 上書きが有効か
 
   // === ワールド行列のキャッシュ ===
+  /// @struct WorldCache
+  /// @brief CachedWorld / CachedWorldInverseTranspose の計算結果と、その入力の控え
   struct WorldCache {
     Transform transform{};             ///< 計算に使った Transform
     RC::Matrix4x4 overrideMatrix{};    ///< 計算に使った WorldOverride
@@ -454,19 +481,19 @@ private:
     RC::Matrix4x4 world{};             ///< ワールド行列
     RC::Matrix4x4 worldInvTranspose{}; ///< 逆転置行列
   };
-  WorldCache worldCache_{};
+  WorldCache worldCache_{}; ///< ワールド行列のキャッシュ
 
   // === ルートモーション除去関連 ===
   bool removeRootMotion_ = true;      ///< アニメーションに焼き込まれた移動量を打ち消すか
-  bool rootMotionResolved_ = false;   ///< 現アニメのルートモーション担当Jointを判定済みか
-  std::string rootMotionJointName_;      ///< 現アニメ(B)のルートモーション担当Joint名（無ければ空）
-  std::string prevRootMotionJointName_;  ///< クロスフェード元(A)のルートモーション担当Joint名
-  /// @brief バインドポーズ時の Joint 平行移動量（Joint名 → translate）
+  bool rootMotionResolved_ = false;   ///< 現アニメのルートモーション担当 Joint を判定済みか
+  std::string rootMotionJointName_;      ///< 現アニメ（B）のルートモーション担当 Joint 名（無ければ空）
+  std::string prevRootMotionJointName_;  ///< クロスフェード元（A）のルートモーション担当 Joint 名
+  /// @brief バインドポーズ時の Joint 平行移動量（Joint 名 → translate）
   /// @details クリップ先頭の移動量が rest からズレているモデル（例: 走りモーションが
-  ///          前方に0.5m進んだ位置から始まる）で、モデル全体が当たり判定からズレるのを補正するのに使う
+  ///          前方に 0.5m 進んだ位置から始まる）で、モデル全体が当たり判定からズレるのを補正するのに使う。
   std::map<std::string, RC::Vector3> restTranslations_;
 
   // === スキニング関連 ===
-  std::vector<RC::Matrix4x4> skinMatrices_; ///< スキンクラスター行列パレット (T_i = IBP_i * SSM_i)
+  std::vector<RC::Matrix4x4> skinMatrices_; ///< スキンクラスター行列パレット（T_i = IBP_i * SSM_i）
 };
 

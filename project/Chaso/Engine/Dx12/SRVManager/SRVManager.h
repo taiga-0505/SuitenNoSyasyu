@@ -6,89 +6,91 @@
 
 class DescriptorHeap;
 
-/// @brief SRV（Shader Resource View）のデスクリプタスロットを管理するクラス
-/// デスクリプタヒープ内の空きスロットの確保、解放、および各種SRVの生成をラップします。
+/// @class SRVManager
+/// @brief SRV（Shader Resource View）のディスクリプタスロットを管理するクラス
+/// @details ディスクリプタヒープ内の空きスロットの確保、解放、および各種 SRV / UAV の生成をラップする。
 class SRVManager {
 public:
-  /// @brief SRVハンドルの管理構造体
+  /// @brief SRV ハンドルの管理構造体
   struct Handle {
-    UINT index = UINT_MAX;              ///< ヒープ内のインデックス
-    D3D12_CPU_DESCRIPTOR_HANDLE cpu{};  ///< CPU記述子ハンドル
-    D3D12_GPU_DESCRIPTOR_HANDLE gpu{};  ///< GPU記述子ハンドル
-    
+    UINT index = UINT_MAX;              ///< ヒープ内のインデックス（UINT_MAX なら無効）
+    D3D12_CPU_DESCRIPTOR_HANDLE cpu{};  ///< CPU ディスクリプタハンドル
+    D3D12_GPU_DESCRIPTOR_HANDLE gpu{};  ///< GPU ディスクリプタハンドル
+
     /// @brief 有効なハンドルかどうか
-    /// @return 有効ならtrue
+    /// @return 有効なら true
     bool IsValid() const { return index != UINT_MAX; }
   };
 
-  /// @brief 初期化
-  /// @param device DirectX12デバイス
-  /// @param srvHeap 管理対象のデスクリプタヒープ (ShaderVisibleなCBV/SRV/UAVヒープ)
+  /// @brief 初期化する
+  /// @param device  DirectX12 デバイス
+  /// @param srvHeap 管理対象のディスクリプタヒープ（シェーダー参照可能な CBV/SRV/UAV ヒープ）
   void Init(ID3D12Device *device, DescriptorHeap *srvHeap);
 
-  /// @brief 終了処理
+  /// @brief 管理情報をクリアする（ヒープ自体は解放しない）
   void Term();
 
-  /// @brief デバイスを取得
-  /// @return ID3D12Deviceへのポインタ
+  /// @brief デバイスを取得する
+  /// @return ID3D12Device へのポインタ
   ID3D12Device *Device() const { return device_; }
 
-  /// @brief デスクリプタヒープを取得
-  /// @return DescriptorHeapへのポインタ
+  /// @brief ディスクリプタヒープを取得する
+  /// @return DescriptorHeap へのポインタ
   DescriptorHeap *Heap() const { return srvHeap_; }
 
-  /// @brief 空きスロットを1つ確保する
+  /// @brief 空きスロットを 1 つ確保する
   /// @return 確保されたハンドル
+  /// @note 解放済みのスロットがあれば再利用し、無ければヒープの末尾から新しく確保する。
   Handle Allocate();
 
   /// @brief スロットを解放して再利用可能にする
-  /// @note GPUが該当スロットの参照を完全に終えている必要があります。
-  /// @param h 解放するハンドル
+  /// @note GPU が該当スロットの参照を完全に終えている必要がある。
+  /// @param h 解放するハンドル（無効なハンドルなら何もしない）
   void Free(const Handle &h);
 
-  /// @brief 2Dテクスチャ用のSRVを作成する
-  /// @param res 対象リソース
-  /// @param fmt フォーマット
-  /// @param mipLevels ミップマップ数
+  /// @brief 2D テクスチャ用の SRV を作成する
+  /// @param res             対象リソース
+  /// @param fmt             フォーマット
+  /// @param mipLevels       ミップマップ数
   /// @param mostDetailedMip 最も詳細なミップレベル
-  /// @return 作成されたSRVのハンドル
+  /// @return 作成された SRV のハンドル
   Handle CreateTexture2D(ID3D12Resource *res, DXGI_FORMAT fmt, UINT mipLevels,
                          UINT mostDetailedMip = 0);
 
-  /// @brief キューブマップ用のSRVを作成する
-  /// @param res 対象リソース
-  /// @param fmt フォーマット
-  /// @param mipLevels ミップマップ数
+  /// @brief キューブマップ用の SRV を作成する
+  /// @param res             対象リソース
+  /// @param fmt             フォーマット
+  /// @param mipLevels       ミップマップ数
   /// @param mostDetailedMip 最も詳細なミップレベル
-  /// @return 作成されたSRVのハンドル
+  /// @return 作成された SRV のハンドル
   Handle CreateTextureCube(ID3D12Resource *res, DXGI_FORMAT fmt, UINT mipLevels,
                            UINT mostDetailedMip = 0);
 
-  /// @brief 2Dテクスチャ用のUAVを作成する
+  /// @brief 2D テクスチャ用の UAV を作成する
   /// @param res 対象リソース
   /// @param fmt フォーマット
-  /// @return 作成されたUAVのハンドル
+  /// @return 作成された UAV のハンドル
   Handle CreateTexture2DUAV(ID3D12Resource *res, DXGI_FORMAT fmt);
 
-  /// @brief ストラクチャードバッファ用のSRVを作成する
-  /// @param res 対象リソース
+  /// @brief ストラクチャードバッファ用の SRV を作成する
+  /// @param res          対象リソース
   /// @param elementCount 要素数
-  /// @param strideBytes 1要素あたりのバイトサイズ
-  /// @return 作成されたSRVのハンドル
+  /// @param strideBytes  1 要素あたりのバイトサイズ
+  /// @return 作成された SRV のハンドル
   Handle CreateStructuredBuffer(ID3D12Resource *res, UINT elementCount,
                                 UINT strideBytes);
 
-  /// @brief ストラクチャードバッファ用のUAVを作成する
-  /// @param res 対象リソース（D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS必須）
+  /// @brief ストラクチャードバッファ用の UAV を作成する
+  /// @param res          対象リソース（D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS 必須）
   /// @param elementCount 要素数
-  /// @param strideBytes 1要素あたりのバイトサイズ
-  /// @return 作成されたUAVのハンドル
+  /// @param strideBytes  1 要素あたりのバイトサイズ
+  /// @return 作成された UAV のハンドル
   Handle CreateStructuredBufferUAV(ID3D12Resource *res, UINT elementCount,
                                    UINT strideBytes);
 
 private:
   ID3D12Device *device_ = nullptr; ///< デバイス（非所有）
-  DescriptorHeap *srvHeap_ = nullptr; ///< デスクリプタヒープ（非所有）
+  DescriptorHeap *srvHeap_ = nullptr; ///< ディスクリプタヒープ（非所有）
 
   std::vector<UINT> free_;    ///< 再利用用の空きインデックスリスト
   std::vector<uint8_t> used_; ///< 使用状況管理フラグ（デバッグ・整合性チェック用）

@@ -1,105 +1,127 @@
 #include "Object3d.hlsli"
 
+// =============================================================================
+// Object3D 標準ピクセルシェーダー
+//
+// 3D モデルの通常描画用（object3d / object3d_inst / object3d_skin 系の PSO）。
+//   - テクスチャ × マテリアル色 × インスタンス色。アルファ 0.5 以下は抜く（2 値抜き）
+//   - 拡散は Lambert / Half-Lambert、鏡面は Blinn-Phong
+//   - 平行光源・点光源・スポットライト・面光源（矩形 / 線）を合算する
+//   - 点・スポット・面光源はシャドウアトラスで遮蔽し、壁の向こうへ光が漏れないようにする
+//   - 平行光源のシャドウマップ（PCF）で影を落とし、最後に環境マップの映り込みを足す
+//   - 法線マップ・ラフネスマップに対応（マテリアルのフラグで切り替え）
+// =============================================================================
+
+/// @brief マテリアル定数（b0）
 struct Material
 {
-    float4 color; // 色 (RGBA)
-    int lightingMode; // 0:なし, 1:Lambert, 2:Half Lambert（※3/4が来てもLambert扱い）
-    float shininess; // Blinn-Phongの指数（0以下なら鏡面なし）
-    float environmentCoefficient; // 環境マップ映り込み係数 (0〜1)
-    int useNormalMap;
-    int useRoughnessMap;
-    float2 padding; // 8 bytes padding to keep 16 bytes alignment (total size changed, but Wait, we need 12 bytes? No, lightingMode(4)+shininess(4)+env(4)+useN(4)+useR(4) = 20. + 12 = 32 bytes.)
-    float4x4 uvTransform; // UV変換
+    float4 color;                 ///< 色（RGBA）
+    int lightingMode;             ///< 0: なし、1: Lambert、2: Half-Lambert（※3 / 4 が来ても Lambert 扱い）
+    float shininess;              ///< Blinn-Phong の指数（0 以下なら鏡面なし）
+    float environmentCoefficient; ///< 環境マップの映り込み係数（0〜1）
+    int useNormalMap;             ///< 0 以外で法線マップ（t2）を使う
+    int useRoughnessMap;          ///< 0 以外でラフネスマップ（t3）を使う
+    float2 padding;               ///< パディング（16 バイト境界合わせ）
+    float4x4 uvTransform;         ///< UV 変換
 };
 
 ConstantBuffer<Material> gMaterial : register(b0);
 
+/// @brief 平行光源と環境光（b1）
 struct DirectionalLight
 {
-    float4 color;
-    float3 direction; // 正規化済み想定
-    float intensity;
-    float3 ambientColor;    // 環境光の色
-    float ambientIntensity; // 環境光の強さ（0 で環境光なし）
+    float4 color;           ///< 光の色
+    float3 direction;       ///< 光の進む向き（正規化済み想定）
+    float intensity;        ///< 強度
+    float3 ambientColor;    ///< 環境光の色
+    float ambientIntensity; ///< 環境光の強さ（0 で環境光なし）
 };
 
 ConstantBuffer<DirectionalLight> gDirectionalLight : register(b1);
 
+/// @brief カメラ情報（b2）
 struct Camera
 {
-    float3 worldPosition;
+    float3 worldPosition; ///< カメラのワールド座標
 };
 
 ConstantBuffer<Camera> gCamera : register(b2);
 
+/// @brief 点光源 1 灯ぶんのパラメータ
 struct PointLight
 {
-    float4 color;      // 光の色
-    float3 position;   // 光の位置
-    float intensity;   // 強度
-    float radius;      // 届く距離（0以下なら無効）
-    float decay;       // 減衰（指数）
-    int shadowIndex;   // 影アトラスのタイル番号（-1 で影なし）
-    float padding;     // CBアラインメント調整
+    float4 color;      ///< 光の色
+    float3 position;   ///< 光の位置
+    float intensity;   ///< 強度
+    float radius;      ///< 届く距離（0 以下なら無効）
+    float decay;       ///< 減衰（指数）
+    int shadowIndex;   ///< 影アトラスのタイル番号（-1 で影なし）
+    float padding;     ///< 定数バッファのアラインメント調整
 };
 
-static const uint MAX_POINT_LIGHTS = 256;
+static const uint MAX_POINT_LIGHTS = 256; ///< 点光源の最大数
 
+/// @brief 点光源の配列（b3）
 cbuffer PointLightsCB : register(b3)
 {
-    uint pointCount;
-    float3 _padPoint; // 16byte
-    PointLight pointLights[MAX_POINT_LIGHTS];
+    uint pointCount;                          ///< 有効な点光源の数
+    float3 _padPoint;                         ///< パディング（16 バイト境界合わせ）
+    PointLight pointLights[MAX_POINT_LIGHTS]; ///< 点光源
 };
 
+/// @brief スポットライト 1 灯ぶんのパラメータ
 struct SpotLight
 {
-    float4 color;
-    float3 position;
-    float intensity;
-    float3 direction;
-    float distance;
-    float decay;
-    float cosAngle;
-    int shadowIndex;   // スポット影アトラスのタイル番号（-1 で影なし）
-    float padding;
+    float4 color;      ///< 光の色
+    float3 position;   ///< 光の位置
+    float intensity;   ///< 強度
+    float3 direction;  ///< 照射方向
+    float distance;    ///< 届く距離（0 以下なら無効）
+    float decay;       ///< 減衰（指数）
+    float cosAngle;    ///< 照射範囲の境界角の cos（これより外側は 0）
+    int shadowIndex;   ///< スポット影アトラスのタイル番号（-1 で影なし）
+    float padding;     ///< パディング
 };
 
-static const uint MAX_SPOT_LIGHTS = 256;
+static const uint MAX_SPOT_LIGHTS = 256; ///< スポットライトの最大数
 
+/// @brief スポットライトの配列（b4）
 cbuffer SpotLightsCB : register(b4)
 {
-    uint spotCount;
-    float3 _padSpot; // 16byte
-    SpotLight spotLights[MAX_SPOT_LIGHTS];
+    uint spotCount;                       ///< 有効なスポットライトの数
+    float3 _padSpot;                      ///< パディング（16 バイト境界合わせ）
+    SpotLight spotLights[MAX_SPOT_LIGHTS]; ///< スポットライト
 };
 
 
+/// @brief 面光源 1 灯ぶんのパラメータ
+/// @details halfHeight が 0 以下なら、right 方向へ ±halfWidth 伸びる線光源（チューブライト）として扱う。
 struct AreaLight
 {
-    float4 color;
-    float3 position;
-    float intensity;
+    float4 color;     ///< 光の色
+    float3 position;  ///< 面の中心位置
+    float intensity;  ///< 強度
 
-    float3 right;     // 面の右方向（正規化推奨）
-    float halfWidth;
+    float3 right;     ///< 面の右方向（正規化推奨）
+    float halfWidth;  ///< 右方向の半幅
 
-    float3 up;        // 面の上方向（正規化推奨）
-    float halfHeight;
+    float3 up;        ///< 面の上方向（正規化推奨）
+    float halfHeight; ///< 上方向の半高（0 以下で線光源）
 
-    float range;      // 影響距離（0以下なら無効）
-    float decay;      // 減衰（指数）
-    uint twoSided;    // 1なら両面
-    int shadowIndex;  // 影アトラスのタイル番号（-1 で影なし）
+    float range;      ///< 影響距離（0 以下なら無効）
+    float decay;      ///< 減衰（指数）
+    uint twoSided;    ///< 1 なら両面
+    int shadowIndex;  ///< 影アトラスのタイル番号（-1 で影なし）
 };
 
-static const uint MAX_AREA_LIGHTS = 256;
+static const uint MAX_AREA_LIGHTS = 256; ///< 面光源の最大数
 
+/// @brief 面光源の配列（b5）
 cbuffer AreaLightsCB : register(b5)
 {
-    uint areaCount;
-    float3 _padArea; // 16byte
-    AreaLight areaLights[MAX_AREA_LIGHTS];
+    uint areaCount;                        ///< 有効な面光源の数
+    float3 _padArea;                       ///< パディング（16 バイト境界合わせ）
+    AreaLight areaLights[MAX_AREA_LIGHTS]; ///< 面光源
 };
 
 Texture2D<float4> gTexture : register(t0);
@@ -110,9 +132,12 @@ SamplerState gSampler : register(s0);
 
 struct PixelShaderOutput
 {
-    float4 color : SV_TARGET0;
+    float4 color : SV_TARGET0; ///< 出力色
 };
 
+/// @brief 全ライト・影・環境マップを反映した色を出力する
+/// @param input 頂点シェーダーからの補間値
+/// @return 出力色（a はベース色のアルファ）
 PixelShaderOutput main(VertexShaderOutput input)
 {
     PixelShaderOutput output;
@@ -197,7 +222,7 @@ PixelShaderOutput main(VertexShaderOutput input)
     float3 dirLightCol = gDirectionalLight.color.rgb * gDirectionalLight.intensity;
 
     // -----------------
-    // Directional light
+    // 平行光源
     // -----------------
     float3 diffuseDir = base.rgb * dirLightCol * diffuseTerm;
 
@@ -210,7 +235,7 @@ PixelShaderOutput main(VertexShaderOutput input)
     }
 
 // -----------------
-// Point lights (MAX 32)
+// 点光源（最大 MAX_POINT_LIGHTS 灯）
 // -----------------
 float3 diffusePoint = 0.0f;
 float3 specularPoint = 0.0f;
@@ -267,7 +292,7 @@ for (uint i = 0; i < MAX_POINT_LIGHTS; ++i)
 }
 
 // -----------------
-// Spot lights (MAX 32)
+// スポットライト（最大 MAX_SPOT_LIGHTS 灯）
 // -----------------
 float3 diffuseSpot = 0.0f;
 float3 specularSpot = 0.0f;
@@ -334,7 +359,7 @@ for (uint i = 0; i < MAX_SPOT_LIGHTS; ++i)
 // 合算
 
     // -----------------
-    // Area light (Rect)  ※擬似: 四隅4サンプル
+    // 面光源（矩形）※擬似: 四隅 4 サンプル
     // -----------------
     float3 diffuseArea = 0.0f;
     float3 specularArea = 0.0f;
@@ -359,7 +384,7 @@ for (uint i = 0; i < MAX_SPOT_LIGHTS; ++i)
         U /= uLen;
 
         // -----------------
-        // Tube (線) ライト: halfHeight <= 0 なら「position を中心に right 方向へ ±halfWidth 伸びる線分」
+        // チューブ（線）ライト: halfHeight <= 0 なら「position を中心に right 方向へ ±halfWidth 伸びる線分」
         // から全方位に光る線光源として扱う（紐・ネオン管など）。
         // 線分上でピクセルに最も近い点を光源位置とみなす近似（全長にわたって均一な光の帯になる）。
         // -----------------
@@ -492,7 +517,7 @@ for (uint i = 0; i < MAX_SPOT_LIGHTS; ++i)
     output.color.rgb = ambient + (diffuseDir + diffusePoint + diffuseSpot + diffuseArea) + (specularDir + specularPoint + specularSpot + specularArea);
 
     // -----------------
-    // Shadow Map (影判定)
+    // シャドウマップ（平行光源の影判定）
     // -----------------
     if (gShadowParams.shadowMapEnabled)
     {

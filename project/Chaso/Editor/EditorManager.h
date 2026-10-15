@@ -17,71 +17,89 @@ class Entity;
 enum class PlayState;
 
 /// @class EditorManager
-/// @brief ImGuiによるエディタUI（ドッキングレイアウト、テーマ、各種パネル）を管理するクラス
+/// @brief ImGui によるエディタ UI（ドッキングレイアウト、テーマ、各種パネル）を管理するクラス
 class EditorManager {
 public:
   EditorManager() = default;
   ~EditorManager() = default;
 
-  /// @brief エディタの初期化（テーマ設定など）
+  /// @brief エディタの初期化（アイコン読み込み・テーマ設定・設定ファイルの読み込み）
+  /// @note アイコンのテクスチャを読むため、RC::Init の後に呼ぶこと。
   void Initialize();
 
-  /// @brief エディタの終了処理（リソースの解放）
+  /// @brief エディタの終了処理（Particle Editor のリソースの解放）
   void Term();
 
   /// @brief 毎フレームの更新処理（メニューバーやドッキングスペースの構築）
-  /// @param core Dx12Core インスタンスへのポインタ
+  /// @param core         Dx12Core インスタンスへのポインタ
   /// @param onMenuAppend メニューバー追加用コールバック
   /// @param currentScene 現在のシーン
   void Update(Dx12Core* core = nullptr, std::function<void()> onMenuAppend = nullptr, Scene* currentScene = nullptr);
 
   /// @brief 各種パネルの描画
-  /// @param viewportSrv ゲーム画面（Viewport）に表示するテクスチャのSRVハンドル
-  /// @param core Dx12Core インスタンスへのポインタ
-  /// @param pm PipelineManagerへのポインタ
-  /// @param deltaTime 前のフレームからの経過時間
+  /// @param viewportSrv  ゲーム画面（Viewport）に表示するテクスチャの SRV ハンドル
+  /// @param core         Dx12Core インスタンスへのポインタ
+  /// @param pm           PipelineManager へのポインタ
+  /// @param deltaTime    前のフレームからの経過時間（秒）
   /// @param currentScene 現在のシーン
   void DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* core = nullptr, class PipelineManager* pm = nullptr, float deltaTime = 0.0f, Scene* currentScene = nullptr);
 
-  /// @brief Viewportウィンドウがホバーされているか取得する
+  /// @brief Viewport ウィンドウがホバーされているか取得する
+  /// @return ホバーされていれば true
   bool IsViewportHovered() const { return isViewportHovered_; }
+  /// @brief Viewport ウィンドウのホバー状態を設定する
+  /// @param hovered ホバーされているか
   void SetViewportHovered(bool hovered) { isViewportHovered_ = hovered; }
 
-  /// @brief Particle Editor用の専用プレビュー画面を描画する
-  /// @param cl 描画用コマンドリスト
-  /// @param core Dx12Coreのインスタンス
-  /// @param pm PipelineManagerへのポインタ
-  /// @param deltaTime デルタタイム
+  /// @brief Particle Editor 用の専用プレビュー画面を描画する
+  /// @param cl        描画用コマンドリスト
+  /// @param core      Dx12Core のインスタンス
+  /// @param pm        PipelineManager へのポインタ
+  /// @param deltaTime デルタタイム（秒）
+  /// @note Particle Editor が開いていて初期化済みのときだけ描画する。
   void RenderParticlePreview(ID3D12GraphicsCommandList* cl, Dx12Core* core, class PipelineManager* pm, float deltaTime);
 
-  /// @brief 現在のRender Queueの状態をテキストダンプとして出力する
+  /// @brief 現在の Render Queue の状態をテキストダンプとして出力する
+  /// @details 出力先は ../logs/render_queue/dump_<日時>.txt。
   void ExportRenderQueueDump();
 
+  /// @brief パネルの表示状態をエディタ設定ファイルへ保存する
   void SaveConfig();
+  /// @brief パネルの表示状態をエディタ設定ファイルから読み込む
+  /// @note ファイルが無い・読めない場合は現在の値のままにする。
   void LoadConfig();
 
   /// @brief 現在の再生状態を取得する
+  /// @return 再生状態
   PlayState GetPlayState() const;
 
   /// @brief 再生状態を設定する（外部からのリセット用）
+  /// @param state 設定する再生状態
   void SetPlayState(PlayState state);
 
   /// @brief 再起動（リスタート）がリクエストされたか
+  /// @return リクエストされていれば true
   bool IsRestartRequested() const { return restartRequested_; }
+  /// @brief 再起動（リスタート）のリクエストを取り消す（処理後に App が呼ぶ）
   void ClearRestartRequest() { restartRequested_ = false; }
 
-  /// @brief 選択中のエンティティIDを取得する（未選択なら0）
+  /// @brief 選択中のエンティティ ID を取得する
+  /// @return 選択中のエンティティ ID（未選択なら 0）
   uint32_t GetSelectedEntityId() const;
 
+  /// @struct ResizeRequest
+  /// @brief エディタから App へのウィンドウリサイズ要求
   struct ResizeRequest {
-    bool pending = false;
-    int width = 0;
-    int height = 0;
-    bool fullscreen = false;
+    bool pending = false;    ///< 未処理の要求があるか
+    int width = 0;           ///< 要求するウィンドウ幅
+    int height = 0;          ///< 要求するウィンドウ高さ
+    bool fullscreen = false; ///< フルスクリーンにするか
   };
 
-  /// @brief ウィンドウリサイズの要求を取得
+  /// @brief ウィンドウリサイズの要求を取得する
+  /// @return リサイズ要求（pending が false なら要求なし）
   const ResizeRequest& GetResizeRequest() const { return resizeRequest_; }
+  /// @brief ウィンドウリサイズの要求を処理済みにする
   void ClearResizeRequest() { resizeRequest_.pending = false; }
 
 private:
@@ -92,6 +110,9 @@ private:
   void SetupDockingLayout();
 
   /// @brief ツリーノードとしてエンティティを描画する（再帰）
+  /// @param e            描画するエンティティ
+  /// @param currentScene 現在のシーン
+  /// @param childrenMap  親 GUID から子エンティティ一覧を引くマップ
   void DrawEntityNode(std::shared_ptr<Entity> e, Scene* currentScene, const std::unordered_map<uint64_t, std::vector<std::shared_ptr<Entity>>>& childrenMap);
 
   /// @brief 空のオブジェクト（Transform のみ）を生成して選択状態にする
@@ -113,31 +134,38 @@ private:
   /// @brief 前回コミット時からシーンが変化していれば Undo 履歴へ積む
   /// @param currentScene 現在のシーン
   /// @details ウィジェット操作中・ギズモ操作中は積まないため、
-  ///          1回のドラッグ操作が1ステップにまとまる。
+  ///          1 回のドラッグ操作が 1 ステップにまとまる。
   void CommitHistoryIfChanged(Scene* currentScene);
 
   /// @brief Undo 履歴を初期化する（シーン切り替え時など）
+  /// @param currentScene 現在のシーン
   void ResetHistory(Scene* currentScene);
 
-  /// @brief 1ステップ戻す
+  /// @brief 1 ステップ戻す
+  /// @param currentScene 現在のシーン
   void Undo(Scene* currentScene);
 
-  /// @brief 1ステップ進める
+  /// @brief 1 ステップ進める
+  /// @param currentScene 現在のシーン
   void Redo(Scene* currentScene);
 
   /// @brief 選択中のエンティティ（と子孫）を内部クリップボードへコピーする
+  /// @param currentScene 現在のシーン
   void CopySelectedEntity(Scene* currentScene);
 
   /// @brief 内部クリップボードの内容を新しいエンティティとして貼り付ける
+  /// @param currentScene 現在のシーン
   void PasteEntityClipboard(Scene* currentScene);
 
   /// @brief スナップショットを適用し、GUID を頼りに選択状態を復元する
+  /// @param currentScene 現在のシーン
+  /// @param snapshot     適用するスナップショット
   void ApplySnapshot(Scene* currentScene, const nlohmann::json& snapshot);
 
 private:
   bool firstLayout_ = true; ///< 初回レイアウト構築フラグ
   bool resetLayout_ = false; ///< レイアウトリセット要求フラグ
-  bool showDemoWindow_ = false; ///< ImGuiデモウィンドウの表示フラグ
+  bool showDemoWindow_ = false; ///< ImGui デモウィンドウの表示フラグ
   bool showPerfWindow_ = false; ///< パフォーマンス（FPS）ウィンドウの表示フラグ
   bool showRenderQueue_ = false; ///< Render Queue デバッグウィンドウの表示フラグ
   bool showParticleEditor_ = false; ///< Particle Editor ウィンドウの表示フラグ
@@ -145,40 +173,43 @@ private:
   bool showPostEffectWindow_ = false; ///< Post Effect Settings ウィンドウの表示フラグ
   bool showSceneFlow_ = false;        ///< Scene Flow（シーン遷移表）ウィンドウの表示フラグ
   bool showKeyHelp_ = false;          ///< キー操作一覧（Help）ウィンドウの表示フラグ
-  bool isViewportHovered_ = false; ///< Viewportウィンドウがホバーされているか
+  bool isViewportHovered_ = false; ///< Viewport ウィンドウがホバーされているか
 
   PlayState playState_; ///< エディタ上での現在の再生状態
   bool restartRequested_ = false; ///< リスタート要求フラグ
 
-  int playIconTex_ = -1;
-  int pauseIconTex_ = -1;
-  int stopIconTex_ = -1;
-  int restartIconTex_ = -1;
+  // --- ツールバーのアイコン（テクスチャ ID。未読み込みなら -1） ---
+  int playIconTex_ = -1;    ///< 再生ボタン
+  int pauseIconTex_ = -1;   ///< 一時停止ボタン
+  int stopIconTex_ = -1;    ///< 停止ボタン
+  int restartIconTex_ = -1; ///< リスタートボタン
 
-  int eyeVisibleTex_ = -1;
-  int eyeHiddenTex_ = -1;
-  int lockLockedTex_ = -1;
-  int lockUnlockedTex_ = -1;
+  // --- Hierarchy のアイコン ---
+  int eyeVisibleTex_ = -1;   ///< 表示中
+  int eyeHiddenTex_ = -1;    ///< 非表示
+  int lockLockedTex_ = -1;   ///< ロック中
+  int lockUnlockedTex_ = -1; ///< ロック解除
 
-  int folderIconTex_ = -1;
-  int fileIconTex_ = -1;
-  int fileImageTex_ = -1;
-  int file3DTex_ = -1;
-  int fileMaterialTex_ = -1;
-  int fileDocTex_ = -1;
-  int fileFontTex_ = -1;
+  // --- フォルダ / ファイルのアイコン（Content Browser など） ---
+  int folderIconTex_ = -1;   ///< フォルダ
+  int fileIconTex_ = -1;     ///< 一般ファイル
+  int fileImageTex_ = -1;    ///< 画像ファイル
+  int file3DTex_ = -1;       ///< 3D モデルファイル
+  int fileMaterialTex_ = -1; ///< マテリアルファイル
+  int fileDocTex_ = -1;      ///< ドキュメントファイル
+  int fileFontTex_ = -1;     ///< フォントファイル
 
-  std::weak_ptr<Entity> selectedEntity_; ///< Inspector表示用の選択エンティティ
+  std::weak_ptr<Entity> selectedEntity_; ///< Inspector 表示用の選択エンティティ
   bool dragging2D_ = false;      ///< Viewport 上で 2D 要素（Text/Sprite）をドラッグ中か
   int drag2DMode_ = 0;           ///< 0=なし 1=移動 2=四隅ハンドルでサイズ変更
-  float drag2DAnchorX_ = 0.0f;   ///< サイズ変更時に固定する対角コーナー（ゲーム px）
-  float drag2DAnchorY_ = 0.0f;
+  float drag2DAnchorX_ = 0.0f;   ///< サイズ変更時に固定する対角コーナーの X（ゲーム px）
+  float drag2DAnchorY_ = 0.0f;   ///< サイズ変更時に固定する対角コーナーの Y（ゲーム px）
   float drag2DBaseW_ = 1.0f;     ///< サイズ変更開始時の矩形幅（ゲーム px）
   float drag2DBaseH_ = 1.0f;     ///< サイズ変更開始時の矩形高さ（ゲーム px）
   float drag2DBaseScale_ = 1.0f; ///< サイズ変更開始時の Text scale
   float drag2DLastX_ = 0.0f;     ///< 2D ドラッグの前フレームマウス座標 X
   float drag2DLastY_ = 0.0f;     ///< 2D ドラッグの前フレームマウス座標 Y
-  uint32_t renamingEntityId_ = 0; ///< 名前変更中のエンティティID
+  uint32_t renamingEntityId_ = 0; ///< 名前変更中のエンティティ ID
   bool focusRename_ = false; ///< 名前変更用のフォーカスフラグ
   uint64_t expandEntityGuid_ = 0; ///< 子を追加した直後に Hierarchy で展開する親の GUID（0 で無効）
   std::filesystem::path currentDirectory_ = "Resources"; ///< コンテンツブラウザの現在ディレクトリ
@@ -205,14 +236,14 @@ private:
   // --- エンティティのコピー＆ペースト ---
   nlohmann::json entityClipboard_; ///< コピーしたエンティティ群（先頭がルート）
 
-  // --- Gizmo Settings ---
-  int gizmoOperation_ = 7; // ImGuizmo::TRANSLATE
-  int gizmoMode_ = 0;      // ImGuizmo::LOCAL
+  // --- ギズモ設定 ---
+  int gizmoOperation_ = 7; ///< ギズモの操作種別（ImGuizmo::OPERATION の値。既定 7 = ImGuizmo::TRANSLATE）
+  int gizmoMode_ = 0;      ///< ギズモの座標系（ImGuizmo::MODE の値。既定 0 = ImGuizmo::LOCAL）
 
-  // --- Particle Editor ---
+  // --- パーティクルエディタ ---
   std::unique_ptr<GPUParticle> peParticle_; ///< Particle Editor 用のプレビュー用 GPUParticle
   bool peInitialized_ = false;  ///< Particle Editor が初期化済みか
-  char peJsonPath_[256] = "Resources/Particle/default.json"; ///< JSON 保存/読み込みパス
+  char peJsonPath_[256] = "Resources/Particle/default.json"; ///< JSON の保存 / 読み込みパス
   char peTexPath_[256] = "Resources/Particle/circle.png"; ///< テクスチャパス
 
   // プレビュー描画用リソース

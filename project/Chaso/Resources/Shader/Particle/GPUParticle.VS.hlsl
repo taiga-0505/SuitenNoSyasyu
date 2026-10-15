@@ -1,9 +1,9 @@
 // ============================================================================
 // GPUParticle.VS.hlsl
 // ----------------------------------------------------------------------------
-// GPU Particle 用 Vertex Shader。
+// GPU パーティクル用頂点シェーダ（各パーティクル PSO で共通）。
 // Compute Shader で初期化・更新された StructuredBuffer<Particle> を参照し、
-// billboard + scale + translate で worldMatrix を構築して WVP 変換を行う。
+// ビルボード回転・スケール・平行移動でワールド座標を作ってから ViewProjection 変換を行う。
 // ============================================================================
 
 #include "GPUParticle.hlsli"
@@ -11,29 +11,35 @@
 StructuredBuffer<Particle> gParticles : register(t0);
 ConstantBuffer<PerView> gPerView : register(b0);
 
+/// @struct VertexShaderInput
+/// @brief 頂点入力（板ポリゴン。Object3D と同じレイアウト）
 struct VertexShaderInput
 {
-    float4 position : POSITION0;
-    float2 texcoord : TEXCOORD0;
-    float3 normal : NORMAL0;
+    float4 position : POSITION0; ///< ローカル座標
+    float2 texcoord : TEXCOORD0; ///< テクスチャ座標
+    float3 normal : NORMAL0;     ///< 法線（ここでは使わない）
 };
 
+/// @brief インスタンス番号のパーティクルとして板ポリゴンを配置する
+/// @param input      頂点入力
+/// @param instanceId インスタンス番号（gParticles の添字）
+/// @return クリップ空間位置・UV・色・寿命の進行度と固有乱数
 VertexShaderOutput main(VertexShaderInput input, uint instanceId : SV_InstanceID)
 {
     VertexShaderOutput output;
 
     Particle particle = gParticles[instanceId];
 
-    // 1. スケール適用 (ローカル座標)
+    // 1. スケール適用（ローカル座標）
     float3 localPos = input.position.xyz * particle.scale;
 
-    // 2. ビルボード回転適用 (3x3行列として扱う)
+    // 2. ビルボード回転適用（3x3 行列として扱う）
     float3 rotatedPos = mul(localPos, (float3x3)gPerView.billboardMatrix);
 
-    // 3. 平行移動適用 (ワールド座標へ)
+    // 3. 平行移動適用（ワールド座標へ）
     float3 worldPos = rotatedPos + particle.translate;
 
-    // 4. ViewProjection変換
+    // 4. ViewProjection 変換
     output.position = mul(float4(worldPos, 1.0f), gPerView.viewProjection);
     output.texcoord = input.texcoord;
     output.color = particle.color;

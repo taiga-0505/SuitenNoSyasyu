@@ -17,14 +17,14 @@
 //
 // 遮蔽:
 //   レイの終点をシーン深度で打ち切っているため、手前のオブジェクトが光柱を
-//   自然に遮る。空（深度=遠クリップ）のピクセルは maxDistance まで伸ばす。
+//   自然に遮る。空（深度 = 遠クリップ）のピクセルは maxDistance まで伸ばす。
 //
 // 前提:
-//   - t1 は深度SRV (DXGI_FORMAT_R24_UNORM_X8_TYPELESS)
+//   - t1 は深度 SRV（DXGI_FORMAT_R24_UNORM_X8_TYPELESS）
 //   - 行列は row-vector 規約（DXC に -Zpr が渡されているため mul(vector, matrix)）
 //
 // コスト:
-//   1ピクセルあたり最大 sampleCount 回 Voronoi を評価する（実際のステップ数は
+//   1 ピクセルあたり最大 sampleCount 回 Voronoi を評価する（実際のステップ数は
 //   水中区間の長さに比例して減る）。ここが唯一の重い部分なので、
 //   FPS が落ちる場合はまず Sample Count を下げること。
 // =============================================================================
@@ -34,31 +34,33 @@ Texture2D<float32_t4> gTexture : register(t0);
 // t1: 深度バッファ
 Texture2D<float32_t> gDepthTexture : register(t1);
 
-SamplerState gSamplerLinear : register(s0); // linear wrap
-SamplerState gSamplerPoint : register(s1);  // point wrap
+SamplerState gSamplerLinear : register(s0); // リニア＋ラップ
+SamplerState gSamplerPoint : register(s1);  // ポイント＋ラップ
 
 // b1: LightShaft パラメータ
 cbuffer LightShaftParams : register(b1) {
-    float4x4 projectionInverse; // プロジェクション逆行列
-    float4x4 viewInverse;       // ビュー逆行列（= カメラのワールド行列）
-    float4 shaftColor;          // 光柱の色（RGB / A は未使用）
-    float time;                 // 経過時間
-    float intensity;            // 全体の強さ
-    float scale;                // 模様の密度（Caustics と揃えること）
-    float speed;                // うねる速度（Caustics と揃えること）
-    float contrast;             // 断面のコントラスト
-    float waterHeight;          // 水面のワールドY座標
-    float density;              // 深さによる指数減衰の強さ
-    float maxDistance;          // レイマーチの最大距離
-    int sampleCount;            // レイマーチのステップ数（性能の主要因）
-    float ditherStrength;       // バンディング対策のディザ量 (0 ~ 1)
-    float lerpFactor;           // 水中ブレンド率 (0:適用しない ~ 1:完全適用)
-    float _padding;
-    float4 sunDir;              // 光の進む向き（ワールド、正規化済み、y<0）。光柱はこの向きに傾く
+    float4x4 projectionInverse; ///< プロジェクション逆行列
+    float4x4 viewInverse;       ///< ビュー逆行列（= カメラのワールド行列）
+    float4 shaftColor;          ///< 光柱の色（RGB / A は未使用）
+    float time;                 ///< 経過時間
+    float intensity;            ///< 全体の強さ
+    float scale;                ///< 模様の密度（Caustics と揃えること）
+    float speed;                ///< うねる速度（Caustics と揃えること）
+    float contrast;             ///< 断面のコントラスト
+    float waterHeight;          ///< 水面のワールド Y 座標
+    float density;              ///< 深さによる指数減衰の強さ
+    float maxDistance;          ///< レイマーチの最大距離
+    int sampleCount;            ///< レイマーチのステップ数（性能の主要因）
+    float ditherStrength;       ///< バンディング対策のディザ量（0〜1）
+    float lerpFactor;           ///< 水中ブレンド率（0: 適用しない 〜 1: 完全適用）
+    float _padding;             ///< 16 バイト境界合わせ
+    float4 sunDir;              ///< 光の進む向き（ワールド、正規化済み、y < 0）。光柱はこの向きに傾く
 };
 
+/// @struct PixelShaderOutPut
+/// @brief ピクセル出力
 struct PixelShaderOutPut {
-    float4 color : SV_TARGET0;
+    float4 color : SV_TARGET0; ///< 出力色
 };
 
 // 明るさ正規化とステップ数適応の基準となる光路長（ワールド単位）。
@@ -69,12 +71,19 @@ static const float kShaftReferenceLength = 60.0f;
 // -----------------------------------------------------------------------------
 // 深度からビュー空間座標を復元する
 // -----------------------------------------------------------------------------
+/// @brief 深度からビュー空間座標を復元する
+/// @param uv    画面 UV
+/// @param depth 深度バッファの値
+/// @return ビュー空間座標
 float3 ReconstructViewPos(float2 uv, float depth) {
     float4 ndc = float4(uv.x * 2.0f - 1.0f, 1.0f - uv.y * 2.0f, depth, 1.0f);
     float4 viewPos = mul(ndc, projectionInverse);
     return viewPos.xyz / viewPos.w;
 }
 
+/// @brief 水中区間をレイマーチして光柱の明るさを積算し、シーンに加算する
+/// @param input フルスクリーン VS の出力
+/// @return 出力色（α は 1 固定）
 PixelShaderOutPut main(VertexShaderOutput input) {
     PixelShaderOutPut output;
 
@@ -192,7 +201,7 @@ PixelShaderOutPut main(VertexShaderOutput input) {
     float pathFactor = saturate(segment / kShaftReferenceLength);
 
     // 網目は細い線なので mean は小さな値になる。
-    // intensity を 0~2 程度の直感的な範囲で扱えるように経験的な係数を掛ける。
+    // intensity を 0〜2 程度の直感的な範囲で扱えるように経験的な係数を掛ける。
     accum = mean * pathFactor * scatter * 8.0f;
 
     // 明るさを飽和させる（足し込みで白飛びして全体が霞むのを防ぐ）

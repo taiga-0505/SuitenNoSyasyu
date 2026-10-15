@@ -4,9 +4,9 @@
 #include "IComponent.h"
 #include <nlohmann/json.hpp>
 
-/// @brief ローカル空間のオフセットを、エンティティの回転で回してからワールド座標に変換する。
-/// @param basePos エンティティの位置 (TransformComponent::position)
-/// @param baseRot エンティティの回転 (オイラー角ラジアン)
+/// @brief ローカル空間のオフセットを、エンティティの回転で回してからワールド座標に変換する
+/// @param basePos エンティティの位置（TransformComponent::position）
+/// @param baseRot エンティティの回転（オイラー角、ラジアン）
 /// @param offset  ローカル空間でのオフセット量
 /// @return オフセット適用後のワールド座標
 /// @note スケールは意図的に無視する（敵のモデルを拡大しても視界の起点はずらさないため）。
@@ -17,18 +17,24 @@ inline RC::Vector3 ApplyLocalOffset(const RC::Vector3& basePos,
   return Vector3Transform(offset, MakeAffineMatrix({1.0f, 1.0f, 1.0f}, baseRot, basePos));
 }
 
+/// @struct DirectionalLightComponent
+/// @brief 平行光源のコンポーネント
 struct DirectionalLightComponent : public IComponent {
-    int lightHandle = -1;
-    bool visible = true;
-    RC::Vector4 color = { 1.0f, 1.0f, 1.0f, 1.0f };
-    RC::Vector3 direction = { 0.0f, -1.0f, 0.0f };
-    float intensity = 1.0f;
+    int lightHandle = -1;                            ///< ライトのハンドル（未作成なら -1。保存しない）
+    bool visible = true;                             ///< 有効か
+    RC::Vector4 color = { 1.0f, 1.0f, 1.0f, 1.0f };  ///< 光の色
+    RC::Vector3 direction = { 0.0f, -1.0f, 0.0f };   ///< 光の向き
+    float intensity = 1.0f;                          ///< 光の強さ
     /// @brief 環境光の色。ライトが当たっていない面にも base * ambientColor * ambientIntensity が足される
     RC::Vector3 ambientColor = { 1.0f, 1.0f, 1.0f };
     /// @brief 環境光の強さ。0 でライトの当たった所以外は真っ暗（旧シェーダーの固定値は 0.2 相当）
     float ambientIntensity = 0.0f;
 
+    /// @brief コンポーネントの型名を返す
+    /// @return "DirectionalLightComponent"
     const char* TypeName() const override { return "DirectionalLightComponent"; }
+    /// @brief ライトの設定を JSON に書き出す
+    /// @return lightHandle 以外の設定値を格納した JSON
     nlohmann::json Serialize() const override {
       return {
         {"visible", visible},
@@ -39,6 +45,8 @@ struct DirectionalLightComponent : public IComponent {
         {"ambientIntensity", ambientIntensity}
       };
     }
+    /// @brief JSON からライトの設定を読み込む
+    /// @param j 読み込み元の JSON（含まれていないキーは現在の値のまま）
     void Deserialize(const nlohmann::json& j) override {
       if (j.contains("visible")) visible = j["visible"].get<bool>();
       if (j.contains("color")) { auto& c = j["color"]; color = {c[0].get<float>(), c[1].get<float>(), c[2].get<float>(), c[3].get<float>()}; }
@@ -49,13 +57,15 @@ struct DirectionalLightComponent : public IComponent {
     }
 };
 
+/// @struct PointLightComponent
+/// @brief 点光源のコンポーネント
 struct PointLightComponent : public IComponent {
-    int lightHandle = -1;
-    bool visible = true;
-    RC::Vector4 color = { 1.0f, 1.0f, 1.0f, 1.0f };
-    float intensity = 1.0f;
-    float radius = 10.0f;
-    float decay = 1.0f;
+    int lightHandle = -1;                            ///< ライトのハンドル（未作成なら -1。保存しない）
+    bool visible = true;                             ///< 有効か
+    RC::Vector4 color = { 1.0f, 1.0f, 1.0f, 1.0f };  ///< 光の色
+    float intensity = 1.0f;                          ///< 光の強さ
+    float radius = 10.0f;                            ///< 光が届く半径
+    float decay = 1.0f;                              ///< 減衰率
     /// @brief 影を落とす（壁などに遮られる）か。
     /// @details 全方位に光る光源なので、キューブマップの代わりに「ライト位置から真下向きの
     ///          広角シャドウ」1 枚で遮蔽を判定する（壁が垂直である前提。詳細はシェーダの
@@ -73,7 +83,11 @@ struct PointLightComponent : public IComponent {
     ///          小さい値にする。同じ優先度どうしはカメラに近い順で選ばれる。
     int shadowPriority = 0;
 
+    /// @brief コンポーネントの型名を返す
+    /// @return "PointLightComponent"
     const char* TypeName() const override { return "PointLightComponent"; }
+    /// @brief ライトの設定を JSON に書き出す
+    /// @return lightHandle 以外の設定値を格納した JSON
     nlohmann::json Serialize() const override {
       return {
         {"visible", visible},
@@ -83,6 +97,8 @@ struct PointLightComponent : public IComponent {
         {"shadowPriority", shadowPriority}
       };
     }
+    /// @brief JSON からライトの設定を読み込む
+    /// @param j 読み込み元の JSON（含まれていないキーは現在の値のまま）
     void Deserialize(const nlohmann::json& j) override {
       if (j.contains("visible")) visible = j["visible"].get<bool>();
       if (j.contains("color")) { auto& c = j["color"]; color = {c[0].get<float>(), c[1].get<float>(), c[2].get<float>(), c[3].get<float>()}; }
@@ -97,18 +113,20 @@ struct PointLightComponent : public IComponent {
     }
 };
 
+/// @struct SpotLightComponent
+/// @brief スポットライトのコンポーネント
 struct SpotLightComponent : public IComponent {
-    int lightHandle = -1;
-    bool visible = true;
-    RC::Vector4 color = { 1.0f, 1.0f, 1.0f, 1.0f };
-    RC::Vector3 direction = { 0.0f, -1.0f, 0.0f };
-    /// @brief エンティティ中心からのローカル空間オフセット。エンティティの回転に追従する。
-    /// 例: 足元に置くなら {0, -0.9f, 0}、顔の少し前なら {0, 1.5f, 0.3f}。
+    int lightHandle = -1;                            ///< ライトのハンドル（未作成なら -1。保存しない）
+    bool visible = true;                             ///< 有効か
+    RC::Vector4 color = { 1.0f, 1.0f, 1.0f, 1.0f };  ///< 光の色
+    RC::Vector3 direction = { 0.0f, -1.0f, 0.0f };   ///< 光の向き
+    /// @brief エンティティ中心からのローカル空間オフセット。エンティティの回転に追従する
+    /// @details 例: 足元に置くなら {0, -0.9f, 0}、顔の少し前なら {0, 1.5f, 0.3f}。
     RC::Vector3 offset = { 0.0f, 0.0f, 0.0f };
-    float intensity = 1.0f;
-    float distance = 20.0f;
-    float decay = 1.0f;
-    float cosAngle = 0.866f; // approx cos(30 deg)
+    float intensity = 1.0f;   ///< 光の強さ
+    float distance = 20.0f;   ///< 光が届く距離
+    float decay = 1.0f;       ///< 減衰率
+    float cosAngle = 0.866f; ///< 照射範囲の半角の cos（既定値は約 cos(30 度)）
     /// @brief 影を落とす（壁などに遮られる）か。true なら専用のシャドウマップで遮蔽判定され、
     ///        壁を挟んだ向こう側へ光が漏れない。同時に影を落とせるのは kMaxSpotShadows 灯まで
     ///        （超えた分はカメラに近いライトが優先され、残りは影なしで照らす）。
@@ -124,14 +142,19 @@ struct SpotLightComponent : public IComponent {
     ///          小さい値にする。同じ優先度どうしはカメラに近い順で選ばれる。
     int shadowPriority = 0;
 
-    /// @brief オフセットを適用した最終的なライト位置を返す。
+    /// @brief オフセットを適用した最終的なライト位置を返す
     /// @param basePos エンティティの位置
-    /// @param baseRot エンティティの回転 (オイラー角ラジアン)
+    /// @param baseRot エンティティの回転（オイラー角、ラジアン）
+    /// @return offset をエンティティの回転で回して加えたワールド座標
     RC::Vector3 ResolvePosition(const RC::Vector3& basePos, const RC::Vector3& baseRot) const {
       return ApplyLocalOffset(basePos, baseRot, offset);
     }
 
+    /// @brief コンポーネントの型名を返す
+    /// @return "SpotLightComponent"
     const char* TypeName() const override { return "SpotLightComponent"; }
+    /// @brief ライトの設定を JSON に書き出す
+    /// @return lightHandle 以外の設定値を格納した JSON
     nlohmann::json Serialize() const override {
       return {
         {"visible", visible},
@@ -143,6 +166,8 @@ struct SpotLightComponent : public IComponent {
         {"shadowPriority", shadowPriority}
       };
     }
+    /// @brief JSON からライトの設定を読み込む
+    /// @param j 読み込み元の JSON（含まれていないキーは現在の値のまま）
     void Deserialize(const nlohmann::json& j) override {
       if (j.contains("visible")) visible = j["visible"].get<bool>();
       if (j.contains("color")) { auto& c = j["color"]; color = {c[0].get<float>(), c[1].get<float>(), c[2].get<float>(), c[3].get<float>()}; }
@@ -161,18 +186,20 @@ struct SpotLightComponent : public IComponent {
     }
 };
 
+/// @struct AreaLightComponent
+/// @brief 面光源（halfHeight が 0 以下なら線光源）のコンポーネント
 struct AreaLightComponent : public IComponent {
-    int lightHandle = -1;
-    bool visible = true;
-    RC::Vector4 color = { 1.0f, 1.0f, 1.0f, 1.0f };
-    float intensity = 1.0f;
-    float range = 10.0f;
-    float decay = 1.0f;
-    float halfWidth = 1.0f;
+    int lightHandle = -1;                            ///< ライトのハンドル（未作成なら -1。保存しない）
+    bool visible = true;                             ///< 有効か
+    RC::Vector4 color = { 1.0f, 1.0f, 1.0f, 1.0f };  ///< 光の色
+    float intensity = 1.0f;                          ///< 光の強さ
+    float range = 10.0f;                             ///< 光が届く距離
+    float decay = 1.0f;                              ///< 減衰率
+    float halfWidth = 1.0f;                          ///< 面の幅の半分
     /// @brief 面の高さの半分。0 以下にすると「right 方向へ ±halfWidth 伸びる線光源（Tube）」として扱われ、
     ///        線分全体から全方位に光る（紐・ネオン管など）。
     float halfHeight = 1.0f;
-    bool twoSided = false;
+    bool twoSided = false; ///< 両面に光るか
     /// @brief 面の右方向（幅方向）。Tube ライトではこの方向に線分が伸びる。
     RC::Vector3 right = { 1.0f, 0.0f, 0.0f };
     /// @brief 面の上方向（高さ方向）。right と直交させること。
@@ -194,7 +221,11 @@ struct AreaLightComponent : public IComponent {
     ///          小さい値にする。同じ優先度どうしはカメラに近い順で選ばれる。
     int shadowPriority = 0;
 
+    /// @brief コンポーネントの型名を返す
+    /// @return "AreaLightComponent"
     const char* TypeName() const override { return "AreaLightComponent"; }
+    /// @brief ライトの設定を JSON に書き出す
+    /// @return lightHandle 以外の設定値を格納した JSON
     nlohmann::json Serialize() const override {
       return {
         {"visible", visible},
@@ -207,6 +238,8 @@ struct AreaLightComponent : public IComponent {
         {"shadowPriority", shadowPriority}
       };
     }
+    /// @brief JSON からライトの設定を読み込む
+    /// @param j 読み込み元の JSON（含まれていないキーは現在の値のまま）
     void Deserialize(const nlohmann::json& j) override {
       if (j.contains("visible")) visible = j["visible"].get<bool>();
       if (j.contains("color")) { auto& c = j["color"]; color = {c[0].get<float>(), c[1].get<float>(), c[2].get<float>(), c[3].get<float>()}; }

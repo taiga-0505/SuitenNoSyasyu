@@ -4,12 +4,14 @@
 #include <cstring>
 
 namespace {
-int sWhiteTexHandle = -1;
+int sWhiteTexHandle = -1; ///< 既定テクスチャ（白 1x1）のハンドル（未読み込みなら -1）
 
+/// @brief テクスチャ未設定時に使う白 1x1 テクスチャの SRV を取得する（初回呼び出しで読み込む）
+/// @return 白テクスチャの GPU ハンドル（読み込み失敗時は {0}）
 D3D12_GPU_DESCRIPTOR_HANDLE GetWhiteSrv_() {
   if (sWhiteTexHandle < 0) {
     sWhiteTexHandle = RC::LoadTex("Resources/white1x1.png");
-    // LoadTexはRC::Init前だと -1 を返す
+    // LoadTex は RC::Init 前だと -1 を返す
   }
   return RC::GetSrv(sWhiteTexHandle); // 失敗時は {0} が返る
 }
@@ -17,11 +19,13 @@ D3D12_GPU_DESCRIPTOR_HANDLE GetWhiteSrv_() {
 
 using namespace RC;
 
+/// @brief 画面全体を覆う 1 枚の三角形を頂点バッファへ書き込む
+/// @param vb 書き込み先の頂点バッファ（Vertex 3 個分）
 static void WriteFullTri(ID3D12Resource *vb) {
   Primitive2D::Vertex *v = nullptr;
   vb->Map(0, nullptr, reinterpret_cast<void **>(&v));
 
-  // フルスクリーン三角形（clip座標）
+  // フルスクリーン三角形（clip 座標）
   v[0] = {{-1, -1, 0, 1}, {0, 1}};
   v[1] = {{-1, 3, 0, 1}, {0, -1}};
   v[2] = {{3, -1, 0, 1}, {2, 1}};
@@ -66,14 +70,14 @@ void Primitive2D::Initialize(ID3D12Device *device, float screenW,
   cbCursor_ = 0;
   cbParamsRes_->Map(0, nullptr, reinterpret_cast<void **>(&cbParamsMap_));
 
-  // CPU側初期化
+  // CPU 側初期化
   paramsCPU_ = {};
   paramsCPU_.C = {screenW_, screenH_, 1.0f, 1.0f};
   paramsCPU_.Color = {1, 1, 1, 1};
   paramsCPU_.UVRect = {0, 0, 1, 1};
   paramsCPU_.U = {SHAPE_LINE, 0, 0, 0};
 
-  // Dummy VS は今まで通り
+  // ダミーの VS 用 CB は今まで通り
   cbDummy_.res = CreateBufferResource(device_.Get(), sizeof(DummyVS), L"Primitive2D::cbDummy_.res");
   cbDummy_.res->Map(0, nullptr, reinterpret_cast<void **>(&cbDummy_.map));
   cbDummy_.map->World = MakeIdentity4x4();
@@ -147,7 +151,7 @@ void Primitive2D::SetSpriteRect(const Vector2 &mn, const Vector2 &mx,
                                 const Vector4 &color, const Vector2 &uvMin,
                                 const Vector2 &uvMax) {
   paramsCPU_.U = {SHAPE_SPRITE, FLAG_TEX, 0, 0};
-  paramsCPU_.B = {mn.x, mn.y, mx.x, mx.y}; // PS側で使う想定
+  paramsCPU_.B = {mn.x, mn.y, mx.x, mx.y}; // PS 側で使う想定
   paramsCPU_.UVRect = {uvMin.x, uvMin.y, uvMax.x, uvMax.y};
   paramsCPU_.Color = color;
 }
@@ -170,7 +174,7 @@ void Primitive2D::Draw(ID3D12GraphicsCommandList *cmdList) {
       (cbCursor_ < kMaxDrawPerFrame) ? cbCursor_++ : (cbCursor_ = 1, 0);
   const uint32_t idx = frameSlot_ * kMaxDrawPerFrame + local;
 
-  // Drawごとに別スロットへ書く
+  // Draw ごとに別スロットへ書く（同じスロットを使い回すと、GPU が読む前に次の図形で上書きされる）
   std::memcpy(cbParamsMap_ + idx * cbStride_, &paramsCPU_, sizeof(Params));
 
   const D3D12_GPU_VIRTUAL_ADDRESS gpuAddr =

@@ -5,6 +5,9 @@
 
 namespace RC {
 
+/// @brief 256 バイト境界に切り上げる
+/// @param size 元のサイズ（バイト）
+/// @return 256 の倍数に切り上げたサイズ
 static UINT Align256_(UINT size) { return (size + 255u) & ~255u; }
 
 void SpotLightManager::Init(ID3D12Device *device) {
@@ -20,7 +23,7 @@ void SpotLightManager::Init(ID3D12Device *device) {
   if (!initialized_)
     return;
 
-  // slot[0] = デフォルト（基本OFF）
+  // slot[0] は既定のライト（強さ 0 で実質オフ）
   slots_.emplace_back();
   slots_[0].inUse = true;
 
@@ -68,7 +71,7 @@ int SpotLightManager::Create() {
   const int h = AllocSlot_();
   auto &slot = slots_[h];
   slot.inUse = true;
-  slot.light = SpotLightSource{}; // defaults
+  slot.light = SpotLightSource{}; // 既定値で初期化
 
   if (activeCount_ == 0) {
     AddActive(h);
@@ -168,7 +171,7 @@ void SpotLightManager::EnsureCB_() {
   mapped_ = dyn_.Ptr();
   if (mapped_) {
     // アップロードヒープは 0 初期化されないので、一度だけ全体をクリアしておく。
-    // 以降の SyncCB_ は count と使用中エントリだけを書く（シェーダは count で break する）
+    // 以降の SyncCB_ は count と使用中エントリだけを書く（シェーダは count でループを打ち切る）
     *mapped_ = ::SpotLightsCB{};
   }
 }
@@ -180,7 +183,7 @@ void SpotLightManager::SyncCB_() {
   uint32_t outCount = 0;
   const uint32_t n = (uint32_t)(std::min)(activeCount_, kMaxActive);
 
-  // enabled なライトだけを詰める（使用中のエントリだけ書く。全 256 灯分の再構築はしない）
+  // 有効なライトだけを詰める（使用中のエントリだけ書く。全 256 灯分の再構築はしない）
   for (uint32_t i = 0; i < n; ++i) {
     const int h = active_[i];
     if (!IsValid_(h))

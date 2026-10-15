@@ -7,11 +7,12 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 
-/// @brief Bone (socket) attachment component.
-/// Makes this entity's model follow a joint of another entity's skeleton.
-/// Typical use: a weapon entity attached to the "R_Hand" joint of a character.
+/// @class BoneAttachmentComponent
+/// @brief ボーン（ソケット）への取り付けコンポーネント
+/// @details このエンティティのモデルを、別エンティティのスケルトンの Joint に追従させる。
+///          典型的な用途は、キャラクターの "R_Hand" Joint に武器エンティティを持たせること。
 ///
-/// @details 追従先は GUID で指定する。実際の追従は Transform 同期の後に行われ、
+///          追従先は GUID で指定する。実際の追従は Transform 同期の後に行われ、
 ///          RC::SetModelWorldOverride() で描画行列を直接上書きするため、
 ///          このエンティティの TransformComponent の TRS は描画に使われなくなる。
 ///          位置を微調整したい場合は offsetPosition / offsetRotation / offsetScale を使う。
@@ -24,7 +25,7 @@ public:
   RC::Vector3 offsetRotation = {0.0f, 0.0f, 0.0f}; ///< 回転オフセット（オイラー角・ラジアン）
   RC::Vector3 offsetScale    = {1.0f, 1.0f, 1.0f}; ///< スケールオフセット
 
-  // --- Runtime state (not serialized) ---
+  // --- 実行時の状態（シリアライズしない） ---
   bool overrideActive_ = false;              ///< ワールド行列を上書き中か（解除漏れ防止用）
   std::vector<std::string> jointNamesCache_; ///< Inspector のプルダウン用キャッシュ
   bool jointNamesDirty_ = true;              ///< キャッシュの再取得が必要か
@@ -32,8 +33,12 @@ public:
   /// @brief 追従先が変わった時に呼ぶ。Joint 名の一覧を取り直す
   void MarkTargetDirty() { jointNamesDirty_ = true; }
 
+  /// @brief コンポーネントの型名を返す
+  /// @return "BoneAttachmentComponent"
   const char* TypeName() const override { return "BoneAttachmentComponent"; }
 
+  /// @brief 追従先とオフセットを JSON に書き出す
+  /// @return targetGuid / jointName / offsetPosition / offsetRotation / offsetScale を格納した JSON
   nlohmann::json Serialize() const override {
     return {
       {"targetGuid", targetGuid},
@@ -44,6 +49,9 @@ public:
     };
   }
 
+  /// @brief JSON から追従先とオフセットを読み込む
+  /// @param j 読み込み元の JSON（含まれていないキーは現在の値のまま）
+  /// @note 追従先が変わった可能性があるので、最後に Joint 名キャッシュを無効化する。
   void Deserialize(const nlohmann::json& j) override {
     if (j.contains("targetGuid")) targetGuid = j["targetGuid"].get<uint64_t>();
     if (j.contains("jointName")) jointName = j["jointName"].get<std::string>();

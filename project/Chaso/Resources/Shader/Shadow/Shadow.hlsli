@@ -1,4 +1,10 @@
+// =============================================================================
+// シャドウマップ用の VS 出力定義
+// =============================================================================
+
+/// @struct VertexShaderOutput
+/// @brief シャドウマップ描画の頂点出力
 struct VertexShaderOutput {
-    float4 position : SV_POSITION;
-    float2 texcoord : TEXCOORD0;
+    float4 position : SV_POSITION; ///< ライト視点のクリップ空間位置
+    float2 texcoord : TEXCOORD0;   ///< テクスチャ座標
 };

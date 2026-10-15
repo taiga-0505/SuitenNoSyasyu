@@ -9,28 +9,31 @@
 
 /// @class Skybox
 /// @brief 全天を覆うスカイボックス（背景）の描画を管理するクラス
-/// @details 内向きの立方体メッシュを自動生成し、カメラの移動に追従させることで無限遠の背景を表現します。
+/// @details 内向きの立方体メッシュを自動生成し、カメラの移動に追従させることで無限遠の背景を表現する。
 class Skybox {
 public:
+  /// @brief コンストラクタ（GPU リソースは Initialize で作る）
   Skybox() = default;
+  /// @brief デストラクタ（頂点・インデックスバッファを遅延解放キューへ渡す）
   ~Skybox();
 
   /// @brief 初期化（Device 依存リソースの作成とメッシュ生成）
   /// @param device D3D12 デバイス
   void Initialize(ID3D12Device *device);
 
-  /// @brief 毎フレームの行列更新
+  /// @brief transform_ からワールド行列を作り、WVP 行列を更新する（毎フレーム呼ぶ）
   /// @param view ビュー行列
   /// @param proj プロジェクション行列
   void Update(const RC::Matrix4x4 &view, const RC::Matrix4x4 &proj);
 
-  /// @brief 描画実行
+  /// @brief 現在の行列・マテリアルで描画する
   /// @param cmdList コマンドリスト
+  /// @note 非表示またはバッファ未作成なら何もしない。
   void Draw(ID3D12GraphicsCommandList *cmdList);
 
   /// @brief ワールド行列を外部から指定して描画する（コマンドキュー用）
   /// @param cmdList コマンドリスト
-  /// @param world 使用するワールド行列
+  /// @param world   使用するワールド行列（ビュー・プロジェクションは RenderContext から取る）
   void Draw(ID3D12GraphicsCommandList *cmdList, const RC::Matrix4x4 &world);
 
   /// @brief スカイボックスに使用するテクスチャ（SRV）を設定する
@@ -68,17 +71,17 @@ private:
   /// @struct VB
   /// @brief 頂点バッファ管理構造体
   struct VB {
-    Microsoft::WRL::ComPtr<ID3D12Resource> resource;
-    D3D12_VERTEX_BUFFER_VIEW view{};
-    uint32_t vertexCount = 0;
+    Microsoft::WRL::ComPtr<ID3D12Resource> resource; ///< 頂点バッファ
+    D3D12_VERTEX_BUFFER_VIEW view{};                 ///< 頂点バッファビュー
+    uint32_t vertexCount = 0;                        ///< 頂点数
   };
 
   /// @struct IB
   /// @brief インデックスバッファ管理構造体
   struct IB {
-    Microsoft::WRL::ComPtr<ID3D12Resource> resource;
-    D3D12_INDEX_BUFFER_VIEW view{};
-    uint32_t indexCount = 0;
+    Microsoft::WRL::ComPtr<ID3D12Resource> resource; ///< インデックスバッファ
+    D3D12_INDEX_BUFFER_VIEW view{};                  ///< インデックスバッファビュー
+    uint32_t indexCount = 0;                         ///< インデックス数
   };
 
   /// @struct CB_WVP
@@ -100,19 +103,19 @@ private:
   };
 
 private:
-  Microsoft::WRL::ComPtr<ID3D12Device> device_;
+  Microsoft::WRL::ComPtr<ID3D12Device> device_; ///< D3D12 デバイス
 
-  std::vector<VertexData> vertices_; ///< CPU側の頂点データ配列
-  std::vector<uint16_t> indices_;   ///< CPU側のインデックスデータ配列
+  std::vector<VertexData> vertices_; ///< CPU 側の頂点データ配列
+  std::vector<uint16_t> indices_;   ///< CPU 側のインデックスデータ配列
 
-  VB vb_{};
-  IB ib_{};
-  CB_WVP cbWvp_{};
-  CB_Material cbMat_{};
-  CB_Light cbLight_{};
-  D3D12_GPU_DESCRIPTOR_HANDLE textureSrv_{};
+  VB vb_{};                                  ///< 頂点バッファ
+  IB ib_{};                                  ///< インデックスバッファ
+  CB_WVP cbWvp_{};                           ///< 行列用定数バッファ
+  CB_Material cbMat_{};                      ///< マテリアル用定数バッファ
+  CB_Light cbLight_{};                       ///< ライト用定数バッファ（ダミー。強度 0）
+  D3D12_GPU_DESCRIPTOR_HANDLE textureSrv_{}; ///< 背景テクスチャの SRV
 
   Transform transform_{{100, 100, 100}, {0, 0, 0}, {0, 0, 0}}; ///< スカイボックスのトランスフォーム
 
-  bool visible_ = true;
+  bool visible_ = true; ///< false なら描画しない
 };

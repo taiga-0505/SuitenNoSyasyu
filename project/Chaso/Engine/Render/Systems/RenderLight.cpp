@@ -26,6 +26,7 @@ namespace {
 // テンプレートヘルパーと Concept
 // ============================================================================
 
+/// @brief ライトマネージャーとして最低限必要な操作（生成・破棄・取得・単一アクティブ）を持つ型
 template <typename T>
 concept LightManager = requires(T & m, int h) {
   { m.Create() } -> std::same_as<int>;
@@ -35,6 +36,7 @@ concept LightManager = requires(T & m, int h) {
   { m.SetActive(h) };
 };
 
+/// @brief 複数のライトを同時にアクティブにできるライトマネージャー（Point / Spot / Area など）
 template <typename T>
 concept MultiActiveManager = LightManager<T> && requires(T & m, int h) {
   { m.AddActive(h) } -> std::same_as<bool>;
@@ -44,6 +46,11 @@ concept MultiActiveManager = LightManager<T> && requires(T & m, int h) {
   { m.GetActiveHandleAt(0) } -> std::same_as<int>;
 };
 
+/// @brief ライトを生成し、指定に応じてアクティブにする
+/// @param mgr          ライトマネージャー
+/// @param activateMode Set なら他を外してこれだけをアクティブに、Add なら追加でアクティブにする
+/// @return 生成したライトのハンドル（失敗なら負の値）
+/// @note 単一アクティブのマネージャーで Add のときは、まだ明示的なアクティブが無い場合だけアクティブにする。
 template <LightManager T> int TCreateLight(T &mgr, LightActivateMode activateMode) {
   const int h = mgr.Create();
   if (h < 0) {
@@ -76,10 +83,16 @@ template <LightManager T> int TCreateLight(T &mgr, LightActivateMode activateMod
   return h;
 }
 
+/// @brief ライトを破棄する
+/// @param mgr    ライトマネージャー
+/// @param handle 破棄するライトのハンドル
 template <LightManager T> void TDestroyLight(T &mgr, int handle) {
   mgr.Destroy(handle);
 }
 
+/// @brief 指定したライトだけをアクティブにする
+/// @param mgr    ライトマネージャー
+/// @param handle アクティブにするライトのハンドル（複数アクティブ型で負ならすべて外す）
 template <LightManager T> void TSetActiveLight(T &mgr, int handle) {
   if constexpr (MultiActiveManager<T>) {
     mgr.ClearActive();
@@ -91,6 +104,9 @@ template <LightManager T> void TSetActiveLight(T &mgr, int handle) {
   }
 }
 
+/// @brief アクティブなライトのハンドルを取得する
+/// @param mgr ライトマネージャー
+/// @return アクティブなライトのハンドル。単一アクティブ型で未設定なら既定のライトのハンドル
 template <LightManager T> int TGetActiveLightHandle(const T &mgr) {
   const int h = mgr.GetActiveHandle();
   if constexpr (!MultiActiveManager<T> && requires { mgr.DefaultHandle(); }) {
@@ -101,6 +117,11 @@ template <LightManager T> int TGetActiveLightHandle(const T &mgr) {
   return h;
 }
 
+/// @brief ライトの有効／無効を切り替える
+/// @param mgr     ライトマネージャー
+/// @param handle  対象ライトのハンドル（無効なハンドルなら何もしない）
+/// @param enabled true で有効
+/// @note GetCBAddress を持つマネージャーでは、呼び出して定数バッファへの反映を促す。
 template <LightManager T> void TSetLightEnabled(T &mgr, int handle, bool enabled) {
   if (auto *p = mgr.Get(handle)) {
     p->SetEnabled(enabled);
@@ -110,6 +131,10 @@ template <LightManager T> void TSetLightEnabled(T &mgr, int handle, bool enabled
   }
 }
 
+/// @brief ライトが有効かを取得する
+/// @param mgr    ライトマネージャー
+/// @param handle 対象ライトのハンドル
+/// @return 有効なら true（無効なハンドルなら false）
 template <LightManager T> bool TIsLightEnabled(const T &mgr, int handle) {
   if (const auto *p = mgr.Get(handle)) {
     return p->IsEnabled();
@@ -117,6 +142,9 @@ template <LightManager T> bool TIsLightEnabled(const T &mgr, int handle) {
   return false;
 }
 
+/// @brief アクティブなライトの有効／無効を切り替える
+/// @param mgr     ライトマネージャー
+/// @param enabled true で有効
 template <LightManager T> void TSetActiveLightEnabled(T &mgr, bool enabled) {
   if (auto *p = mgr.GetActive()) {
     p->SetEnabled(enabled);
@@ -126,6 +154,9 @@ template <LightManager T> void TSetActiveLightEnabled(T &mgr, bool enabled) {
   }
 }
 
+/// @brief アクティブなライトが有効かを取得する
+/// @param mgr ライトマネージャー
+/// @return 有効なら true（アクティブなライトが無ければ false）
 template <LightManager T> bool TIsActiveLightEnabled(const T &mgr) {
   if (const auto *p = mgr.GetActive()) {
     return p->IsEnabled();

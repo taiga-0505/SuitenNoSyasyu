@@ -3,51 +3,64 @@
 #include "Common/Math/MathUtils.h"
 #include <string>
 
-// Forward declarations
+// 前方宣言
 class Scene;
 struct SceneContext;
 
-/// @brief Base class for native scripts attached to entities.
-/// Allows writing custom update logic similar to Unity's MonoBehaviour.
+/// @class ScriptableEntity
+/// @brief エンティティに付けるネイティブスクリプトの基底クラス
+/// @details Unity の MonoBehaviour のように、独自の更新処理を書けるようにする。
 class ScriptableEntity {
 public:
   virtual ~ScriptableEntity() = default;
 
-  /// @brief Serialize script data to JSON
+  /// @brief スクリプトのデータを JSON に書き出す
+  /// @return シリアライズした JSON（既定は空オブジェクト）
   virtual nlohmann::json Serialize() { return nlohmann::json::object(); }
 
-  /// @brief Deserialize script data from JSON
+  /// @brief JSON からスクリプトのデータを読み込む
+  /// @param j 読み込み元の JSON
   virtual void Deserialize(const nlohmann::json& j) {}
 
-  /// @brief Called for drawing custom ImGui UI in the editor
+  /// @brief エディタで独自の ImGui UI を描くときに呼ばれる
   virtual void OnImGui() {}
 
-  /// @brief Get a component attached to the same entity
+  /// @brief 同じエンティティに付いているコンポーネントを取得する
+  /// @tparam T 取得するコンポーネントの型
+  /// @return コンポーネントへのポインタ（付いていなければ nullptr）
   template <typename T> T* GetComponent() {
     return entity_->GetComponent<T>();
   }
 
-  /// @brief Check if a component is attached to the same entity
+  /// @brief 同じエンティティにコンポーネントが付いているかを返す
+  /// @tparam T 調べるコンポーネントの型
+  /// @return 付いていれば true
   template <typename T> bool HasComponent() {
     return entity_->HasComponent<T>();
   }
 
-  /// @brief Add a component to the same entity
+  /// @brief 同じエンティティにコンポーネントを追加する
+  /// @tparam T 追加するコンポーネントの型
+  /// @param args T のコンストラクタに渡す引数
+  /// @return 追加したコンポーネントへの参照
   template <typename T, typename... Args> T& AddComponent(Args&&... args) {
     return entity_->AddComponent<T>(std::forward<Args>(args)...);
   }
 
-  /// @brief Get the entity this script is attached to
+  /// @brief このスクリプトが付いているエンティティを取得する
+  /// @return エンティティへのポインタ
   Entity* GetEntity() const { return entity_; }
 
-  /// @brief Get the scene this script belongs to
+  /// @brief このスクリプトが属するシーンを取得する
+  /// @return シーンへのポインタ
   Scene* GetScene() const { return scene_; }
 
-  /// @brief Get the current scene context
+  /// @brief 現在のシーンコンテキストを取得する
+  /// @return シーンコンテキストへのポインタ
   SceneContext* GetSceneContext() const { return sceneContext_; }
 
-  /// @brief Called during the render phase (command list is open)
-  /// @details Use this for 2D drawing (DrawBox, DrawCircle, etc.)
+  /// @brief 描画フェーズ中（コマンドリストが開いている間）に呼ばれる
+  /// @details 2D 描画（DrawBox / DrawCircle 等）に使う。
   virtual void OnRender() {}
 
   /// @brief メイン 3D パス中に呼ばれる（再生中のみ・1 フレーム 1 回）
@@ -84,8 +97,8 @@ public:
   ///          1 フレームに 1 回だけ呼ばれる。2D 描画や状態の更新は行わないこと。
   virtual void OnMaskRender() {}
 
-  /// @brief Called during the overlay 3D phase to draw gizmos
-  /// @details 呼ばれる条件: F4（全デバッグ描画）ON、またはこのエンティティが選択中
+  /// @brief オーバーレイ 3D フェーズ中に、ギズモを描くために呼ばれる
+  /// @details 呼ばれる条件: F4（全デバッグ描画）ON、またはこのエンティティが選択中。
   virtual void OnDebugRender() {}
 
   /// @brief コライダーデバッグ表示（F3）中に呼ばれる
@@ -96,9 +109,9 @@ public:
   ///          再生中・停止中を問わず呼ばれるので、実際の判定に使っている値をそのまま描くこと。
   virtual void OnColliderDebugRender() {}
 
-  /// @brief Called when a collision occurs with another entity
-  /// @param other The entity that this entity collided with
-  /// @param contactPoint The world position where the collision occurred
+  /// @brief 他のエンティティと衝突したときに呼ばれる
+  /// @param other        衝突した相手のエンティティ
+  /// @param contactPoint 衝突が起きたワールド座標
   virtual void OnCollision(Entity* other, const RC::Vector3& contactPoint = {}) {}
 
   /// @brief 当たり判定付きで移動する（壁抜け防止＋壁ずり）
@@ -129,6 +142,7 @@ public:
   /// @param transition 演出名。"dissolve"（既定の黒ディゾルブ）/ "dive"（水面へ飛び込む遷移）。
   ///                   名前の定義は Chaso/Game/Scene/Scene.h の SceneTransitions。
   ///                   不明な名前は "dissolve" として扱う。
+  /// @return 要求が受理されたら true
   /// @details エンジン層のこのヘッダはアプリ層の SceneTransition 型を知らないため、
   ///          文字列で受けて Scene.cpp 側で変換する。その他の挙動は 1 引数版と同じ。
   bool RequestSceneChange(const std::string& name, const std::string& transition);
@@ -157,19 +171,19 @@ public:
                         std::string& outTransition, const std::string& arg = "");
 
 protected:
-  /// @brief Called when the script is created
+  /// @brief スクリプトが生成されたときに呼ばれる
   virtual void OnCreate() {}
 
-  /// @brief Called every frame
-  /// @param deltaTime Time elapsed since the last frame
+  /// @brief 毎フレーム呼ばれる
+  /// @param deltaTime 前フレームからの経過時間（秒）
   virtual void OnUpdate(float deltaTime) {}
 
-  /// @brief Called when the script is destroyed
+  /// @brief スクリプトが破棄されるときに呼ばれる
   virtual void OnDestroy() {}
 
 private:
-  Entity* entity_ = nullptr;
-  Scene* scene_ = nullptr;
-  SceneContext* sceneContext_ = nullptr;
+  Entity* entity_ = nullptr;             ///< 付いているエンティティ（NativeScriptComponent が設定する）
+  Scene* scene_ = nullptr;               ///< 属するシーン（NativeScriptComponent が設定する）
+  SceneContext* sceneContext_ = nullptr; ///< シーンコンテキスト（NativeScriptComponent が設定する）
   friend class NativeScriptComponent;
 };

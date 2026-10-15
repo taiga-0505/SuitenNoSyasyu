@@ -22,14 +22,21 @@ bool g_onlyCurrent = false;  ///< 今のシーンに当てはまる行だけ出�
 char g_search[64] = {};      ///< 検索文字列
 int g_focusRow = -1;         ///< 追加直後にスクロールして見せる行
 
-const ImVec4 kWarnColor = ImVec4(1.0f, 0.75f, 0.2f, 1.0f);
-const ImVec4 kErrorColor = ImVec4(1.0f, 0.4f, 0.35f, 1.0f);
-const ImVec4 kDimColor = ImVec4(0.6f, 0.6f, 0.6f, 1.0f);
+const ImVec4 kWarnColor = ImVec4(1.0f, 0.75f, 0.2f, 1.0f);  ///< 警告の文字色
+const ImVec4 kErrorColor = ImVec4(1.0f, 0.4f, 0.35f, 1.0f); ///< エラーの文字色
+const ImVec4 kDimColor = ImVec4(0.6f, 0.6f, 0.6f, 1.0f);    ///< 補足など控えめに出す文字色
 
+/// @brief 遷移元がパターン（"*" または末尾 "*" の前方一致）か
+/// @param from 遷移元の文字列
+/// @return パターンなら true
 bool IsPattern(const std::string &from) {
   return from == "*" || (!from.empty() && from.back() == '*');
 }
 
+/// @brief 部分一致で検索する
+/// @param hay    検索対象の文字列
+/// @param needle 探す文字列（nullptr / 空なら常に一致）
+/// @return 含まれていれば true
 bool Contains(const std::string &hay, const char *needle) {
   if (!needle || !needle[0]) return true;
   return hay.find(needle) != std::string::npos;
@@ -38,6 +45,8 @@ bool Contains(const std::string &hay, const char *needle) {
 /// @brief std::string を ImGui の入力用バッファへ写す
 /// @details strncpy は MSVC で C4996（警告をエラー扱い）になるので memcpy で書く。
 ///          UTF-8 の途中で切らないよう、はみ出す場合は文字の先頭まで戻して切る。
+/// @param dst 書き込み先のバッファ（必ず終端される）
+/// @param src 写す文字列
 template <size_t N>
 void CopyToBuffer(char (&dst)[N], const std::string &src) {
   size_t len = (std::min)(src.size(), N - 1);
@@ -49,8 +58,11 @@ void CopyToBuffer(char (&dst)[N], const std::string &src) {
 }
 
 /// @brief 入力欄＋候補のドロップダウン
+/// @param id      ImGui の ID
+/// @param value   編集する値（入力・選択で書き換わる）
 /// @param options 候補。"---" は区切り線
-/// @param tips options と同じ並びの説明（ツールチップ）。不要なら nullptr
+/// @param tips    options と同じ並びの説明（ツールチップ）。不要なら nullptr
+/// @param hint    入力欄が空のときに出すヒント
 /// @return 値が変わったら true
 bool ComboInput(const char *id, std::string &value, const std::vector<std::string> &options,
                 const std::vector<std::string> *tips = nullptr, const char *hint = "") {
@@ -92,6 +104,10 @@ bool ComboInput(const char *id, std::string &value, const std::vector<std::strin
 }
 
 /// @brief 行の問題点を並べる（空なら問題なし）
+/// @param flow   シーン遷移表
+/// @param index  調べる行の番号
+/// @param scenes 登録済みシーン名の一覧（空ならシーン名のチェックは省く）
+/// @return 問題点の説明文の一覧
 std::vector<std::string> RowProblems(const SceneFlow &flow, size_t index,
                                      const std::vector<std::string> &scenes) {
   std::vector<std::string> out;
@@ -137,12 +153,17 @@ std::vector<std::string> RowProblems(const SceneFlow &flow, size_t index,
 }
 
 /// @brief 「試す」で使う遷移先（$current の基準にするシーンも決める）
+/// @param flow    シーン遷移表
+/// @param r       試す行
+/// @param current いまのシーン名
+/// @return 解決した遷移先のシーン名
 std::string TryTarget(const SceneFlow &flow, const SceneFlowRule &r, const std::string &current) {
   std::string from = current;
   if (!SceneFlow::MatchFrom(r.from, current) && !IsPattern(r.from)) from = r.from;
   return flow.ResolveTarget(r.to, from, "");
 }
 
+/// @brief 「使い方」の折りたたみ見出しの中身（説明文）を描く
 void DrawHelp() {
   ImGui::TextWrapped(
       "スクリプトやゲームルールはシーン名を書かず、きっかけの名前だけで遷移します。\n"

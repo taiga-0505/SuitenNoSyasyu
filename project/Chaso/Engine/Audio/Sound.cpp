@@ -25,8 +25,8 @@
 // =========================
 /// @brief パスが指定された拡張子を持っているか判定する（大文字小文字を区別しない）
 /// @param path 判定対象のパス
-/// @param ext 拡張子 (例: ".wav", "wav")
-/// @return 指定した拡張子であればtrue
+/// @param ext  拡張子（例: ".wav", "wav"）
+/// @return 指定した拡張子であれば true
 static bool HasExtInsensitive(const char *path, const char *ext) {
   if (!path || !ext)
     return false;
@@ -41,11 +41,11 @@ static bool HasExtInsensitive(const char *path, const char *ext) {
   return s.rfind(e) == s.size() - e.size();
 }
 
-/// @brief パス文字列を Wide 文字列(UTF-16)に変換する
+/// @brief パス文字列を Wide 文字列（UTF-16）に変換する
 /// @param path UTF-8 の文字列（ソース中のリテラルは /utf-8 でビルドしているため UTF-8）。
 ///             UTF-8 として不正なら ANSI コードページ（Content Browser 経由の
 ///             std::filesystem::path::string() など）とみなして変換する
-/// @return Wide文字列
+/// @return Wide 文字列（path が nullptr なら空）
 static std::wstring ToWideFromUTF8(const char *path) {
   if (!path)
     return L"";
@@ -103,7 +103,7 @@ SoundData SoundLoadWave(const char *filename) {
     ChunkHeader chunk{};
     file.read(reinterpret_cast<char *>(&chunk), sizeof(chunk));
     if (!file) {
-      break; // EOF
+      break; // ファイル末尾に達した
     }
     if (chunk.size < 0) {
       break; // 壊れたヘッダ
@@ -189,7 +189,7 @@ SoundData SoundLoadWave(const char *filename) {
 // =========================
 // Media Foundation 初期化
 // =========================
-/// @brief Media Foundationを初期化する（初回呼び出し時のみ実行）
+/// @brief Media Foundation を初期化する（初回呼び出し時のみ実行）
 /// @return 初期化できていれば true
 static bool EnsureMediaFoundationStartup() {
   static bool attempted = false;
@@ -207,8 +207,8 @@ static bool EnsureMediaFoundationStartup() {
 }
 
 /// @brief WAVEFORMATEXTENSIBLE を基本形式（PCM / IEEE float）の WAVEFORMATEX に読み替える
-/// @param wfex 入出力。EXTENSIBLE でなければ何もしない
-/// @param cb wfex の実サイズ（バイト）
+/// @param wfex 入出力（EXTENSIBLE でなければ cbSize を 0 にするだけ）
+/// @param cb   wfex の実サイズ（バイト）
 /// @return 読み替えられた（または元から基本形式だった）ら true。未対応のサブフォーマットなら false
 static bool CollapseExtensibleFormat(WAVEFORMATEX &wfex, size_t cb) {
   if (wfex.wFormatTag != WAVE_FORMAT_EXTENSIBLE) {
@@ -232,10 +232,11 @@ static bool CollapseExtensibleFormat(WAVEFORMATEX &wfex, size_t cb) {
 // =========================
 // MF を使った汎用オーディオ読み込み（MP3→PCM）
 // =========================
-/// @brief Media Foundationを使用してオーディオファイルをロードする（MP3等をPCMにデコード）
-/// @param wpath Wide文字列のファイルパス
+/// @brief Media Foundation を使用してオーディオファイルをロードする（MP3 等を PCM にデコード）
+/// @param wpath      Wide 文字列のファイルパス
+/// @param nameForLog ログ出力用のファイル名
 /// @return ロードされた音声データ
-/// @note 失敗時は空の SoundData を返す（assert で落とさない）
+/// @note 失敗時は空の SoundData を返す（assert で落とさない）。
 static SoundData SoundLoadWithMediaFoundation(const wchar_t *wpath, const std::string &nameForLog) {
   if (!EnsureMediaFoundationStartup()) {
     return {};
@@ -372,7 +373,7 @@ SoundData SoundLoadAudio(const char *filenameIn) {
   if (!filenameIn || !*filenameIn) {
     return {};
   }
-  // ゲーム側 Resources → エンジン側 (Chaso/Resources) の順で探す
+  // ゲーム側 Resources → エンジン側（Chaso/Resources）の順で探す
   const std::string resolvedPath = Chaso::ResolvePath(filenameIn);
   const char *filename = resolvedPath.c_str();
   if (HasExtInsensitive(filename, ".wav")) {

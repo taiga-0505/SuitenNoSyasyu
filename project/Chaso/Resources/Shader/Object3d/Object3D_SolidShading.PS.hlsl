@@ -1,12 +1,20 @@
 #include "Object3d.hlsli"
 
+// =============================================================================
+// SolidShading（形状確認用のソリッド表示）
+//
+// ビューシェーディングのデバッグ表示用。シンプルな Half-Lambert（テクスチャなし）で、
+// 固定の平行光源を当てて凹凸を強調する。シーンのライトやマテリアルは参照しない。
+// =============================================================================
+
 struct PixelShaderOutput
 {
-    float4 color : SV_TARGET0;
+    float4 color : SV_TARGET0; ///< 出力色
 };
 
-// シンプルなHalf-Lambert（テクスチャなし、形状確認用）
-// 固定の平行光源で凹凸を強調する
+/// @brief 固定ライトの Half-Lambert でグレーに陰影を付けた色を出力する
+/// @param input 頂点シェーダーからの補間値
+/// @return 出力色
 PixelShaderOutput main(VertexShaderOutput input)
 {
     PixelShaderOutput output;

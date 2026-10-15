@@ -24,7 +24,7 @@ std::string ScreenCapture::SaveScreenshot(ID3D12Device* device, ID3D12CommandQue
     // 1. リソース情報の取得
     D3D12_RESOURCE_DESC desc = backBuffer->GetDesc();
     
-    // 2. Readback用リソースの作成に必要なサイズ計算
+    // 2. 読み戻し（Readback）用リソースの作成に必要なサイズ計算
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
     UINT numRows;
     UINT64 rowSizeInBytes;
@@ -64,7 +64,7 @@ std::string ScreenCapture::SaveScreenshot(ID3D12Device* device, ID3D12CommandQue
     ComPtr<ID3D12GraphicsCommandList> cl;
     device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr, IID_PPV_ARGS(&cl));
 
-    // バリア: PRESENT (または現在の状態) -> COPY_SOURCE
+    // バリア: PRESENT（または現在の状態）→ COPY_SOURCE
     D3D12_RESOURCE_BARRIER barrier = {};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     barrier.Transition.pResource = backBuffer;
@@ -86,7 +86,7 @@ std::string ScreenCapture::SaveScreenshot(ID3D12Device* device, ID3D12CommandQue
 
     cl->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
 
-    // バリア戻し: COPY_SOURCE -> PRESENT
+    // バリア戻し: COPY_SOURCE → PRESENT
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
     cl->ResourceBarrier(1, &barrier);
@@ -95,7 +95,7 @@ std::string ScreenCapture::SaveScreenshot(ID3D12Device* device, ID3D12CommandQue
     ID3D12CommandList* lists[] = { cl.Get() };
     queue->ExecuteCommandLists(1, lists);
 
-    // 4. GPUの完了を待機
+    // 4. GPU の完了を待機
     ComPtr<ID3D12Fence> fence;
     device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
     queue->Signal(fence.Get(), 1);
@@ -106,7 +106,7 @@ std::string ScreenCapture::SaveScreenshot(ID3D12Device* device, ID3D12CommandQue
     }
     CloseHandle(event);
 
-    // 5. MapしてDirectXTexで保存
+    // 5. Map して DirectXTex で保存
     void* mappedData = nullptr;
     hr = readbackResource->Map(0, nullptr, &mappedData);
     if (FAILED(hr)) {
@@ -125,7 +125,7 @@ std::string ScreenCapture::SaveScreenshot(ID3D12Device* device, ID3D12CommandQue
     CreateScreenshotDirectory();
     std::string fileName = "../media/screenshots/" + GenerateTimestampFileName() + ".png";
     
-    // WIC保存用にフォーマット調整
+    // WIC 保存用にフォーマット調整
     if (image.format == DXGI_FORMAT_R8G8B8A8_UNORM) {
         image.format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
     }
@@ -135,13 +135,13 @@ std::string ScreenCapture::SaveScreenshot(ID3D12Device* device, ID3D12CommandQue
 
     hr = DirectX::SaveToWICFile(image, DirectX::WIC_FLAGS_NONE, DirectX::GetWICCodec(DirectX::WIC_CODEC_PNG), wFileName.c_str());
     
-    // クリップボードへコピー (DIB形式)
+    // クリップボードへコピー（DIB 形式）
     DirectX::Blob blob;
     HRESULT hrBlob = DirectX::SaveToWICMemory(image, DirectX::WIC_FLAGS_NONE, DirectX::GetWICCodec(DirectX::WIC_CODEC_BMP), blob);
     if (SUCCEEDED(hrBlob)) {
         if (OpenClipboard(nullptr)) {
             EmptyClipboard();
-            // BMPファイルのヘッダ (BITMAPFILEHEADER 14バイト) をスキップしてDIB部分をコピー
+            // BMP ファイルのヘッダ（BITMAPFILEHEADER 14 バイト）をスキップして DIB 部分をコピー
             size_t dibSize = blob.GetBufferSize() - sizeof(BITMAPFILEHEADER);
             HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, dibSize);
             if (hMem) {
@@ -183,7 +183,7 @@ void ScreenCapture::DrawImGui(float deltaTime, Dx12Core* core) {
     const std::string& capturePath = core->GetLatestScreenshotPath();
     if (!capturePath.empty()) {
         notify_.path = capturePath;
-        // テクスチャとしてロード (RC経由)
+        // テクスチャとしてロード（RC 経由）
         notify_.texHandle = RC::GetRenderContext().Textures().LoadID(capturePath, true);
         notify_.timer = kNotifyDisplayTime;
         notify_.active = true;
@@ -201,10 +201,10 @@ void ScreenCapture::DrawImGui(float deltaTime, Dx12Core* core) {
             }
         }
 
-        // ポップアウト表示 (左下)
+        // ポップアウト表示（左下）
         float alpha = 1.0f;
         if (notify_.timer < 1.0f) {
-            alpha = notify_.timer; // 残り1秒でフェードアウト
+            alpha = notify_.timer; // 残り 1 秒でフェードアウト
         }
 
         ImGui::SetNextWindowPos(ImVec2(10, ImGui::GetIO().DisplaySize.y - 160), ImGuiCond_Always);

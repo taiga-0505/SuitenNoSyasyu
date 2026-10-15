@@ -4,60 +4,65 @@
 // GPU Particle の雨エフェクト用 Update Compute Shader。
 // 重力加速度を適用して落下させ、地面到達で FreeList に返却する。
 //
-// u0 : gParticles      — パーティクルデータ (RWStructuredBuffer)
+// u0 : gParticles      — パーティクルデータ（RWStructuredBuffer）
 // u1 : gFreeListIndex  — FreeList の現在のインデックス
 // u2 : gFreeList       — 空きパーティクルインデックスの配列
-// b0 : gPerFrame       — フレーム情報 (deltaTime)
+// b0 : gPerFrame       — フレーム情報（deltaTime）
+//
+// 重力・地面の高さはシェーダー内の固定値（kGravity / kGroundY）で、
+// PerFrame のうち参照するのは gDeltaTime と gMaxParticles だけ。
 // ============================================================================
 
 struct Particle
 {
-    float3 translate;
-    float pad0;
-    float3 scale;
-    float lifeTime;
-    float3 velocity;
-    float currentTime;
-    float4 color;
+    float3 translate;   ///< 位置
+    float pad0;         ///< パディング（16 bytes アラインメント）
+    float3 scale;       ///< スケール（0 なら描画時に棄却される）
+    float lifeTime;     ///< 寿命（秒）
+    float3 velocity;    ///< 速度（1 フレームあたりの移動量）
+    float currentTime;  ///< 経過時間（秒）
+    float4 color;       ///< 色（RGBA。alpha が 0 なら死んでいる扱い）
 };
 
 cbuffer PerFrame : register(b0)
 {
-    float gDeltaTime;
-    uint gMaxParticles;
-    float gMinLifeTime;
-    float gMaxLifeTime;
+    float gDeltaTime;        ///< フレーム間隔（秒）
+    uint gMaxParticles;      ///< 最大パーティクル数
+    float gMinLifeTime;      ///< 最小寿命（秒）
+    float gMaxLifeTime;      ///< 最大寿命（秒）
 
-    float gMinScale;
-    float gMaxScale;
-    float gGravity;
-    uint gEmitterShape;
+    float gMinScale;         ///< 最小スケール
+    float gMaxScale;         ///< 最大スケール
+    float gGravity;          ///< 重力の強さ（雨では参照せず kGravity を使う）
+    uint gEmitterShape;      ///< エミッタ形状（0: Point, 1: Sphere, 2: Box, 3: Cone）
 
-    float3 gBaseVelocity;
-    float gVelocityVariance;
+    float3 gBaseVelocity;    ///< 基本速度（1 フレームあたりの移動量）
+    float gVelocityVariance; ///< 速度のランダム分散
 
-    float gShapeRadius;
-    float gConeAngle;
-    float2 gShapePad;
+    float gShapeRadius;      ///< Sphere / Cone の半径
+    float gConeAngle;        ///< Cone の半角（rad）
+    float2 gShapePad;        ///< パディング
 
-    float4 gStartColor;
-    float4 gEndColor;
+    float4 gStartColor;      ///< 開始色（RGBA）
+    float4 gEndColor;        ///< 終了色（RGBA）
 
-    float3 gEmitterPosition;
-    float gEmitterPad;
+    float3 gEmitterPosition; ///< エミッタのワールド座標
+    float gEmitterPad;       ///< C++ 側の emitCount の枠（ここでは使わない）
 
-    float3 gShapeBoxSize;
-    float gShapeBoxPad;
+    float3 gShapeBoxSize;    ///< Box 形状のサイズ（全長 xyz）
+    float gShapeBoxPad;      ///< パディング
 };
 
 
-static const float kGravity = -0.001f;   // 重力加速度（フレーム単位）
-static const float kGroundY = -1.0f;     // 地面の高さ
+static const float kGravity = -0.001f;   ///< 重力加速度（1 フレームあたりの速度変化）
+static const float kGroundY = -1.0f;     ///< 地面の高さ（これ以下に落ちたら消す）
 
 RWStructuredBuffer<Particle> gParticles     : register(u0);
 RWStructuredBuffer<int>      gFreeListIndex : register(u1);
 RWStructuredBuffer<uint>     gFreeList      : register(u2);
 
+/// @brief エントリポイント。1 スレッドが 1 パーティクルを更新する
+/// @param DTid ディスパッチスレッド ID（x がパーティクル番号）
 [numthreads(1024, 1, 1)]
 void main(uint3 DTid : SV_DispatchThreadID)
 {

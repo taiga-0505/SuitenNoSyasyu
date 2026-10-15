@@ -251,8 +251,8 @@ Node ModelMesh::ReadNode_(const aiNode *node) const {
   }
 
   // ---------------------------------------------------------
-  // 1. localMatrix: Transpose + ConvertNodeMatrixRHtoLH_
-  //    非スキンモデルのBuildDrawItems_で使われる。
+  // 1. localMatrix: 転置して行優先（row-major）に並べ替える
+  //    非スキンモデルの BuildDrawItems_ で使われる。
   // ---------------------------------------------------------
   aiMatrix4x4 a = node->mTransformation;
   a.Transpose();
@@ -495,9 +495,9 @@ void ModelMesh::ExtractSkinData_(const aiScene *scene,
         skinBoneIdx = static_cast<uint32_t>(skinData_.inverseBindPoseMatrices.size());
         skinData_.jointNameToIndex[boneName] = skinBoneIdx;
 
-        // InverseBindPoseMatrixを右手系から左手系に変換
+        // InverseBindPoseMatrix をエンジンの行列形式に変換する
         aiMatrix4x4 a = bone->mOffsetMatrix;
-        a.Transpose(); // Assimpはcolumn-major、エンジンはrow-major
+        a.Transpose(); // Assimp は列優先（column-major）、エンジンは行優先（row-major）
         RC::Matrix4x4 m = MakeIdentity4x4();
         for (int r = 0; r < 4; ++r)
           for (int c = 0; c < 4; ++c)
@@ -706,7 +706,7 @@ void ModelMesh::CompactMaterials_() {
     if (oldIdx < remap.size() && remap[oldIdx] >= 0) {
       r.materialIndex = (uint32_t)remap[oldIdx];
     } else {
-      r.materialIndex = 0; // fallback
+      r.materialIndex = 0; // 対応が無ければ先頭のマテリアルに逃がす
     }
   }
 }
@@ -718,7 +718,7 @@ RC::Matrix4x4 ModelMesh::MakeAxisFlipX_() {
 }
 
 RC::Matrix4x4 ModelMesh::ConvertNodeMatrixRHtoLH_(const RC::Matrix4x4 &m) {
-  // row-vector想定：頂点を p' = p * C（CはX反転）で左手化しているので、
+  // 行ベクトル（row-vector）想定：頂点を p' = p * C（C は X 反転）で左手化しているので、
   // 行列も M' = C * M * C で同じ座標系に揃える。
   const RC::Matrix4x4 C = MakeAxisFlipX_();
   return Multiply(Multiply(C, m), C);

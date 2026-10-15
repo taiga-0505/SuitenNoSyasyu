@@ -7,11 +7,12 @@
 #include <string>
 #include <nlohmann/json.hpp>
 
+/// @class TextRendererComponent
 /// @brief 画面上に文字列を描画するコンポーネント
 /// @details
-/// - 位置は TransformComponent の position.x / position.y（ピクセル、左上原点）を使用します。
-/// - フォントは RC::LoadFont で読み込まれ、fontHandle に保持されます（シーンロード時に自動）。
-/// - 描画は DataDrivenScene の 2D パスで RC::DrawString により行われます。
+/// - 位置は TransformComponent の position.x / position.y（ピクセル、左上原点）を使う。
+/// - フォントは RC::LoadFont で読み込まれ、fontHandle に保持される（シーンロード時に自動）。
+/// - 描画は DataDrivenScene の 2D パスで RC::DrawString により行われる。
 class TextRendererComponent : public IComponent {
 public:
   // ---- シリアライズ対象 ----
@@ -31,15 +32,22 @@ public:
   std::string loadedPath;   ///< fontHandle が指すフォントパス（再ロード判定用）
   float loadedSize = 0.0f;  ///< fontHandle が指すサイズ（再ロード判定用）
 
+  /// @brief フォントが読み込み済みかを返す
+  /// @return fontHandle が 0 以上なら true
   bool HasFont() const { return fontHandle >= 0; }
 
   /// @brief 設定（fontPath / fontSize）とロード済みフォントが食い違っているか
+  /// @return 未ロード、またはパスかサイズが変わっていれば true
   bool NeedsReload() const {
     return fontHandle < 0 || loadedPath != fontPath || loadedSize != fontSize;
   }
 
+  /// @brief コンポーネントの型名を返す
+  /// @return "TextRendererComponent"
   const char *TypeName() const override { return "TextRendererComponent"; }
 
+  /// @brief 文字列と表示設定を JSON に書き出す
+  /// @return シリアライズ対象のメンバをすべて格納した JSON
   nlohmann::json Serialize() const override {
     return {
         {"text", text},
@@ -54,6 +62,9 @@ public:
     };
   }
 
+  /// @brief JSON から文字列と表示設定を読み込む
+  /// @param j 読み込み元の JSON（含まれていないキーは現在の値のまま）
+  /// @note align が範囲外（0〜2 以外）なら Left にする。
   void Deserialize(const nlohmann::json &j) override {
     if (j.contains("text")) text = j["text"].get<std::string>();
     if (j.contains("fontPath")) fontPath = j["fontPath"].get<std::string>();

@@ -1,11 +1,11 @@
 // ============================================================================
 // FireParticle.PS.hlsl
 // ----------------------------------------------------------------------------
-// 炎パーティクル用の Pixel Shader。
+// 炎パーティクル用ピクセルシェーダ（gpu_particle_fire PSO）。
 // UV から手続き的に炎の粒を描くので、テクスチャの絵柄には依存しない
 // （BubbleParticle.PS と同じ方針。gTexture は宣言のみで参照しない）。
 //
-// 加算合成 (kBlendModeAdd) 前提。重なった部分が白熱して芯ができる。
+// 加算合成（kBlendModeAdd）前提。重なった部分が白熱して芯ができる。
 //
 // やっていること:
 //   1. UV を横に縮めて縦長の粒にする → 上に伸びる炎らしいシルエット
@@ -19,9 +19,11 @@
 Texture2D<float4> gTexture : register(t0); // 手続き描画のため参照しない（バインドの互換用）
 SamplerState gSampler : register(s0);
 
+/// @struct PixelShaderOutput
+/// @brief ピクセル出力
 struct PixelShaderOutput
 {
-    float4 color : SV_TARGET0;
+    float4 color : SV_TARGET0; ///< 出力色
 };
 
 /// @brief 粒の縦横比。1 より大きいほど縦長になる
@@ -30,11 +32,14 @@ static const float kAspect = 2.1f;
 /// @brief 白熱した芯の色（加算されるので 1 を超える値にはしない）
 static const float3 kCoreColor = float3(1.0f, 0.95f, 0.75f);
 
+/// @brief 板ポリゴンに手続き的に炎の粒を描く
+/// @param input GPUParticle.VS の出力（particleParams に寿命の進行度と固有乱数）
+/// @return 出力色（半径外とほぼ透明なピクセルは discard）
 PixelShaderOutput main(VertexShaderOutput input)
 {
     PixelShaderOutput output;
 
-    const float age = input.particleParams.x;  // 0=生成直後, 1=消滅直前
+    const float age = input.particleParams.x;  // 0 = 生成直後, 1 = 消滅直前
     const float rnd = input.particleParams.y;  // パーティクル固有の乱数
 
     // --- 1. UV を -1〜1 に変換し、横を縮めて縦長の粒にする ---

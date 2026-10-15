@@ -27,13 +27,13 @@ namespace RC {
 
 /// @brief 水面の波パラメータ（WaterComponent の波関連フィールドと 1:1 対応）
 struct WaterWaveParams {
-  float waveHeight    = 0.3f;
-  float waveSpeed     = 1.5f;
-  float waveFreq      = 0.8f;
-  float waveHeight2   = 0.15f;
-  float waveSpeed2    = 1.0f;
-  float waveFreq2     = 1.2f;
-  float waveSteepness = 0.4f;
+  float waveHeight    = 0.3f;   ///< 主波の振幅（微細波の振幅にも使う）
+  float waveSpeed     = 1.5f;   ///< 主波の位相速度（微細波・詳細波の速さにも使う）
+  float waveFreq      = 0.8f;   ///< 主波の周波数（微細波・詳細波の基準にも使う）
+  float waveHeight2   = 0.15f;  ///< 副波の振幅
+  float waveSpeed2    = 1.0f;   ///< 副波の位相速度
+  float waveFreq2     = 1.2f;   ///< 副波の周波数
+  float waveSteepness = 0.4f;   ///< Gerstner 波の尖り（横方向の寄り具合。副波・微細波はこれに倍率を掛ける）
   float baseHeight    = 0.0f;  ///< 水面エンティティの Y 座標（静水面の高さ）
 
   // --- 詳細波（OceanWaves.hlsli）---
@@ -44,8 +44,8 @@ struct WaterWaveParams {
 
 /// @brief 水面に波の反射を起こす障害物（円柱近似）
 struct WaterObstacle {
-  Vector3 pos{0.0f, 0.0f, 0.0f};
-  float   radius = 1.0f;
+  Vector3 pos{0.0f, 0.0f, 0.0f}; ///< 障害物の中心（ワールド座標。XZ のみ使う）
+  float   radius = 1.0f;          ///< 円柱の半径
 };
 
 /// @brief ある地点の水面サンプル結果
@@ -54,6 +54,7 @@ struct WaterSample {
   Vector3 normal{0.0f, 1.0f, 0.0f};    ///< 水面の法線（傾き合わせに使う）
 };
 
+/// @class WaterSurface
 /// @brief Gerstner 波の水面をワールド座標から引くための関数群
 class WaterSurface {
 public:
@@ -61,13 +62,13 @@ public:
   static constexpr int kMaxObstacles = 4; ///< シェーダの CB が持てる障害物の最大数
 
   // --- 詳細波の表（OceanWaves.hlsli と完全に同じ値にすること）---
-  static constexpr int   kDetailWaveCount = 8;
-  static constexpr float kWindAngle       = 0.620249486f; // atan2(0.5, 0.7)
-  static constexpr float kDetailAngle[kDetailWaveCount] = { -0.62f, 0.47f, -0.21f, 0.83f, 0.12f, -0.97f, 0.58f, -0.41f };
-  static constexpr float kDetailRatio[kDetailWaveCount] = {  1.37f, 1.79f,  2.23f, 2.71f, 3.29f,  3.97f, 4.81f,  5.83f };
-  static constexpr float kDetailPhase[kDetailWaveCount] = {  0.0f,  1.7f,   4.1f,  2.3f,  5.5f,   0.9f,  3.3f,   6.0f  };
-  static constexpr float kDetailAmpScale  = 0.35f;
-  static constexpr float kDetailMaxSlope  = 0.10f;
+  static constexpr int   kDetailWaveCount = 8;             ///< 詳細波の本数
+  static constexpr float kWindAngle       = 0.620249486f; ///< 風向き（ラジアン）。atan2(0.5, 0.7)
+  static constexpr float kDetailAngle[kDetailWaveCount] = { -0.62f, 0.47f, -0.21f, 0.83f, 0.12f, -0.97f, 0.58f, -0.41f }; ///< 風向きからのずれ（ラジアン）
+  static constexpr float kDetailRatio[kDetailWaveCount] = {  1.37f, 1.79f,  2.23f, 2.71f, 3.29f,  3.97f, 4.81f,  5.83f }; ///< 主波の周波数に対する倍率
+  static constexpr float kDetailPhase[kDetailWaveCount] = {  0.0f,  1.7f,   4.1f,  2.3f,  5.5f,   0.9f,  3.3f,   6.0f  }; ///< 初期位相（ラジアン）
+  static constexpr float kDetailAmpScale  = 0.35f; ///< 詳細波の振幅の基準倍率（waveHeight に掛け、kDetailRatio で割る）
+  static constexpr float kDetailMaxSlope  = 0.10f; ///< 詳細波 1 本あたりの最大傾き（振幅 × 周波数の上限）
 
   /// @brief 指定 XZ における水面の高さを求める
   /// @param p 波パラメータ
@@ -78,7 +79,8 @@ public:
   /// @param reflectStrength 反射の強さ（シェーダの gObstacleCount.y と同じ）
   /// @param reflectRange 反射の到達範囲（半径倍率／gObstacleCount.z と同じ）
   /// @param iterations XZ 変位の逆解き回数。Gerstner は横にもずれるため、
-  ///        「変位後に (x,z) へ来る元の格子点」を反復で探す。0 で無効。
+  ///        「変位後に（x,z）へ来る元の格子点」を反復で探す。0 で無効。
+  /// @return 水面のワールド Y
   static float SampleHeight(const WaterWaveParams& p, float time, float x, float z,
                             const WaterObstacle* obstacles = nullptr, int obstacleCount = 0,
                             float reflectStrength = 1.0f, float reflectRange = 3.0f,
@@ -88,6 +90,8 @@ public:
   }
 
   /// @brief 指定 XZ における水面の高さと法線を求める
+  /// @details 引数は SampleHeight と同じ。
+  /// @return 水面の高さと法線（法線は常に上向き）
   static WaterSample Sample(const WaterWaveParams& p, float time, float x, float z,
                             const WaterObstacle* obstacles = nullptr, int obstacleCount = 0,
                             float reflectStrength = 1.0f, float reflectRange = 3.0f,
@@ -129,33 +133,38 @@ public:
   }
 
 private:
-  /// @brief 1本の平面波の定義（Water.VS.hlsl の WaveDef と同じ）
+  /// @brief 1 本の平面波の定義（Water.VS.hlsl の WaveDef と同じ）
   struct Wave {
     float dirX, dirZ;   ///< 波が実際に進む向き（正規化済み）
-    float freq;
-    float timePhase;    ///< -speed * time
-    float steepness;
-    float amp;
+    float freq;         ///< 周波数
+    float timePhase;    ///< 時間による位相（-speed * time）
+    float steepness;    ///< Gerstner の尖り
+    float amp;          ///< 振幅
   };
 
   /// @brief Gerstner の累積結果（シェーダの GerstnerResult 相当）
   struct Accum {
-    float offsetX = 0.0f, offsetY = 0.0f, offsetZ = 0.0f;
-    float tangentX = 1.0f, tangentY = 0.0f, tangentZ = 0.0f;
-    float binormalX = 0.0f, binormalY = 0.0f, binormalZ = 1.0f;
+    float offsetX = 0.0f, offsetY = 0.0f, offsetZ = 0.0f;       ///< 格子点からの変位
+    float tangentX = 1.0f, tangentY = 0.0f, tangentZ = 0.0f;    ///< X 方向の接線
+    float binormalX = 0.0f, binormalY = 0.0f, binormalZ = 1.0f; ///< Z 方向の従法線
   };
 
+  /// @brief index 番目の基本波を作る（Water.VS.hlsl の GetWaveDef と同じ）
+  /// @param p     波パラメータ
+  /// @param index 0: 主波、1: 副波、それ以外: 微細波
+  /// @param time  経過時間
+  /// @return 波の定義
   static Wave GetWave(const WaterWaveParams& p, int index, float time) {
     Wave w{};
     if (index == 0) {
-      // 主波 (X方向寄り) — normalize(float2(0.7, 0.5))
+      // 主波（X 方向寄り） — normalize(float2(0.7, 0.5))
       w.dirX = 0.813733471f; w.dirZ = 0.581238194f;
       w.freq = p.waveFreq;
       w.timePhase = -p.waveSpeed * time;
       w.steepness = p.waveSteepness;
       w.amp = p.waveHeight;
     } else if (index == 1) {
-      // 副波 (Z方向寄り) — normalize(float2(0.3, 0.8))
+      // 副波（Z 方向寄り） — normalize(float2(0.3, 0.8))
       w.dirX = 0.351123409f; w.dirZ = 0.936329091f;
       w.freq = p.waveFreq2;
       w.timePhase = -p.waveSpeed2 * time;
@@ -172,7 +181,13 @@ private:
     return w;
   }
 
-  /// @brief 平面波1成分を Gerstner として加算する（AccumulateGerstner と同一式）
+  /// @brief 平面波 1 成分を Gerstner として加算する（AccumulateGerstner と同一式）
+  /// @param r         加算先
+  /// @param dirX,dirZ 進む向き（正規化済み）
+  /// @param freq      周波数
+  /// @param phase     位相
+  /// @param steepness 尖り
+  /// @param amp       振幅
   static void Accumulate(Accum& r, float dirX, float dirZ, float freq,
                          float phase, float steepness, float amp) {
     const float s = std::sin(phase);
@@ -192,6 +207,11 @@ private:
   }
 
   /// @brief 詳細波 i を Gerstner として加算する（OceanWaves.hlsli の GetDetailWave + VS の ComputeDetailOffset）
+  /// @param r     加算先
+  /// @param p     波パラメータ
+  /// @param i     詳細波の番号（0〜kDetailWaveCount-1）
+  /// @param time  経過時間
+  /// @param sx,sz 評価する格子点
   static void AccumulateDetail(Accum& r, const WaterWaveParams& p, int i, float time,
                                float sx, float sz) {
     const float detail = p.detail;
@@ -220,6 +240,13 @@ private:
   }
 
   /// @brief 障害物による反射波（鏡像法。AccumulateReflection と同一式）
+  /// @param r               加算先
+  /// @param w               反射させる基本波
+  /// @param px,pz           評価する格子点
+  /// @param obstacles       障害物配列
+  /// @param obstacleCount   障害物の数
+  /// @param reflectStrength 反射の強さ
+  /// @param reflectRange    反射の到達範囲（半径倍率）
   static void AccumulateReflection(Accum& r, const Wave& w, float px, float pz,
                                    const WaterObstacle* obstacles, int obstacleCount,
                                    float reflectStrength, float reflectRange) {
@@ -257,7 +284,7 @@ private:
 
       float fade = 1.0f - travel / (radius * reflectRange);
       fade = std::clamp(fade, 0.0f, 1.0f);
-      fade = fade * fade * (3.0f - 2.0f * fade); // smoothstep
+      fade = fade * fade * (3.0f - 2.0f * fade); // smoothstep と同じ補間
 
       const float angleTerm = std::sqrt(std::clamp(facing, 0.0f, 1.0f));
       const float atten = fade * angleTerm * reflectStrength;
@@ -266,7 +293,9 @@ private:
     }
   }
 
-  /// @brief 格子点 (sx, sz) を評価して変位・接線を求める（ComputeGerstnerWave 相当）
+  /// @brief 格子点（sx, sz）を評価して変位・接線を求める（ComputeGerstnerWave 相当）
+  /// @details 引数の意味は SampleHeight と同じ。障害物は kMaxObstacles 個までしか見ない。
+  /// @return 変位と接線・従法線
   static Accum Evaluate(const WaterWaveParams& p, float time, float sx, float sz,
                         const WaterObstacle* obstacles, int obstacleCount,
                         float reflectStrength, float reflectRange) {
@@ -314,6 +343,10 @@ private:
   }
 
   /// @brief HLSL の smoothstep(edge0, edge1, x) 相当
+  /// @param edge0 0 になる境界
+  /// @param edge1 1 になる境界
+  /// @param x     入力値
+  /// @return エルミート補間した 0〜1 の値
   static float SmoothStep(float edge0, float edge1, float x) {
     if (edge1 - edge0 <= 1e-6f) return (x < edge0) ? 0.0f : 1.0f;
     float t = std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);

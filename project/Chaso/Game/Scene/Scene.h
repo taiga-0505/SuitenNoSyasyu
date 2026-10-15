@@ -15,8 +15,8 @@
 
 /// @class Scene
 /// @brief ゲームシーンの基底抽象クラス
-/// @details 全てのゲームシーン（タイトル、ゲーム本編、リザルトなど）はこのクラスを継承して実装します。
-/// シーンのライフサイクル（入場・退場・更新・描画）を定義します。
+/// @details 全てのゲームシーン（タイトル、ゲーム本編、リザルトなど）はこのクラスを継承して実装する。
+///          シーンのライフサイクル（入場・退場・更新・描画）を定義する。
 class Scene {
 public:
   virtual ~Scene() = default;
@@ -88,8 +88,8 @@ public:
       }
   }
 
-  /// @brief IDでエンティティを削除マーク（次フレームで除去）
-  /// @param entityId エンティティのID
+  /// @brief ID でエンティティを削除マーク（次フレームで除去）
+  /// @param entityId エンティティの ID
   void RemoveEntity(uint32_t entityId) {
       for (auto& e : entities_) {
           if (e && e->GetId() == entityId) {
@@ -175,36 +175,38 @@ public:
   }
 
   /// @brief 選択中のライトエンティティのギズモ（ワイヤフレーム）を描画する
-  /// @param selectedEntityId 選択中のエンティティID（0なら描画しない）
+  /// @param selectedEntityId 選択中のエンティティ ID（0 なら描画しない）
   /// @details PreDraw3D ～ PreDraw2D の間で呼ぶ必要がある
   void DrawLightGizmos(uint32_t selectedEntityId = 0);
 
-  /// @brief 選択中のカメラエンティティのFrustumギズモを描画する
-  /// @param selectedEntityId 選択中のエンティティID（0なら描画しない）
+  /// @brief 選択中のカメラエンティティの Frustum ギズモを描画する
+  /// @param selectedEntityId 選択中のエンティティ ID（0 なら描画しない）
   /// @param aspect アスペクト比
   void DrawCameraGizmos(uint32_t selectedEntityId = 0, float aspect = 16.0f / 9.0f);
 
   /// @brief 選択中のコライダーエンティティのギズモを描画する
-  /// @param selectedEntityId 選択中のエンティティID（0なら描画しない）
+  /// @param selectedEntityId 選択中のエンティティ ID（0 なら描画しない）
   void DrawColliderGizmos(uint32_t selectedEntityId = 0);
 
-  /// @brief 選択中のエンティティIDを設定・取得する
-  /// @param id 選択するエンティティID（0 は未選択）
-  /// @return 選択中のエンティティID
+  /// @brief 選択中のエンティティ ID を設定する
+  /// @param id 選択するエンティティ ID（0 は未選択）
   void SetSelectedEntityId(uint32_t id) { selectedEntityId_ = id; }
+  /// @brief 選択中のエンティティ ID を取得する
+  /// @return 選択中のエンティティ ID（0 は未選択）
   uint32_t GetSelectedEntityId() const { return selectedEntityId_; }
 
-  /// @brief 全コライダーのデバッグ描画フラグを設定・取得する
+  /// @brief 全コライダーのデバッグ描画フラグを設定する
   /// @param show true で全コライダーを描画する
-  /// @return 全コライダーを描画するなら true
   void SetShowColliderGizmos(bool show) { showColliderGizmos_ = show; }
+  /// @brief 全コライダーのデバッグ描画フラグを取得する
+  /// @return 全コライダーを描画するなら true
   bool GetShowColliderGizmos() const { return showColliderGizmos_; }
 
-  /// @brief GameModeの取得
+  /// @brief GameMode の取得
   /// @return このシーンの GameMode（所有権は Scene が持つ）
   GameModeBase* GetGameMode() const { return gameMode_.get(); }
 
-  /// @brief 現在のSceneContextを取得する
+  /// @brief 現在の SceneContext を取得する
   /// @return 現在フレームの SceneContext（未設定なら nullptr）
   SceneContext* GetContext() const { return currentContext_; }
 
@@ -227,7 +229,7 @@ public:
   /// @brief 壁抜け（トンネリング）しない移動を行う
   /// @param self 移動させるエンティティ
   /// @param delta このフレームの移動量（速度×deltaTime）
-  /// @param maxStep 1回の判定で進む最大距離(m)。これを壁の最小厚みより小さく保つことで
+  /// @param maxStep 1 回の判定で進む最大距離(m)。これを壁の最小厚みより小さく保つことで
   ///                高速移動時でも「飛び越え」が起きない。既定 0.1m
   /// @param skin TestBlockingOverlap に渡す余裕量
   /// @return 実際に移動した量（壁に阻まれた分は差し引かれる）
@@ -276,9 +278,9 @@ public:
 protected:
   std::vector<std::shared_ptr<Entity>> entities_; ///< シーン内のエンティティ一覧
   std::vector<std::shared_ptr<Entity>> pendingEntities_; ///< 更新ループ中に生成されたエンティティの一時バッファ
-  uint32_t selectedEntityId_ = 0; ///< 選択中のエンティティID
+  uint32_t selectedEntityId_ = 0; ///< 選択中のエンティティ ID
   std::unique_ptr<GameModeBase> gameMode_ = std::make_unique<GameModeBase>(); ///< ゲームルールの管理
-  SceneContext* currentContext_ = nullptr; ///< 現在フレームのSceneContext
+  SceneContext* currentContext_ = nullptr; ///< 現在フレームの SceneContext
   bool showColliderGizmos_ = false; ///< コライダーを全描画するデバッグフラグ
   bool showAllGizmos_ = false; ///< 全デバッグ描画（F4）フラグ
 
@@ -346,9 +348,8 @@ protected:
     doomed.clear();
   }
 
-  /// @brief 名前・IDで最初に一致したエンティティに破棄マークを付ける
+  /// @brief 名前が最初に一致したエンティティに破棄マークを付ける
   /// @param name 破棄するエンティティの名前
-  /// @param id 破棄するエンティティのID
   /// @return 見つかって破棄マークを付けたら true
   bool DestroyEntityByName(const std::string& name) {
     for (auto& e : entities_) {
@@ -357,6 +358,9 @@ protected:
     return false;
   }
 
+  /// @brief ID が一致したエンティティに破棄マークを付ける
+  /// @param id 破棄するエンティティの ID
+  /// @return 見つかって破棄マークを付けたら true
   bool DestroyEntityById(uint32_t id) {
     for (auto& e : entities_) {
       if (e && e->Id() == id) { e->Destroy(); return true; }
@@ -378,9 +382,8 @@ public:
     return nullptr;
   }
 
-  /// @brief ID・GUID でエンティティを検索する
-  /// @param id 検索するエンティティのID（実行時ID）
-  /// @param guid 検索するエンティティの GUID（保存データ上の永続ID）
+  /// @brief ID でエンティティを検索する
+  /// @param id 検索するエンティティの ID（実行時 ID）
   /// @return 一致したエンティティ。見つからなければ nullptr
   /// @note pendingEntities_ にある未マージのエンティティは対象外
   std::shared_ptr<Entity> FindEntityById(uint32_t id) {
@@ -390,6 +393,10 @@ public:
     return nullptr;
   }
 
+  /// @brief GUID でエンティティを検索する
+  /// @param guid 検索するエンティティの GUID（保存データ上の永続 ID）
+  /// @return 一致したエンティティ。見つからなければ nullptr
+  /// @note pendingEntities_ にある未マージのエンティティは対象外
   std::shared_ptr<Entity> FindEntityByGuid(uint64_t guid) {
     for (auto& e : entities_) {
       if (e && e->Guid() == guid) return e;

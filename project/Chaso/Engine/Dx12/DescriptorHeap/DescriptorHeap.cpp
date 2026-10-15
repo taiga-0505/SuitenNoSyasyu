@@ -47,8 +47,8 @@ void DescriptorHeap::Term() {
   offset_ = 0;
 }
 
-// 1つ（または複数）ぶん確保して、先頭のCPUハンドルを返す
-// 返り値 + i*Increment() で連番分を使えます
+// 1 つ（または複数）ぶん確保して、先頭の CPU ハンドルを返す
+// 返り値 + i * Increment() で連番分を使える
 D3D12_CPU_DESCRIPTOR_HANDLE DescriptorHeap::AllocateCPU(UINT count) {
   assert(offset_ + count <= capacity_ && "Descriptor heap exhausted");
   D3D12_CPU_DESCRIPTOR_HANDLE h = cpuStart_;
@@ -57,7 +57,7 @@ D3D12_CPU_DESCRIPTOR_HANDLE DescriptorHeap::AllocateCPU(UINT count) {
   return h;
 }
 
-// 任意のインデックスのCPU/GPUハンドル（読み直し用）
+// 任意のインデックスの CPU / GPU ハンドル（読み直し用）
 D3D12_CPU_DESCRIPTOR_HANDLE DescriptorHeap::CPUAt(UINT index) const {
   assert(index < capacity_);
   D3D12_CPU_DESCRIPTOR_HANDLE h = cpuStart_;

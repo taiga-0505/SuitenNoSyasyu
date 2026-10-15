@@ -2,7 +2,7 @@
 
 // ============================================================================
 // InkOverlay
-//   タコの墨がレンズ（画面）へベチャッと貼り付いて視界を塞ぐポストエフェクト。
+//   タコの墨がレンズ（画面）へベチャッと貼り付いて視界を塞ぐポストエフェクト（inkoverlay PSO）。
 //   テクスチャは使わず、ハッシュノイズだけで「墨だまり」「飛び散った粒」「垂れ筋」を作る。
 //
 //   墨は最大 kMaxSplats 個まで同時に貼れる。1 個ごとに位置・大きさ・強さ・経過時間・種を
@@ -13,35 +13,41 @@
 //   一様に透けていくと、墨ではなく半透明のシールに見えるため。
 // ============================================================================
 
+// 同時に貼れる墨の最大数（C++ 側 PostProcess の kMaxInkSplats と揃える）
 #define kMaxSplats 6
 
+/// @struct PixelShaderOutput
+/// @brief ピクセル出力
 struct PixelShaderOutput {
-    float4 color : SV_TARGET0;
+    float4 color : SV_TARGET0; ///< 出力色
 };
 
 Texture2D<float4> gTexture : register(t0);
 SamplerState gSampler : register(s0);
 
-// b1: InkOverlay Parameters
-//   header 32 byte + splat 32 byte x 6 = 224 byte（float4 x 14）
+// b1: InkOverlay パラメータ
+//   ヘッダ 32 バイト + 墨 32 バイト × 6 = 224 バイト（float4 × 14）
 cbuffer InkOverlayParams : register(b1) {
-    float time;          // 経過時間（墨のぬめりの揺らぎにだけ使う）
-    float aspectRatio;   // アスペクト比 (Width / Height)
-    int   splatCount;    // 有効な墨の数 0 ~ kMaxSplats
-    float murk;          // 画面全体の濁り（墨が水に溶けた感じ）0.0 ~ 1.0
+    float time;          ///< 経過時間（墨のぬめりの揺らぎにだけ使う）
+    float aspectRatio;   ///< アスペクト比（Width / Height）
+    int   splatCount;    ///< 有効な墨の数（0〜kMaxSplats）
+    float murk;          ///< 画面全体の濁り（墨が水に溶けた感じ。0.0〜1.0）
 
-    float4 inkColor;     // 墨の色 (RGB)。A = 最も濃いところの不透明度
+    float4 inkColor;     ///< 墨の色（RGB）。A = 最も濃いところの不透明度
 
-    // splatA: xy = 中心UV, z = 半径（画面の高さを 1 とした長さ）, w = 強さ 0..1
-    // splatB: x = 貼り付いてからの秒数, y = 種 0..1, zw = 未使用
-    float4 splatA[kMaxSplats];
-    float4 splatB[kMaxSplats];
+    // splatA: xy = 中心 UV, z = 半径（画面の高さを 1 とした長さ）, w = 強さ（0〜1）
+    // splatB: x = 貼り付いてからの秒数, y = 種（0〜1）, zw = 未使用
+    float4 splatA[kMaxSplats]; ///< 墨ごとの位置・半径・強さ
+    float4 splatB[kMaxSplats]; ///< 墨ごとの経過時間・種
 };
 
 // ---------------------------------------------------------------------------
 // ノイズ（BloodOverlay と同じ系統）
 // ---------------------------------------------------------------------------
 
+/// @brief 1D の値から 0〜1 の擬似乱数を作る
+/// @param p 入力値
+/// @return 0〜1 の擬似乱数
 float Hash11(float p) {
     p = frac(p * 0.1031f);
     p *= p + 33.33f;
@@ -49,18 +55,27 @@ float Hash11(float p) {
     return frac(p);
 }
 
+/// @brief 2D 座標から 0〜1 の擬似乱数を作る
+/// @param p 入力座標
+/// @return 0〜1 の擬似乱数
 float Hash21(float2 p) {
     p = frac(p * float2(127.1f, 311.7f));
     p += dot(p, p + 45.32f);
     return frac(p.x * p.y);
 }
 
+/// @brief 2D 座標から 0〜1 の 2 成分の擬似乱数を作る
+/// @param p 入力座標
+/// @return 0〜1 の擬似乱数 2 つ
 float2 Hash22(float2 p) {
     float2 q = float2(dot(p, float2(127.1f, 311.7f)),
                       dot(p, float2(269.5f, 183.3f)));
     return frac(sin(q) * 43758.5453f);
 }
 
+/// @brief 値ノイズ（格子点の乱数を滑らかに補間）
+/// @param p 入力座標
+/// @return 0〜1 のノイズ値
 float ValueNoise(float2 p) {
     float2 i = floor(p);
     float2 f = frac(p);
@@ -72,6 +87,9 @@ float ValueNoise(float2 p) {
     return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
 }
 
+/// @brief 4 オクターブの fBm
+/// @param p 入力座標
+/// @return おおむね 0〜1 のノイズ値
 float Fbm(float2 p) {
     float sum = 0.0f;
     float amp = 0.5f;
@@ -85,12 +103,19 @@ float Fbm(float2 p) {
 
 // ---------------------------------------------------------------------------
 // 墨 1 個ぶんの「濃さの場」
-//   返り値は 0 以下（墨なし）～ 1.6（墨の芯）。0 付近が輪郭。しきい値で切るのは呼び出し側。
+//   返り値は 0 以下（墨なし）〜 1.6（墨の芯）。0 付近が輪郭。しきい値で切るのは呼び出し側。
 //   p はアスペクト補正済み・墨の中心を原点にした座標（+Y が画面の下）。
 // ---------------------------------------------------------------------------
 
-// dripMask: 垂れ筋の形（0..1。幅は一定）。垂れ筋だけは侵食に通さず、呼び出し側で丸ごと薄くする。
+// dripMask: 垂れ筋の形（0〜1。幅は一定）。垂れ筋だけは侵食に通さず、呼び出し側で丸ごと薄くする。
 //   侵食（しきい値を上げる）で消すと、筋が細るだけで長さは残り、細い線になって居座るため。
+/// @brief 墨 1 個ぶんの濃さの場を求める
+/// @param p        墨の中心を原点にしたアスペクト補正済み座標（+Y が画面の下）
+/// @param radius   墨の半径（画面の高さを 1 とした長さ）
+/// @param age      貼り付いてからの秒数（垂れ筋の伸びに使う）
+/// @param seed     形の種（0〜1）
+/// @param dripMask 垂れ筋のマスク（出力。0〜1）
+/// @return 濃さ（0 以下 = 墨なし、0 付近 = 輪郭、最大 1.6 = 芯。範囲外は -1）
 float InkField(float2 p, float radius, float age, float seed, out float dripMask) {
     dripMask = 0.0f;
     const float r = length(p);
@@ -108,7 +133,7 @@ float InkField(float2 p, float radius, float age, float seed, out float dripMask
     float edgeR = 0.70f + 0.58f * n + 0.14f * n2;
     float body = 1.0f - length(q) / edgeR; // 中心 1 → 輪郭 0 → 外側で負
 
-    // --- 飛び散った粒：本体の外側 0.9R ～ 1.6R の輪にだけ出す ---
+    // --- 飛び散った粒：本体の外側 0.9R 〜 1.6R の輪にだけ出す ---
     float spray = -1.0f;
     {
         float2 g = q * 3.2f + seed * 9.0f;
@@ -146,9 +171,9 @@ float InkField(float2 p, float radius, float age, float seed, out float dripMask
                 // 最初の 0.25 秒で一気に、そのあとゆっくり伸びる（重さのある液体）
                 float grow = saturate(age / 0.25f) * 0.45f + saturate(age / 3.5f) * 0.55f;
                 float len = (0.35f + 1.05f * Hash11(colId * 3.1f + seed * 57.0f)) * grow;
-                float t = (q.y - startY) / max(len, 0.001f); // 0: 付け根 ～ 1: 先端
+                float t = (q.y - startY) / max(len, 0.001f); // 0: 付け根 〜 1: 先端
                 if (t < 1.15f) {
-                    // 先端のしずく（width×1.35）が列の幅 0.5 をはみ出すと縦にスパッと切れるので、上限 0.36 に抑える
+                    // 先端のしずく（width × 1.35）が列の幅 0.5 をはみ出すと縦にスパッと切れるので、上限 0.36 に抑える
                     float width = lerp(0.30f, 0.14f, saturate(t)) * (0.7f + 0.5f * h);
                     float stripe = 1.0f - abs(fx) / width;
                     // 先端のしずく（少し太った玉）。列の幅を 1 とした単位で距離を測る
@@ -156,7 +181,7 @@ float InkField(float2 p, float radius, float age, float seed, out float dripMask
                     float tip = 1.0f - length(tipD) / (width * 1.35f);
                     float cut = (t <= 1.0f) ? stripe : -1.0f;
                     drip = max(cut, tip);
-                    // 付け根は本体とつながるよう、t<0 でも本体の縁近くまで描く
+                    // 付け根は本体とつながるよう、t < 0 でも本体の縁近くまで描く
                     if (t < 0.0f) drip = max(drip, stripe * saturate(1.0f + t * 4.0f));
                     // 輪郭だけ柔らかくした一定幅のマスクにする
                     dripMask = smoothstep(0.0f, 0.22f, drip);
@@ -173,6 +198,9 @@ float InkField(float2 p, float radius, float age, float seed, out float dripMask
 // 本体
 // ---------------------------------------------------------------------------
 
+/// @brief 全ての墨を合成し、濁り・屈折・艶を加えて画面に重ねる
+/// @param input フルスクリーン VS の出力
+/// @return 出力色（α は 1 固定。墨も濁りも無ければ素通し）
 PixelShaderOutput main(VertexShaderOutput input) {
     PixelShaderOutput output;
     float2 uv = input.texcoord;
@@ -185,7 +213,7 @@ PixelShaderOutput main(VertexShaderOutput input) {
     const float2 aspect = float2(aspectRatio, 1.0f);
 
     // --- 全墨の和集合 ---
-    float ink = 0.0f;   // 0..1 の最終被覆
+    float ink = 0.0f;   // 0〜1 の最終被覆
     float core = 0.0f;  // 厚み（艶と色の深さに使う）
     float2 refr = 0.0f; // 縁での屈折オフセット（アスペクト補正空間）
     float rim = 0.0f;   // 左上を向いた縁のハイライト
@@ -208,7 +236,7 @@ PixelShaderOutput main(VertexShaderOutput input) {
         float cov = smoothstep(erode, erode + 0.06f, f);
         // 最後の 3 割は全体をすっと薄くして消す（崩れだけで消すと小さな欠片が点々と残る）
         cov *= smoothstep(0.0f, 0.3f, strength);
-        // 垂れ筋は幅を保ったまま、本体より先（強さ 0.8→0.45 の間）に薄くなって消える
+        // 垂れ筋は幅を保ったまま、本体より先（強さ 0.8 → 0.45 の間）に薄くなって消える
         float drip = dripMask * smoothstep(0.45f, 0.8f, strength);
         cov = max(cov, drip);
 

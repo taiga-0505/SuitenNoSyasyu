@@ -61,7 +61,7 @@ void SpriteManager::ResolveTexture_(Slot &s) {
   }
   // TextureManager は非同期ロード中、GetSrv() で white1x1 のプレースホルダ SRV を返す。
   // ptr==0 判定ではプレースホルダのまま固定されてしまうため、実テクスチャの完了を見て差し替える。
-  // Upload 中は resource_ が先に立ち SRV が後から入るため、SRV も揃ったことを確認する
+  // アップロード中は resource_ が先に立ち SRV が後から入るため、SRV も揃ったことを確認する
   if (Texture2D *tex = texman_->GetTexture(s.texHandle);
       tex && tex->IsLoaded() && tex->GpuSrv().ptr != 0) {
     s.ptr->SetTexture(tex->GpuSrv());
@@ -180,7 +180,7 @@ void SpriteManager::DrawRect(int handle, float srcX, float srcY, float srcW,
     }
   }
 
-  // ピクセル -> UV(0..1)
+  // ピクセル座標を UV（0〜1）へ変換
   const float u0 = srcX / texW;
   const float v0 = srcY / texH;
   const float su = srcW / texW;
@@ -191,7 +191,7 @@ void SpriteManager::DrawRect(int handle, float srcX, float srcY, float srcW,
   // ここで描画後に元の値へ戻すと、GPU が読む頃には戻したあとの値になっており、
   // 指定した切り出し矩形がまったく効かない。したがって差し替えたまま抜ける。
   // 全体描画へ戻したい場合は Draw() が identity に戻すので問題ない。
-  // uv' = uv * Scale + Translate（row-vector 前提）
+  // uv' = uv * Scale + Translate（行ベクトル前提）
   Matrix4x4 uvM = MakeIdentity4x4();
   uvM = Multiply(MakeScaleMatrix(Vector3{su, sv, 1.0f}), uvM);
   uvM = Multiply(uvM, MakeTranslateMatrix(Vector3{u0, v0, 0.0f}));

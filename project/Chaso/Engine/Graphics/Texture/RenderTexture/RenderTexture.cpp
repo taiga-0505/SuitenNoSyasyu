@@ -6,7 +6,7 @@ void RenderTexture::Initialize(Dx12Core *dxCore, uint32_t width,
                                const RC::Vector4& clearColor) {
   auto device = dxCore->GetDevice();
 
-  // 1. リソースの作成 (初期状態を COMMON にして確実にバリアが張られるようにする)
+  // 1. リソースの作成（初期状態を COMMON にして確実にバリアが張られるようにする）
   resource_ = CreateRenderTextureResource(device, width, height, format,
                                           clearColor);
   resource_->SetName(L"RenderTexture");
@@ -38,7 +38,7 @@ void RenderTexture::Initialize(Dx12Core *dxCore, uint32_t width,
 
   device->CreateShaderResourceView(resource_.Get(), &srvDesc, srvHandleCPU_);
 
-  // 初期の状態を設定 (作成時は COMMON)
+  // 初期の状態を設定（作成時は COMMON）
   currentState_ = D3D12_RESOURCE_STATE_COMMON;
 }
 
@@ -88,9 +88,9 @@ RenderTexture::CreateRenderTextureResource(
   resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
 
   D3D12_HEAP_PROPERTIES heapPropaties{};
-  heapPropaties.Type = D3D12_HEAP_TYPE_DEFAULT; // VRAM
+  heapPropaties.Type = D3D12_HEAP_TYPE_DEFAULT; // VRAM 上に置く
 
-  // クリア値の設定（青系）
+  // クリア値の設定（既定値は青系）
   D3D12_CLEAR_VALUE clearValue{};
   clearValue.Format = format;
   clearValue.Color[0] = clearColor.x;

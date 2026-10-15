@@ -6,7 +6,7 @@
 #include <format>
 
 // ============================================================================
-// Initialize
+// 初期化
 // ============================================================================
 
 bool ComputeShader::Initialize(ID3D12Device * /*device*/, PipelineManager *pm,
@@ -32,7 +32,7 @@ bool ComputeShader::Initialize(ID3D12Device * /*device*/, PipelineManager *pm,
 }
 
 // ============================================================================
-// Bind
+// パイプラインバインド
 // ============================================================================
 
 void ComputeShader::Bind(ID3D12GraphicsCommandList *cl) const {
@@ -71,7 +71,7 @@ ComputeShader &ComputeShader::SetCBV(ID3D12GraphicsCommandList *cl,
 }
 
 // ============================================================================
-// Dispatch
+// ディスパッチ
 // ============================================================================
 
 void ComputeShader::Dispatch(ID3D12GraphicsCommandList *cl,

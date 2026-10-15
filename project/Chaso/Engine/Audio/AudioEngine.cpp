@@ -25,7 +25,10 @@ float LengthSq_(const RC::Vector3 &v) { return Dot_(v, v); }
 float Length_(const RC::Vector3 &v) { return std::sqrt(LengthSq_(v)); }
 bool IsFinite_(const RC::Vector3 &v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
 
-/// @brief 正規化。長さがほぼ 0 か NaN なら fallback を返す
+/// @brief 正規化する（長さがほぼ 0 か NaN なら fallback を返す）
+/// @param v        正規化するベクトル
+/// @param fallback 正規化できないときに返すベクトル
+/// @return 正規化したベクトル、または fallback
 RC::Vector3 Normalize_(const RC::Vector3 &v, const RC::Vector3 &fallback) {
   const float len = Length_(v);
   if (!(len > 1e-6f) || !std::isfinite(len)) {
@@ -35,6 +38,8 @@ RC::Vector3 Normalize_(const RC::Vector3 &v, const RC::Vector3 &fallback) {
 }
 
 /// @brief forward / up を正規直交にする（X3DAudio は OrientFront / OrientTop が正規直交であることを要求する）
+/// @param forward 正面方向（入出力）
+/// @param up      上方向（入出力。forward と平行なら別の軸から作り直す）
 void Orthonormalize_(RC::Vector3 &forward, RC::Vector3 &up) {
   forward = Normalize_(forward, {0.0f, 0.0f, 1.0f});
   // up から forward 成分を取り除く
@@ -49,7 +54,12 @@ void Orthonormalize_(RC::Vector3 &forward, RC::Vector3 &up) {
 
 /// @brief 前回位置との差分から速度を推定する
 /// @details テレポート（1 フレームで音速の半分以上動いた）と判定したら 0 にする。
-///          ドップラー効果に使うだけなので、多少粗くても問題ない
+///          ドップラー効果に使うだけなので、多少粗くても問題ない。
+/// @param prev     前回の位置
+/// @param cur      今回の位置
+/// @param dt       経過時間（秒。0 以下なら速度 0）
+/// @param maxSpeed これを超える速さはテレポートとみなす上限（ワールド単位/秒）
+/// @return 推定した速度（ワールド単位/秒）
 RC::Vector3 EstimateVelocity_(const RC::Vector3 &prev, const RC::Vector3 &cur, float dt, float maxSpeed) {
   if (!(dt > 0.0f)) {
     return {0.0f, 0.0f, 0.0f};
@@ -61,6 +71,9 @@ RC::Vector3 EstimateVelocity_(const RC::Vector3 &prev, const RC::Vector3 &cur, f
   return v;
 }
 
+/// @brief RC::Vector3 を X3DAudio のベクトル型に変換する
+/// @param v 変換元のベクトル
+/// @return 同じ値の X3DAUDIO_VECTOR
 X3DAUDIO_VECTOR ToX3D_(const RC::Vector3 &v) {
   X3DAUDIO_VECTOR r{};
   r.x = v.x;
@@ -81,6 +94,8 @@ constexpr uint32_t kSpkFrontRightOfCenter = 0x80;
 constexpr uint32_t kSpkBackCenter = 0x100;
 
 /// @brief チャンネル数から標準的なスピーカー構成を推定する（GetChannelMask が使えないときの代替）
+/// @param channels 出力のチャンネル数
+/// @return チャンネルマスク（未知のチャンネル数ならステレオ）
 uint32_t DefaultChannelMask_(uint32_t channels) {
   switch (channels) {
   case 1: return kSpkFrontCenter;

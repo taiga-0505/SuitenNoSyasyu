@@ -21,7 +21,9 @@
 
 namespace {
 
-/// UTF-8 → UTF-16 変換（フォントパス用）
+/// @brief UTF-8 文字列を UTF-16 に変換する（フォントパス用）
+/// @param s 変換元（UTF-8。不正な場合は ANSI として解釈し直す）
+/// @return 変換後のワイド文字列
 std::wstring Utf8ToWide_(const std::string &s) {
   if (s.empty()) {
     return {};
@@ -45,6 +47,10 @@ std::wstring Utf8ToWide_(const std::string &s) {
   return w;
 }
 
+/// @brief v を align の倍数へ切り上げる
+/// @param v     元の値
+/// @param align 揃える単位（0 不可）
+/// @return 切り上げた値
 constexpr uint32_t RoundUp_(uint32_t v, uint32_t align) {
   return (v + align - 1) / align * align;
 }

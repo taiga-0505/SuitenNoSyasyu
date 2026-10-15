@@ -28,9 +28,9 @@ SRVManager::Handle SRVManager::Allocate() {
     idx = free_.back();
     free_.pop_back();
   } else {
-    // 新規確保：今のUsedが確保されるindex
+    // 新規確保：現在の使用数（Used）がそのまま確保されるインデックスになる
     idx = srvHeap_->Used();
-    srvHeap_->AllocateCPU(1); // offset_ を進める（DescriptorHeapの基本動作）
+    srvHeap_->AllocateCPU(1); // offset_ を進める（DescriptorHeap の基本動作）
   }
 
   assert(idx < srvHeap_->Capacity());

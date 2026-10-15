@@ -61,6 +61,8 @@
 namespace {
 
 /// @brief 2D（スクリーン座標）で描かれるエンティティか（Text / Sprite）
+/// @param e 判定するエンティティ
+/// @return TextRenderer を持つか、スクリーン空間の SpriteRenderer を持つなら true
 bool Is2DEntity(const Entity& e) {
   if (e.GetComponent<TextRendererComponent>() != nullptr) return true;
   if (auto* spr = e.GetComponent<SpriteRendererComponent>()) {
@@ -71,6 +73,9 @@ bool Is2DEntity(const Entity& e) {
 }
 
 /// @brief 2D エンティティの画面上の矩形（ゲーム解像度ピクセル）を求める
+/// @param e      対象のエンティティ
+/// @param outMin 矩形の左上（出力）
+/// @param outMax 矩形の右下（出力）
 /// @return 矩形を持つなら true
 bool Get2DRect(const Entity& e, RC::Vector2& outMin, RC::Vector2& outMax) {
   auto* tr = e.GetComponent<TransformComponent>();
@@ -148,6 +153,7 @@ namespace {
 ///          コンポーネント配列を type 名でソートして順序を固定する。
 ///          エンティティ自体の並びは Hierarchy の表示順なので触らない
 ///          （復元時も配列順は保たれるため比較には影響しない）。
+/// @param snapshot 正規化するスナップショット（その場で書き換える）
 void CanonicalizeSnapshot(nlohmann::json& snapshot) {
   if (!snapshot.is_array()) return;
   for (auto& ej : snapshot) {
@@ -166,12 +172,16 @@ void CanonicalizeSnapshot(nlohmann::json& snapshot) {
 /// @details 既定の dump() は不正な UTF-8 を含む文字列で例外を投げる。
 ///          エンティティ名やテキストに何が入るかは分からないので、
 ///          replace ハンドラを指定して絶対に throw させない。
+/// @param j ハッシュを取るスナップショット
+/// @return dump した文字列のハッシュ値
 size_t HashSnapshot(const nlohmann::json& j) {
   return std::hash<std::string>{}(
       j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
 }
 
 /// @brief 正規化済みのスナップショットを取得する
+/// @param scene 対象のシーン（nullptr 不可）
+/// @return CanonicalizeSnapshot を通したエンティティ群のスナップショット
 nlohmann::json CaptureCanonicalSnapshot(Scene* scene) {
   nlohmann::json snapshot = scene->CaptureEntitiesSnapshot();
   CanonicalizeSnapshot(snapshot);
@@ -179,6 +189,9 @@ nlohmann::json CaptureCanonicalSnapshot(Scene* scene) {
 }
 
 /// @brief 指定エンティティとその子孫を階層順（親が先）に集める
+/// @param scene 対象のシーン
+/// @param root  起点のエンティティ
+/// @return root を先頭にした子孫の一覧（scene か root が nullptr なら空）
 std::vector<std::shared_ptr<Entity>> CollectSubtree(Scene* scene, const std::shared_ptr<Entity>& root) {
   std::vector<std::shared_ptr<Entity>> result;
   if (!scene || !root) return result;
@@ -358,7 +371,7 @@ void EditorManager::CommitHistoryIfChanged(Scene* currentScene) {
   }
 
   // まだ値が動いている（ドラッグ中・入力中）＝ 確定しない。
-  // ImGui や ImGuizmo の内部状態には依存せず「2回連続で同じ内容なら落ち着いた」と判定する。
+  // ImGui や ImGuizmo の内部状態には依存せず「2 回連続で同じ内容なら落ち着いた」と判定する。
   // 状態フラグが立ちっぱなしになって履歴が永久に止まる事故を避けるため。
   if (hash != historyPendingHash_) {
     historyPendingHash_ = hash;
@@ -366,7 +379,7 @@ void EditorManager::CommitHistoryIfChanged(Scene* currentScene) {
     return;
   }
 
-  // Undo/Redo・ペーストで復元した直後の差分は「ユーザーの編集」ではないので履歴に積まない。
+  // Undo / Redo・ペーストで復元した直後の差分は「ユーザーの編集」ではないので履歴に積まない。
   // ここで積むと Undo が同じ状態を往復し、Redo は消えてしまう。
   if (historyResync_) {
     historyResync_ = false;
@@ -469,7 +482,7 @@ void EditorManager::CopySelectedEntity(Scene* currentScene) {
 void EditorManager::PasteEntityClipboard(Scene* currentScene) {
   if (!currentScene || !entityClipboard_.is_array() || entityClipboard_.empty()) return;
 
-  // 貼り付けそのものも Undo の1ステップにする
+  // 貼り付けそのものも Undo の 1 ステップにする
   if (historyValid_) {
     undoStack_.push_back(historyCurrent_);
     if (undoStack_.size() > kMaxHistory) undoStack_.erase(undoStack_.begin());
@@ -538,7 +551,7 @@ void EditorManager::ApplyDarkTheme() {
   ImGuiStyle& style = ImGui::GetStyle();
   ImVec4* colors = style.Colors;
 
-  // UE5/Unity-like dark theme
+  // UE5 / Unity 風のダークテーマ
   colors[ImGuiCol_WindowBg]           = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);
   colors[ImGuiCol_ChildBg]            = ImVec4(0.12f, 0.12f, 0.12f, 1.00f);
   colors[ImGuiCol_PopupBg]            = ImVec4(0.10f, 0.10f, 0.10f, 0.98f);
@@ -555,7 +568,7 @@ void EditorManager::ApplyDarkTheme() {
   colors[ImGuiCol_ScrollbarGrab]      = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);
   colors[ImGuiCol_ScrollbarGrabHovered]= ImVec4(0.30f, 0.30f, 0.30f, 1.00f);
   colors[ImGuiCol_ScrollbarGrabActive]= ImVec4(0.40f, 0.40f, 0.40f, 1.00f);
-  colors[ImGuiCol_CheckMark]          = ImVec4(0.85f, 0.45f, 0.05f, 1.00f); // Orange accent
+  colors[ImGuiCol_CheckMark]          = ImVec4(0.85f, 0.45f, 0.05f, 1.00f); // アクセント色（オレンジ）
   colors[ImGuiCol_SliderGrab]         = ImVec4(0.85f, 0.45f, 0.05f, 1.00f);
   colors[ImGuiCol_SliderGrabActive]   = ImVec4(0.95f, 0.55f, 0.15f, 1.00f);
   colors[ImGuiCol_Button]             = ImVec4(0.25f, 0.25f, 0.25f, 1.00f);
@@ -616,7 +629,7 @@ void EditorManager::Update(Dx12Core* core, std::function<void()> onMenuAppend, S
   // ショートカット
   // ============================
   // 先に履歴を確定させてからキー入力を処理する。
-  // 逆順だと Ctrl+Z の直前の変更が履歴に入らず1手ぶん取りこぼす。
+  // 逆順だと Ctrl+Z の直前の変更が履歴に入らず 1 手ぶん取りこぼす。
   CommitHistoryIfChanged(currentScene);
   HandleShortcuts(core, currentScene);
 
@@ -930,7 +943,7 @@ void EditorManager::Update(Dx12Core* core, std::function<void()> onMenuAppend, S
     }
     ImTextureID stopId = (ImTextureID)RC::GetRenderContext().Textures().GetSrv(stopIconTex_).ptr;
     if (ImGui::ImageButton("##Stop", stopId, ImVec2(16.0f, 16.0f))) {
-      // 停止ボタンが押された場合、App側で検知してシーンをリロードさせる
+      // 停止ボタンが押された場合、App 側で検知してシーンをリロードさせる
       playState_ = PlayState::Stopped;
     }
     ImGui::PopStyleColor();
@@ -956,12 +969,12 @@ void EditorManager::Update(Dx12Core* core, std::function<void()> onMenuAppend, S
 
     HWND hwnd = (HWND)ImGui::GetMainViewport()->PlatformHandleRaw;
 
-    // 最小化ボタン (-)
+    // 最小化ボタン（-）
     if (ImGui::Button("ー", ImVec2(buttonWidth, menuBarHeight))) {
         if (hwnd) ShowWindow(hwnd, SW_MINIMIZE);
     }
     ImGui::SameLine();
-    // 閉じる (X)
+    // 閉じるボタン（X）
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.8f, 0.2f, 0.2f, 0.8f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.9f, 0.3f, 0.3f, 0.8f));
     if (ImGui::Button("X", ImVec2(buttonWidth, menuBarHeight))) {
@@ -971,7 +984,7 @@ void EditorManager::Update(Dx12Core* core, std::function<void()> onMenuAppend, S
 
     ImGui::PopStyleColor(2); // Xボタン用の色を戻す
     ImGui::PopStyleColor(3); // 透明背景などの色を戻す
-    ImGui::PopStyleVar(2); // FramePadding, ItemSpacing
+    ImGui::PopStyleVar(2); // FramePadding と ItemSpacing を戻す
 
     ImGui::EndMainMenuBar();
   }
@@ -1107,7 +1120,7 @@ void EditorManager::DrawEntityNode(std::shared_ptr<Entity> e, Scene* currentScen
     }
     ImGui::SameLine(0, 4);
 
-    // フォルダアイコンの表示（isFolderの場合）
+    // フォルダアイコンの表示（isFolder の場合）
     if (e->IsFolder()) {
         auto srv = RC::GetRenderContext().Textures().GetSrv(folderIconTex_);
         if (srv.ptr) {
@@ -1168,14 +1181,14 @@ void EditorManager::DrawEntityNode(std::shared_ptr<Entity> e, Scene* currentScen
             ImGui::EndDragDropSource();
         }
 
-        // ドロップ先 (フォルダの場合のみ)
+        // ドロップ先（フォルダの場合のみ）
         if (e->IsFolder()) {
             if (ImGui::BeginDragDropTarget()) {
                 if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("HIERARCHY_ENTITY")) {
                     uint64_t draggedGuid = *(const uint64_t*)payload->Data;
                     auto draggedE = currentScene->FindEntityByGuid(draggedGuid);
                     if (draggedE && draggedE != e) {
-                        // 循環参照チェック (自分がドラッグされた要素の子孫でないか)
+                        // 循環参照チェック（自分がドラッグされた要素の子孫でないか）
                         bool isDescendant = false;
                         auto curr = e;
                         while (curr && curr->ParentGuid() != 0) {
@@ -1199,7 +1212,7 @@ void EditorManager::DrawEntityNode(std::shared_ptr<Entity> e, Scene* currentScen
             focusRename_ = true;
         }
 
-        // 右クリックメニュー (Delete, Rename, Create Empty, Create Folder)
+        // 右クリックメニュー（Delete / Rename / Create Empty / Create Folder）
         if (!e->IsLocked()) {
             if (ImGui::BeginPopupContextItem()) {
                 if (ImGui::MenuItem("Rename")) {
@@ -1288,13 +1301,13 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
       if (fpsDropTimer > 0.0f) {
           fpsDropTimer -= io.DeltaTime;
       }
-      // FPSが30を下回った場合に警告ログを出力 (起動直後などの0FPSは除外)
+      // FPS が 30 を下回った場合に警告ログを出力（起動直後などの 0 FPS は除外）
       if (fps > 0.0f && fps < 30.0f && fpsDropTimer <= 0.0f) {
           Log::Print(std::format("[Performance] Warning: FPS dropped to {:.1f} ({:.2f} ms)", fps, frameTime));
-          fpsDropTimer = 5.0f; // 連続出力を防ぐためのクールダウン（5秒）
+          fpsDropTimer = 5.0f; // 連続出力を防ぐためのクールダウン（5 秒）
       }
 
-      // フレームタイム・FPSの履歴バッファ
+      // フレームタイム・FPS の履歴バッファ
       static float fpsHistory[120] = {0};
       static float msHistory[120] = {0};
       static int historyIdx = 0;
@@ -1375,7 +1388,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
               const char* fpsOptions[] = { "30 FPS", "60 FPS", "120 FPS", "144 FPS", "Uncapped" };
               float fpsValues[] = { 30.0f, 60.0f, 120.0f, 144.0f, 0.0f };
 
-              int currentItem = 1; // default to 60 FPS
+              int currentItem = 1; // 一致するものが無ければ 60 FPS を選択状態にする
               if (!isFixed) {
                   currentItem = 4;
               } else {
@@ -1395,7 +1408,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
 
               ImGui::Separator();
 
-              // Resolution Settings
+              // 解像度設定
 #if defined(_DEBUG) || defined(RC_DEVELOPMENT)
               const char* resOptions[] = {
                   "Borderless Fullscreen",
@@ -1423,7 +1436,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
               else if (w == 1920 && h == 1080) currentResItem = 1;
               else if (w == 1600 && h == 900) currentResItem = 2;
               else if (w == 1280 && h == 720) currentResItem = 3;
-              else currentResItem = 0; // fallback
+              else currentResItem = 0; // どれにも一致しなければフルスクリーン扱い
 
               if (ImGui::Combo("Window Resolution", &currentResItem, resOptions, 4)) {
                   resizeRequest_.pending = true;
@@ -1635,13 +1648,13 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
       height = imgH;
     }
 
-      // ゲーム描画用SRVをImGuiのImageとして表示
+      // ゲーム描画用 SRV を ImGui の Image として表示
     if (viewportSrv.ptr != 0 && width > 0 && height > 0) {
       ImGui::SetCursorScreenPos(vMin); // 中央寄せした位置から描画
       ImGui::Image((ImTextureID)viewportSrv.ptr, ImVec2(width, height));
       bool isHoveringImage = ImGui::IsItemHovered();
 
-      // ===== Mouse Position Update for Game =====
+      // ===== ゲームへのマウス座標の受け渡し =====
       float currentMouseX = ImGui::GetMousePos().x - vMin.x;
       float currentMouseY = ImGui::GetMousePos().y - vMin.y;
       if (core) {
@@ -1835,7 +1848,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
           drag2DMode_ = 0;
       }
 
-      // ===== Mouse Picking =====
+      // ===== マウスピッキング =====
       if (!consumed2DClick && ImGui::IsMouseClicked(0) && isHoveringImage && !ImGui::IsMouseDragging(0) && currentScene &&
           (!currentScene->GetContext() || !currentScene->GetContext()->isPlaying()) &&
           !ImGuizmo::IsOver()) {
@@ -1920,7 +1933,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
           }
       }
 
-      // ===== Drop Target =====
+      // ===== ドロップ先（Content Browser からのドラッグ＆ドロップ） =====
       if (ImGui::BeginDragDropTarget()) {
           if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
               std::string droppedPath((const char*)payload->Data);
@@ -1932,7 +1945,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                   auto e = currentScene->CreateEntity(p.stem().string());
                   auto& tr = e->AddComponent<TransformComponent>();
 
-                  // ドラッグ先の座標計算 (Screen to World)
+                  // ドラッグ先の座標計算（スクリーン座標からワールド座標へ）
                   float mouseX = ImGui::GetMousePos().x - vMin.x;
                   float mouseY = ImGui::GetMousePos().y - vMin.y;
                   RC::Vector3 dropPos = {0, 0, 0};
@@ -1940,7 +1953,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                   // エディタ（またはゲーム）の現在のカメラを取得
                   RC::CameraController* cam = RC::GetRenderContext().Ctx()->camera;
                   if (cam) {
-                      // NDC座標 (-1.0 ～ 1.0)
+                      // NDC 座標（-1.0〜1.0）
                       float ndcX = (2.0f * mouseX) / width - 1.0f;
                       float ndcY = 1.0f - (2.0f * mouseY) / height;
 
@@ -1950,11 +1963,11 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                       RC::Matrix4x4 viewProj = ::Multiply(view, proj);
                       RC::Matrix4x4 invViewProj = ::Inverse(viewProj);
 
-                      // Far平面上の点を計算
+                      // Far 平面上の点を計算
                       RC::Vector3 farPoint = ::Vector3Transform({ndcX, ndcY, 1.0f}, invViewProj);
                       RC::Vector3 camPos = cam->GetWorldPos();
 
-                      // カメラからFar点へのレイ
+                      // カメラから Far 点へのレイ
                       RC::Vector3 rayDir = ::Normalize(::Subtract(farPoint, camPos));
 
                       // Y=0 の平面（地面）との交差を求める
@@ -2001,16 +2014,16 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
       // =======================
 
       // シェーディングモードのアイコン群をビューポート右上にオーバーレイ表示
-      // 描画開始位置を決定 (上部のバーと重ならないようY座標を少し下げる)
+      // 描画開始位置を決定（上部のバーと重ならないよう Y 座標を少し下げる）
       ImGui::SetCursorScreenPos(ImVec2(vMax.x - 186.0f, vMin.y + 24.0f));
       ImVec2 cursorPos = ImGui::GetCursorScreenPos();
 
-      // 幅は「ボタン6個(24px) + 隙間5個(4px) = 164px」に左右余白6pxずつ足して 176px にする
+      // 幅は「ボタン 6 個（24px）+ 隙間 5 個（4px）= 164px」に左右余白 6px ずつ足して 176px にする
       ImVec2 overlaySize = ImVec2(176.0f, 32.0f);
 
-      // 再生中以外の場合のみ、ギズモ描画と各種オーバーレイUIを表示する
+      // 再生中以外の場合のみ、ギズモ描画と各種オーバーレイ UI を表示する
       if (playState_ != PlayState::Playing) {
-          // ボタン群（高さ24px）の背景として、上下左右に余白を持たせた半透明の枠を描画
+          // ボタン群（高さ 24px）の背景として、上下左右に余白を持たせた半透明の枠を描画
           // cursorPos は最初のボタンの左上絶対座標。枠は少し左・上にずらして描画する。
           ImGui::GetWindowDrawList()->AddRectFilled(
               ImVec2(cursorPos.x - 6.0f, cursorPos.y - 4.0f),
@@ -2022,7 +2035,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
           // シェーディングモード切替ボタンの描画を実行
           RC::DrawViewShadingModeImGui("");
 
-          // ギズモ操作モード用UIを左上に描画
+          // ギズモ操作モード用 UI を左上に描画
           ImGui::SetCursorScreenPos(ImVec2(vMin.x + 10.0f, vMin.y + 24.0f));
           ImVec2 leftCursorPos = ImGui::GetCursorScreenPos();
           ImVec2 leftOverlaySize = ImVec2(156.0f, 32.0f); // 枠の幅を少し広げてはみ出しを修正
@@ -2034,21 +2047,21 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
           );
 
           ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 0.0f));
-          if (ImGui::Button("T", ImVec2(24, 24))) gizmoOperation_ = 7; // TRANSLATE
+          if (ImGui::Button("T", ImVec2(24, 24))) gizmoOperation_ = 7; // ImGuizmo::TRANSLATE（移動）
           if (ImGui::IsItemHovered()) ImGui::SetTooltip("Translate");
           ImGui::SameLine();
-          if (ImGui::Button("R", ImVec2(24, 24))) gizmoOperation_ = 120; // ROTATE
+          if (ImGui::Button("R", ImVec2(24, 24))) gizmoOperation_ = 120; // ImGuizmo::ROTATE（回転）
           if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate");
           ImGui::SameLine();
-          if (ImGui::Button("S", ImVec2(24, 24))) gizmoOperation_ = 896; // SCALE
+          if (ImGui::Button("S", ImVec2(24, 24))) gizmoOperation_ = 896; // ImGuizmo::SCALE（拡縮）
           if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale");
           ImGui::SameLine();
           ImGui::Text("|");
           ImGui::SameLine();
-          if (ImGui::Button("L", ImVec2(24, 24))) gizmoMode_ = 0; // LOCAL
+          if (ImGui::Button("L", ImVec2(24, 24))) gizmoMode_ = 0; // ImGuizmo::LOCAL（ローカル座標）
           if (ImGui::IsItemHovered()) ImGui::SetTooltip("Local");
           ImGui::SameLine();
-          if (ImGui::Button("W", ImVec2(24, 24))) gizmoMode_ = 1; // WORLD
+          if (ImGui::Button("W", ImVec2(24, 24))) gizmoMode_ = 1; // ImGuizmo::WORLD（ワールド座標）
           if (ImGui::IsItemHovered()) ImGui::SetTooltip("World");
           ImGui::PopStyleVar();
 
@@ -2174,7 +2187,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
             for (auto& [key, val] : tags) {
                 ImGui::PushID(key.c_str());
 
-                // タグ名と削除ボタンのみを表示 (値は隠蔽してシンプルにする)
+                // タグ名と削除ボタンのみを表示（値は隠蔽してシンプルにする）
                 ImGui::AlignTextToFramePadding();
                 ImGui::Text(" %s ", key.c_str());
                 ImGui::SameLine(ImGui::GetContentRegionAvail().x - 22.0f);
@@ -2189,7 +2202,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
 
             ImGui::Separator();
 
-            // Collect known tags
+            // 候補に出すタグを集める（既定の一覧 ＋ シーン内のエンティティが持つタグ）
             std::set<std::string> knownTags = { "is_enemy", "is_player", "is_terrain", "is_item", "pending_damage", "impact_factor", "reused", "Shark", "Enemy" };
             if (currentScene) {
                 for (const auto& sceneEntity : currentScene->GetEntities()) {
@@ -2245,7 +2258,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
             if (ImGui::Button("Add", ImVec2(40.0f, 0.0f))) {
                 std::string tagToAdd = isNewTagMode ? newTagKey : (selectedTagIdx > 0 ? tagList[selectedTagIdx] : "");
                 if (!tagToAdd.empty() && tagToAdd != "--- Select a tag ---" && tagToAdd != "+ New Tag...") {
-                    tags[tagToAdd] = 1; // 値は1固定
+                    tags[tagToAdd] = 1; // 値は 1 固定
                     newTagKey[0] = '\0';
                     selectedTagIdx = 0;
                 }
@@ -2272,7 +2285,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                } else {
                ImGui::DragFloat3("Position (位置)", &tr->position.x, 0.1f);
 
-               // Euler 変換 (deg <-> rad)
+               // オイラー角の変換（度 <-> ラジアン）
                RC::Vector3 eulerDegrees = { tr->rotation.x * 180.0f / 3.14159265f, tr->rotation.y * 180.0f / 3.14159265f, tr->rotation.z * 180.0f / 3.14159265f };
                if (ImGui::DragFloat3("Rotation (回転)", &eulerDegrees.x, 1.0f)) {
                    tr->rotation = { eulerDegrees.x * 3.14159265f / 180.0f, eulerDegrees.y * 3.14159265f / 180.0f, eulerDegrees.z * 3.14159265f / 180.0f };
@@ -2301,10 +2314,10 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
             if (ren->HasModel() && ImGui::CollapsingHeader("Material (マテリアル)##Model", ImGuiTreeNodeFlags_DefaultOpen)) {
                ImGui::Indent(8.0f);
 
-               // -- Base Color --
+               // -- 基本色 --
                ImGui::ColorEdit4("Base Color (基本色)##Model", &ren->color.x);
 
-               // -- Texture --
+               // -- テクスチャ --
                ImGui::Text("Texture (テクスチャ)");
                ImGui::SameLine();
                std::string texLabelStr = ren->texturePath.empty() ? "(None)##TexM" : std::filesystem::path(ren->texturePath).filename().string() + "##TexM";
@@ -2330,7 +2343,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                    }
                }
 
-               // -- Normal Map --
+               // -- 法線マップ --
                ImGui::Text("Normal Map (法線マップ)");
                ImGui::SameLine();
                std::string normalLabelStr = ren->normalMapPath.empty() ? "(None)##NmapM" : std::filesystem::path(ren->normalMapPath).filename().string() + "##NmapM";
@@ -2358,7 +2371,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                    }
                }
 
-               // -- Roughness Map --
+               // -- ラフネスマップ --
                ImGui::Text("Roughness Map (粗さマップ)");
                ImGui::SameLine();
                std::string roughnessLabelStr = ren->roughnessMapPath.empty() ? "(None)##RmapM" : std::filesystem::path(ren->roughnessMapPath).filename().string() + "##RmapM";
@@ -2388,7 +2401,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
 
                ImGui::Separator();
 
-               // -- GPU Material properties --
+               // -- GPU 側マテリアルのプロパティ --
                if (Material* mat = RC::GetModelMaterialPtr(ren->modelHandle)) {
                    // Lighting Mode（Follow Light: シーンの DirectionalLight に追従 / それ以外: 個別固定）
                    const char* lightingModes[] = { "Follow Light (ライトに従う)", "None", "Lambert", "Half Lambert" };
@@ -2408,19 +2421,19 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                        ImGui::TextDisabled("(現在: %s)", (mat->lightingMode >= 0 && mat->lightingMode <= 2) ? lightingModes[mat->lightingMode + 1] : "?");
                    }
 
-                   // Shininess
+                   // 光沢（Shininess）
                    ImGui::DragFloat("Shininess (光沢)##Model", &mat->shininess, 1.0f, 0.0f, 512.0f);
 
-                   // Environment Reflection
+                   // 環境反射
                    if (ImGui::DragFloat("Env Reflection (環境反射)##Model", &mat->environmentCoefficient, 0.01f, 0.0f, 1.0f)) {
                        ren->environmentCoeff = mat->environmentCoefficient;
                    }
 
                    ImGui::Separator();
 
-                   // -- UV Transform (Tiling & Offset) --
+                   // -- UV 変換（タイリングとオフセット） --
                    ImGui::Text("UV Transform (UV変換)");
-                   // UV Tiling (scale)
+                   // UV タイリング（uvTransform のスケール成分）
                    float tilingX = mat->uvTransform.m[0][0];
                    float tilingY = mat->uvTransform.m[1][1];
                    float tiling[2] = { tilingX, tilingY };
@@ -2428,7 +2441,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                        mat->uvTransform.m[0][0] = tiling[0];
                        mat->uvTransform.m[1][1] = tiling[1];
                    }
-                   // UV Offset (translation)
+                   // UV オフセット（uvTransform の平行移動成分）
                    float offsetX = mat->uvTransform.m[3][0];
                    float offsetY = mat->uvTransform.m[3][1];
                    float offset[2] = { offsetX, offsetY };
@@ -2465,7 +2478,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
             if (pm->HasMesh() && ImGui::CollapsingHeader("Material (マテリアル)##PM", ImGuiTreeNodeFlags_DefaultOpen)) {
                ImGui::Indent(8.0f);
 
-               // -- Texture --
+               // -- テクスチャ --
                ImGui::Text("Texture (テクスチャ)");
                ImGui::SameLine();
                std::string texLabelStrPM = pm->texturePath.empty() ? "(None)##TexPM" : std::filesystem::path(pm->texturePath).filename().string() + "##TexPM";
@@ -2491,7 +2504,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                    }
                }
 
-               // -- Normal Map --
+               // -- 法線マップ --
                ImGui::Text("Normal Map (法線マップ)");
                ImGui::SameLine();
                std::string normalLabelStrPM = pm->normalMapPath.empty() ? "(None)##NmapPM" : std::filesystem::path(pm->normalMapPath).filename().string() + "##NmapPM";
@@ -2519,7 +2532,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                    }
                }
 
-               // -- Roughness Map --
+               // -- ラフネスマップ --
                ImGui::Text("Roughness Map (粗さマップ)");
                ImGui::SameLine();
                std::string roughnessLabelStrPM = pm->roughnessMapPath.empty() ? "(None)##RmapPM" : std::filesystem::path(pm->roughnessMapPath).filename().string() + "##RmapPM";
@@ -2549,12 +2562,12 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
 
                ImGui::Separator();
 
-               // -- GPU Material properties --
+               // -- GPU 側マテリアルのプロパティ --
                if (Material* mat = RC::GetPrimitiveMeshMaterialPtr(pm->meshHandle)) {
-                   // Base Color
-                   // NOTE: コンポーネント側 (pm->color) を編集元にする。
-                   //       GPU側 Material のみを書き換えるとシリアライズ対象外になり、
-                   //       Scene保存時に色が失われる（毎回白に戻る）ため。
+                   // 基本色
+                   // NOTE: コンポーネント側（pm->color）を編集元にする。
+                   //       GPU 側 Material のみを書き換えるとシリアライズ対象外になり、
+                   //       シーン保存時に色が失われる（毎回白に戻る）ため。
                    if (ImGui::ColorEdit4("Base Color (基本色)##PM", &pm->color.x)) {
                        mat->color = pm->color;
                    }
@@ -2577,19 +2590,19 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                        ImGui::TextDisabled("(現在: %s)", (mat->lightingMode >= 0 && mat->lightingMode <= 2) ? lightingModes[mat->lightingMode + 1] : "?");
                    }
 
-                   // Shininess
+                   // 光沢（Shininess）
                    if (ImGui::DragFloat("Shininess (光沢)##PM", &pm->shininess, 1.0f, 0.0f, 512.0f)) {
                        mat->shininess = pm->shininess;
                    }
 
-                   // Environment Reflection
+                   // 環境反射
                    if (ImGui::DragFloat("Env Reflection (環境反射)##PM", &mat->environmentCoefficient, 0.01f, 0.0f, 1.0f)) {
                        pm->environmentCoeff = mat->environmentCoefficient;
                    }
 
                    ImGui::Separator();
 
-                   // -- UV Transform (Tiling & Offset) --
+                   // -- UV 変換（タイリングとオフセット） --
                    ImGui::Text("UV Transform (UV変換)");
                    if (ImGui::DragFloat2("Tiling (タイリング)##PM", &pm->uvTiling.x, 0.01f)) {
                        mat->uvTransform.m[0][0] = pm->uvTiling.x;
@@ -2979,7 +2992,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                ImGui::Checkbox("Playing (再生中)", &anim->playing);
                ImGui::DragFloat("Speed (再生速度)", &anim->speed, 0.05f, 0.0f, 10.0f);
 
-               // -- Animation File --
+               // -- アニメーションファイル --
                // 空ならモデル内蔵のアニメーションを使う。別ファイルを D&D で差し替えられる
                ImGui::Text("Anim File (アニメ)");
                ImGui::SameLine();
@@ -3010,7 +3023,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                    }
                }
 
-               // -- Clip index (glTF は 1 ファイルに複数アニメーションを持てる) --
+               // -- クリップ番号（glTF は 1 ファイルに複数アニメーションを持てる） --
                // GetAnimationCount は assimp でファイルを開くため、変更時のみ取得してキャッシュする
                const std::string animEffPath = anim->animationPath.empty()
                    ? (animRen ? animRen->modelPath : std::string())
@@ -3032,7 +3045,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                                       "このファイルにアニメーションがありません");
                }
 
-               // -- Clips (名前付きクリップ) --
+               // -- 名前付きクリップ --
                // ここに登録した名前をスクリプトから anim->PlayClip("Walk") のように指定する
                ImGui::Separator();
                ImGui::Text("Clips (名前付きクリップ)");
@@ -3148,7 +3161,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                bool baEnabled = ba->IsEnabled();
                if (ImGui::Checkbox("Enabled (有効化)##BoneAtt", &baEnabled)) ba->SetEnabled(baEnabled);
 
-               // -- Target (追従先エンティティ) --
+               // -- 追従先エンティティ（Target） --
                auto baTarget = (ba->targetGuid != 0 && currentScene)
                    ? currentScene->FindEntityByGuid(ba->targetGuid)
                    : nullptr;
@@ -3179,7 +3192,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                }
                ImGui::TextDisabled("Hierarchy からドラッグ&ドロップ");
 
-               // -- Joint (追従先のボーン名) --
+               // -- 追従先のボーン名（Joint） --
                // GetModelJointNames は毎フレーム呼ぶと重いので、対象変更時のみ取得してキャッシュする
                if (baTarget) {
                    auto* baTRen = baTarget->GetComponent<ModelRendererComponent>();
@@ -3212,7 +3225,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                    }
                }
 
-               // -- Offset (Joint からのずらし) --
+               // -- Joint からのずらし（Offset） --
                ImGui::DragFloat3("Offset Pos (位置)", &ba->offsetPosition.x, 0.01f);
                ImGui::DragFloat3("Offset Rot (回転)", &ba->offsetRotation.x, 0.01f);
                ImGui::DragFloat3("Offset Scale (拡縮)", &ba->offsetScale.x, 0.01f);
@@ -3241,7 +3254,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
 
                ImGui::ColorEdit4("Color (色)##Skybox", &skybox->color.x);
 
-               // -- Cubemap Texture --
+               // -- キューブマップテクスチャ --
                ImGui::Text("Cubemap (キューブマップ)");
                ImGui::SameLine();
                std::string texLabelStr = skybox->skyboxPath.empty() ? "(None - Drop .dds)" : std::filesystem::path(skybox->skyboxPath).filename().string() + "##TexSkybox";
@@ -3298,7 +3311,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                    RC::SetSkydomeColor(skydome->skydomeHandle, skydome->color);
                }
 
-               // -- Texture --
+               // -- テクスチャ --
                ImGui::Text("Texture (テクスチャ)");
                ImGui::SameLine();
                std::string texLabelStr = skydome->texturePath.empty() ? "(None)##TexSkydome" : std::filesystem::path(skydome->texturePath).filename().string() + "##TexSkydome";
@@ -3385,7 +3398,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
         }
 
         // ============================================
-        // Lights
+        // ライト
         // ============================================
         auto* tr = e->GetComponent<TransformComponent>();
         RC::Vector3 pos = tr ? tr->position : RC::Vector3{0, 0, 0};
@@ -3507,7 +3520,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
         }
 
         // ============================================
-        // Camera
+        // カメラ
         // ============================================
         if (auto* cam = e->GetComponent<CameraComponent>()) {
             bool headerOpen = ImGui::CollapsingHeader("Camera (カメラ)", ImGuiTreeNodeFlags_DefaultOpen);
@@ -3532,7 +3545,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
         }
 
         // ============================================
-        // Collider
+        // コライダー
         // ============================================
         if (auto* col = e->GetComponent<ColliderComponent>()) {
             bool headerOpen = ImGui::CollapsingHeader("Collider (当たり判定)", ImGuiTreeNodeFlags_DefaultOpen);
@@ -3929,12 +3942,12 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
   if (ImGui::Begin("Content Browser")) {
     // フォルダのパスを表示
     std::string currentPathStr = currentDirectory_.string();
-    // Windowsのバックスラッシュをスラッシュに置換
+    // Windows のバックスラッシュをスラッシュに置換
     std::replace(currentPathStr.begin(), currentPathStr.end(), '\\', '/');
     ImGui::Text("Assets: %s", currentPathStr.c_str());
     ImGui::SameLine();
 
-    // 上の階層へ戻るボタン (Resourcesより上には行かないようにする簡易制御)
+    // 上の階層へ戻るボタン（Resources より上には行かないようにする簡易制御）
     if (ImGui::Button("Up") && currentDirectory_ != "Resources" && currentDirectory_ != "Resources/") {
       currentDirectory_ = currentDirectory_.parent_path();
     }
@@ -3982,7 +3995,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
 
             if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
               std::string payloadPath = path.string();
-              // Windowsのバックスラッシュをスラッシュに置換してペイロードに渡す
+              // Windows のバックスラッシュをスラッシュに置換してペイロードに渡す
               std::replace(payloadPath.begin(), payloadPath.end(), '\\', '/');
               ImGui::SetDragDropPayload("CONTENT_BROWSER_ITEM", payloadPath.c_str(), payloadPath.size() + 1);
               ImGui::Text("Dragging: %s", filename.c_str());
@@ -4016,15 +4029,15 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
 
       if (lowerMsg.find("error") != std::string::npos || lowerMsg.find("fail") != std::string::npos ||
           lowerMsg.find("exception") != std::string::npos || lowerMsg.find("fatal") != std::string::npos) {
-        color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f); // 赤 (エラー)
+        color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f); // 赤（エラー）
       } else if (lowerMsg.find("warn") != std::string::npos) {
-        color = ImVec4(1.0f, 0.8f, 0.2f, 1.0f); // 黄 (警告)
+        color = ImVec4(1.0f, 0.8f, 0.2f, 1.0f); // 黄（警告）
       } else if (lowerMsg.find("success") != std::string::npos || lowerMsg.find("init") != std::string::npos ||
                  lowerMsg.find("create") != std::string::npos || lowerMsg.find("load") != std::string::npos ||
                  lowerMsg.find("save") != std::string::npos || lowerMsg.find("start") != std::string::npos) {
-        color = ImVec4(0.5f, 1.0f, 0.5f, 1.0f); // 緑 (成功/初期化系)
+        color = ImVec4(0.5f, 1.0f, 0.5f, 1.0f); // 緑（成功 / 初期化系）
       } else if (msg.find("[") == 0) {
-        color = ImVec4(0.3f, 0.7f, 1.0f, 1.0f); // 水色 (システム/カテゴリタグあり)
+        color = ImVec4(0.3f, 0.7f, 1.0f, 1.0f); // 水色（システム / カテゴリタグあり）
       }
 
       ImGui::PushStyleColor(ImGuiCol_Text, color);
@@ -4053,7 +4066,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
         if (ImGui::Button("Initialize Preview Particle", ImVec2(-1, 40))) {
           peParticle_ = std::make_unique<GPUParticle>();
           if (core) {
-            // リソース初期化 (背景色: 暗いグレー)
+            // リソース初期化（背景色: 暗いグレー）
             peRenderTexture_.Initialize(core, 512, 512, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, {0.1f, 0.1f, 0.1f, 1.0f});
 
             // カメラ初期化
@@ -4155,7 +4168,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
           peParticle_->SetBlendMode(static_cast<BlendMode>(blendInt));
         }
 
-        // Pipeline Prefix
+        // 使うパイプライン（名前の接頭辞で選ぶ）
         ImGui::Separator();
         ImGui::Text("Pipeline");
         const char* pipelineNames[] = {"gpu_particle", "gpu_particle_bubble", "gpu_particle_fire", "gpu_particle_electric"};
@@ -4189,7 +4202,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
           peParticle_->SetTexture(std::string(peTexPath_));
         }
 
-        // JSON Save / Load
+        // JSON の保存 / 読み込み
         ImGui::Separator();
         ImGui::Text("File I/O");
         ImGui::InputText("JSON Path", peJsonPath_, sizeof(peJsonPath_));
@@ -4225,7 +4238,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
     }
   }
 
-  // === Screenshot Pop-out ===
+  // === スクリーンショットのポップアップ表示 ===
   if (core) {
     ScreenCapture::DrawImGui(deltaTime, core);
   }
@@ -4336,13 +4349,13 @@ void EditorManager::Term() {
 void EditorManager::RenderParticlePreview(ID3D12GraphicsCommandList* cl, Dx12Core* core, PipelineManager* pm, float deltaTime) {
   if (!showParticleEditor_ || !peParticle_ || !peInitialized_) return;
 
-  // RenderTargetへ状態遷移
+  // RenderTarget へ状態遷移
   peRenderTexture_.TransitionToRenderTarget(cl);
 
   D3D12_CPU_DESCRIPTOR_HANDLE rtv = peRenderTexture_.GetRTV();
   cl->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
 
-  // DescriptorHeapのセット（SRV, UAVを使うため）
+  // DescriptorHeap のセット（SRV / UAV を使うため）
   ID3D12DescriptorHeap* heaps[] = { core->SRV().Heap() };
   cl->SetDescriptorHeaps(1, heaps);
 
@@ -4362,7 +4375,7 @@ void EditorManager::RenderParticlePreview(ID3D12GraphicsCommandList* cl, Dx12Cor
   scissor.bottom = 512;
   cl->RSSetScissorRects(1, &scissor);
 
-  // カメラ更新とSceneContext構築
+  // カメラ更新と SceneContext 構築
   peCamera_.Update();
   SceneContext ctx{};
   ctx.core = core;
@@ -4374,6 +4387,6 @@ void EditorManager::RenderParticlePreview(ID3D12GraphicsCommandList* cl, Dx12Cor
   peParticle_->Update(peCamera_.GetView(), peCamera_.GetProjection(), deltaTime);
   peParticle_->Render(ctx, cl);
 
-  // SRVへ状態遷移（ImGuiで描画するため）
+  // SRV へ状態遷移（ImGui で描画するため）
   peRenderTexture_.TransitionToShaderResource(cl);
 }

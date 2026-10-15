@@ -13,7 +13,7 @@
 namespace {
 
 // 撮影モードに入っているか / シーンを再生状態にしてほしいか。
-// この2つだけは Release ビルドでも参照するのでガードの外に置く。
+// この 2 つだけは Release ビルドでも参照するのでガードの外に置く。
 bool g_active = false;
 bool g_wantsPlaying = false;
 /// @brief マウスがゲーム画面の上にあるか（撮影モード中は常に true）

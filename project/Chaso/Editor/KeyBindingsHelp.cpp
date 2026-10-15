@@ -8,17 +8,21 @@
 
 namespace {
 
+/// @struct Binding
+/// @brief 一覧の 1 行（キーと動作）
 struct Binding {
-  const char *key;
-  const char *action;
+  const char *key;    ///< キー（表示用の文字列）
+  const char *action; ///< 動作の説明
   const char *when; ///< 有効になる条件（空なら常時）
 };
 
+/// @struct Group
+/// @brief 見出し 1 つ分のキー一覧
 struct Group {
-  const char *title;
-  const char *note;
-  const Binding *items;
-  int count;
+  const char *title;    ///< 見出し
+  const char *note;     ///< 見出しの下に出す補足（空なら出さない）
+  const Binding *items; ///< 行の配列
+  int count;            ///< 行数
 };
 
 // --- デバッグキー（Debug / Development ビルドのみ。配布用 Release では効かない） ---

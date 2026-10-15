@@ -8,7 +8,9 @@
 #include "Utility/ScreenCapture.h"
 
 using Microsoft::WRL::ComPtr;
-// ---------- Debug helpers ----------
+// ---------- デバッグ用ヘルパー ----------
+/// @brief D3D12 デバイスに残っている生存オブジェクトをデバッグ出力へ報告する
+/// @param device 対象のデバイス（nullptr なら何もしない）
 static void ReportD3D12LiveObjects(ID3D12Device *device) {
   if (!device)
     return;
@@ -18,10 +20,11 @@ static void ReportD3D12LiveObjects(ID3D12Device *device) {
     dbg->ReportLiveDeviceObjects(D3D12_RLDO_DETAIL);
   }
 }
+/// @brief DXGI に残っている生存オブジェクトをデバッグ出力へ報告する
 static void ReportDXGILiveObjects() {
   ComPtr<IDXGIDebug1> dxgiDebug;
   if (SUCCEEDED(DXGIGetDebugInterface1(0, IID_PPV_ARGS(&dxgiDebug)))) {
-    // ALL で全カテゴリ。必要なら DXGI_DEBUG_D3D12 だけに絞ってもOK
+    // ALL で全カテゴリ。必要なら DXGI_DEBUG_D3D12 だけに絞ってもよい
     dxgiDebug->ReportLiveObjects(DXGI_DEBUG_ALL, DXGI_DEBUG_RLO_ALL);
   }
 }
@@ -30,7 +33,7 @@ void Dx12Core::Init(HWND hwnd, const Desc &d) {
   desc_ = d;
 
   // ====================
-  // Device
+  // デバイス
   // ====================
   // デバイス初期化
   device_.Init(d.debug, d.gpuValidation);
@@ -40,7 +43,7 @@ void Dx12Core::Init(HWND hwnd, const Desc &d) {
   ID3D12Device *dev = device_.GetDevice();
 
   // ====================
-  // Command
+  // コマンド
   // ====================
   // コマンド初期化
   cmd_.Init(dev, D3D12_COMMAND_LIST_TYPE_DIRECT, d.frameCount);
@@ -51,9 +54,9 @@ void Dx12Core::Init(HWND hwnd, const Desc &d) {
   DeferredReleaseQueue::SetGlobal(&deferredRelease_, [this]() { return cmd_.GetNextFenceValue(); });
 
   // ====================
-  // Heaps
+  // ヒープ
   // ====================
-  // ディスクリプタヒープ初期化 (RTVはバックバッファ分だけでなく予備を確保)
+  // ディスクリプタヒープ初期化（RTV はバックバッファ分だけでなく予備を確保）
   rtv_.Init(dev, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, d.frameCount + 16, false);
   dsv_.Init(dev, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 1, false);
   srv_.Init(dev, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, d.srvHeapCapacity,
@@ -64,11 +67,11 @@ void Dx12Core::Init(HWND hwnd, const Desc &d) {
   sbMgr_.Init(&srvMgr_);
 
   // ====================
-  // SwapChain
+  // スワップチェーン
   // ====================
   // スワップチェーン初期化
   swap_.SetRtvHeap(rtv_.Heap(), rtv_.Increment());
-  // スワップチェーンは UNORM で作成（RTVはSRGBビューで作る）
+  // スワップチェーンは UNORM で作成（RTV は SRGB ビューで作る）
   DXGI_FORMAT scFormat = (desc_.rtvFormat == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB)
                              ? DXGI_FORMAT_R8G8B8A8_UNORM
                              : desc_.rtvFormat; // それ以外はそのまま
@@ -81,7 +84,7 @@ void Dx12Core::Init(HWND hwnd, const Desc &d) {
   Log::Print(std::format("[Dx12Core] BackBuffer RTV Index: 0 - {}", d.frameCount - 1));
 
   // ====================
-  // Depth
+  // 深度バッファ
   // ====================
   // 深度バッファ初期化
   DXGI_FORMAT typelessFormat = DXGI_FORMAT_R24G8_TYPELESS;
@@ -97,9 +100,9 @@ void Dx12Core::Init(HWND hwnd, const Desc &d) {
   InitFrameTimer_();
 
   // ====================
-  // FixFps
+  // FPS 固定
   // ====================
-  // FPS固定の初期化（VSyncは切らずに追加待ちを入れる運用）
+  // FPS 固定の初期化（VSync は切らずに追加待ちを入れる運用）
   if (fixFpsEnabled_) {
     fixFps_ = std::make_unique<FixFps>();
     fixFps_->Initialize();
@@ -107,7 +110,7 @@ void Dx12Core::Init(HWND hwnd, const Desc &d) {
   }
 
   // ====================
-  // Pipeline
+  // パイプライン
   // ====================
   // 頂点レイアウトの最小例（必要なら外部差し替え）
   D3D12_INPUT_ELEMENT_DESC inputElems[3] = {
@@ -122,7 +125,7 @@ void Dx12Core::Init(HWND hwnd, const Desc &d) {
   };
 
   // ====================
-  // GPU Info
+  // GPU 情報
   // ====================
   // アダプタ情報を取得して表示
   if (device_.Adapter()) {
@@ -174,13 +177,13 @@ void Dx12Core::InitFrameTimer_() {
 
 void Dx12Core::BeginFrame() {
   // ====================
-  // Deferred Release
+  // 遅延解放
   // ====================
   // 完了済みフェンス値を超えたリソースを解放
   deferredRelease_.Flush(cmd_.GetCompletedFenceValue());
 
   // ====================
-  // Command
+  // コマンド
   // ====================
   // フレーム開始とバックバッファ取得
   backIndex_ = swap_.CurrentBackBufferIndex();
@@ -217,14 +220,14 @@ void Dx12Core::BeginFrame() {
   }
 
   // ====================
-  // Resource Transition
+  // リソース遷移
   // ====================
-  // Present → RenderTarget
+  // PRESENT → RENDER_TARGET
   cmd_.Transition(swap_.BackBuffer(backIndex_), D3D12_RESOURCE_STATE_PRESENT,
                   D3D12_RESOURCE_STATE_RENDER_TARGET);
 
   // ====================
-  // Render Target Bind
+  // レンダーターゲットのバインド
   // ====================
   // OM バインド
   auto *cl = cmd_.List();
@@ -233,21 +236,21 @@ void Dx12Core::BeginFrame() {
   cl->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
 
   // ====================
-  // Descriptor Heap
+  // ディスクリプタヒープ
   // ====================
-  // SRV heap セット（ImGui 等を先頭に置いている前提）
+  // SRV ヒープをセット（ImGui 等を先頭に置いている前提）
   ID3D12DescriptorHeap *heaps[] = {srv_.Heap()};
   cl->SetDescriptorHeaps(1, heaps);
 
   // ====================
-  // Viewport / Scissor
+  // ビューポート / シザー
   // ====================
   // ビューポート、シザー矩形セット
   cl->RSSetViewports(1, &viewport_);
   cl->RSSetScissorRects(1, &scissor_);
 
   // ====================
-  // Clear
+  // クリア
   // ====================
   // 画面クリア
   Clear();
@@ -255,9 +258,9 @@ void Dx12Core::BeginFrame() {
 
 void Dx12Core::Clear(float r, float g, float b, float a) {
   // ====================
-  // Clear
+  // クリア
   // ====================
-  // RT/DSV クリア
+  // RT / DSV クリア
   float clear[4] = {r, g, b, a};
   cmd_.List()->ClearRenderTargetView(CurrentRTV(), clear, 0, nullptr);
   cmd_.List()->ClearDepthStencilView(
@@ -267,9 +270,9 @@ void Dx12Core::Clear(float r, float g, float b, float a) {
 
 void Dx12Core::EndFrame() {
   // ====================
-  // Resource Transition
+  // リソース遷移
   // ====================
-  // RenderTarget → Present
+  // RENDER_TARGET → PRESENT
   cmd_.Transition(swap_.BackBuffer(backIndex_),
                   D3D12_RESOURCE_STATE_RENDER_TARGET,
                   D3D12_RESOURCE_STATE_PRESENT);
@@ -289,9 +292,9 @@ void Dx12Core::EndFrame() {
   if (cpuFrameMs_ < 0.0f) cpuFrameMs_ = 0.0f;
 
   // ====================
-  // Present
+  // 表示（Present）
   // ====================
-  // Close→Execute
+  // コマンドリストを Close して Execute する
   cmd_.EndFrame();
   
   // スクリーンショット撮影要求があれば実行
@@ -309,16 +312,16 @@ void Dx12Core::EndFrame() {
   captureMs_ = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() -
                                                         captureStart).count();
 
-  // vsync=1, tearingなら 0 でもOK（好みで）
+  // VSync 待ち 1 回で表示する（テアリングを許すなら 0 でもよい）
   swap_.Present(1, 0);
   // ※ 以前はここで「今送ったフレーム」の GPU 完了を待っていた（CPU と GPU が交互にしか動かない）。
   //    今は待たずに次のフレームの更新へ進み、GPU 完了の待ちは次の BeginFrame
   //    （同じバックバッファを使う 2 フレーム前の完了）に任せる。
 
   // ====================
-  // FixFps
+  // FPS 固定
   // ====================
-  // VSync & フェンス待ち直後でFPS固定を実行
+  // Present の直後に FPS 固定の待ちを入れる
   if (fixFps_) {
     fixFps_->Update();
   }
@@ -329,7 +332,7 @@ void Dx12Core::EndFrame() {
 
 void Dx12Core::WaitForGPU() {
   // ====================
-  // GPU Wait
+  // GPU 待ち
   // ====================
   // GPU 完了待ち
   cmd_.FlushGPU();
@@ -337,24 +340,24 @@ void Dx12Core::WaitForGPU() {
 
 void Dx12Core::Term() {
   // ====================
-  // GPU Wait
+  // GPU 待ち
   // ====================
   // GPU 完全停止
   cmd_.FlushGPU();
 
   // ====================
-  // Deferred Release
+  // 遅延解放
   // ====================
   // 遅延解放キューの全リソースを解放
   deferredRelease_.FlushAll();
   DeferredReleaseQueue::SetGlobal(nullptr, {});
 
   // ====================
-  // Resource Release
+  // リソース解放
   // ====================
   // フレーム依存リソースから順に解放
   depth_.Term(); // DSV リソース
-  swap_.Term();  // BackBuffer リソース + SwapChain
+  swap_.Term();  // バックバッファのリソース + SwapChain
   // フレーム時間計測用（デバイスより先に解放しないと終了時に Live Object 警告が出る）
   timestampHeap_.Reset();
   timestampReadback_.Reset();
@@ -366,15 +369,15 @@ void Dx12Core::Term() {
   srv_.Term();
 
   // ====================
-  // Command Release
+  // コマンド解放
   // ====================
-  // コマンド系解放（Allocator/List/Queue/Fence 等）
+  // コマンド系解放（Allocator / List / Queue / Fence 等）
   cmd_.Term();
 
   // ====================
-  // Device Release
+  // デバイス解放
   // ====================
-  // デバイス/ファクトリ解放
+  // デバイス / ファクトリ解放
   device_.Term();
 }
 
@@ -401,9 +404,9 @@ void Dx12Core::Resize(UINT width, UINT height) {
 
 void Dx12Core::EnableFixFps(bool enable) {
   // ====================
-  // FixFps
+  // FPS 固定
   // ====================
-  // FPS固定の有効/無効切り替え
+  // FPS 固定の有効／無効切り替え
   fixFpsEnabled_ = enable;
   if (enable) {
     if (!fixFps_) {

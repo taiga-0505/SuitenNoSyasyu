@@ -7,6 +7,8 @@
 
 namespace {
 
+// --- このファイル内だけで使う簡易ベクトル演算 ---
+
 inline RC::Vector3 VAdd(const RC::Vector3 &a, const RC::Vector3 &b) {
   return {a.x + b.x, a.y + b.y, a.z + b.z};
 }
@@ -25,6 +27,9 @@ inline RC::Vector3 VCross(const RC::Vector3 &a, const RC::Vector3 &b) {
 }
 inline float VLenSq(const RC::Vector3 &v) { return VDot(v, v); }
 inline float VLen(const RC::Vector3 &v) { return std::sqrtf(VLenSq(v)); }
+/// @brief ベクトルを正規化する
+/// @param v 正規化するベクトル
+/// @return 正規化したベクトル（長さがほぼ 0 なら零ベクトル）
 inline RC::Vector3 VNorm(const RC::Vector3 &v) {
   const float l = VLen(v);
   if (l <= 1e-8f)
@@ -32,6 +37,10 @@ inline RC::Vector3 VNorm(const RC::Vector3 &v) {
   return VMul(v, 1.0f / l);
 }
 
+/// @brief 法線に直交する 2 本の単位ベクトルを作る
+/// @param nNormalized 正規化済みの法線
+/// @param u           出力: 1 本目の接ベクトル
+/// @param v           出力: 2 本目の接ベクトル（n × u）
 inline void MakeOrthoBasis(const RC::Vector3 &nNormalized, RC::Vector3 &u,
                            RC::Vector3 &v) {
   // n は正規化済み前提
@@ -46,6 +55,15 @@ inline void MakeOrthoBasis(const RC::Vector3 &nNormalized, RC::Vector3 &u,
   v = VCross(nNormalized, u);
 }
 
+/// @brief u・v が張る平面上の円を線分で追加する
+/// @param self     追加先
+/// @param center   中心座標
+/// @param u        平面の 1 本目の軸（単位ベクトル）
+/// @param v        平面の 2 本目の軸（単位ベクトル）
+/// @param radius   半径
+/// @param color    描画色
+/// @param segments 分割数
+/// @param depth    深度テストを行うか
 inline void AddCircleLines(Primitive3D *self, const RC::Vector3 &center,
                            const RC::Vector3 &u, const RC::Vector3 &v,
                            float radius, const RC::Vector4 &color,
@@ -62,12 +80,21 @@ inline void AddCircleLines(Primitive3D *self, const RC::Vector3 &center,
   }
 }
 
+/// @brief 赤道方向から極を通って反対側の赤道方向まで、半円を線分で追加する（カプセルの半球用）
+/// @param self       追加先
+/// @param center     中心座標
+/// @param equatorDir 赤道方向（単位ベクトル）
+/// @param poleDir    極方向（単位ベクトル）
+/// @param radius     半径
+/// @param color      描画色
+/// @param segments   分割数
+/// @param depth      深度テストを行うか
 inline void AddHalfCircle(Primitive3D *self, const RC::Vector3 &center,
-                          const RC::Vector3 &equatorDir, // u or v
-                          const RC::Vector3 &poleDir,    // +axis or -axis
+                          const RC::Vector3 &equatorDir, // u か v
+                          const RC::Vector3 &poleDir,    // +軸 か -軸
                           float radius, const RC::Vector4 &color,
                           int segments, bool depth) {
-  // 0..PI の半円:  +equator -> pole -> -equator
+  // 0〜PI の半円: +赤道 → 極 → -赤道
   constexpr float kPi = 3.14159265358979323846f;
   const float d = kPi / static_cast<float>(segments);
   RC::Vector3 prev = VAdd(center, VMul(equatorDir, radius));
@@ -111,7 +138,7 @@ void Primitive3D::Initialize(ID3D12Device *device) {
   cbRes_ = CreateBufferResource(device_.Get(), cbStride_ * kMaxDrawPerFrame, L"Primitive3D::cbRes_");
   cbRes_->Map(0, nullptr, reinterpret_cast<void **>(&cbMap_));
 
-  // 初期VB（とりあえず 4096 頂点）
+  // 初期 VB（とりあえず 4096 頂点）
   EnsureVB_(4096);
 }
 
@@ -122,9 +149,9 @@ void Primitive3D::BeginFrame(const RC::Matrix4x4 &view,
   blendAt3D_ = blendAt3D;
 
   cbCursor_ = 0;
-  // Note: Clear() is intentionally not called here because primitive vertices 
-  // added during ImGui rendering in the previous frame must survive until Execute3DCommands.
-  // Execute3DCommands() will clear them after drawing.
+  // NOTE: ここでは意図的に Clear() を呼ばない。前フレームの ImGui 描画中に追加された
+  // プリミティブの頂点は Execute3DCommands まで残しておく必要があるため。
+  // 描画後のクリアは Execute3DCommands() が行う。
 }
 
 void Primitive3D::Clear() {
@@ -152,7 +179,7 @@ void Primitive3D::EnsureVB_(size_t vertexCount) {
 
   vbView_.BufferLocation = vb_->GetGPUVirtualAddress();
   vbView_.StrideInBytes = (UINT)sizeof(Vertex);
-  // SizeInBytes は Draw の直前に “実際の頂点数” で上書きする
+  // SizeInBytes は Draw の直前に「実際の頂点数」で上書きする
 }
 
 void Primitive3D::AddLine(const RC::Vector3 &a, const RC::Vector3 &b,
@@ -223,7 +250,7 @@ void Primitive3D::AddSphere(const RC::Vector3 &center, float radius,
   if (stacks < 2)
     stacks = 2;
 
-  // (stacks+1) x (slices+1) の点を作る（最後の列はシーム用）
+  // (stacks+1) x (slices+1) の点を作る（最後の列は継ぎ目を閉じるため）
   std::vector<RC::Vector3> pts;
   pts.resize(static_cast<size_t>(stacks + 1) *
              static_cast<size_t>(slices + 1));
@@ -279,13 +306,13 @@ void Primitive3D::AddSphereRings(const RC::Vector3 &center, float radius,
   if (segments < 3)
     segments = 3;
 
-  // XY
+  // XY 平面
   AddCircleLines(this, center, {1, 0, 0}, {0, 1, 0}, radius, color, segments,
                  depth);
-  // XZ
+  // XZ 平面
   AddCircleLines(this, center, {1, 0, 0}, {0, 0, 1}, radius, color, segments,
                  depth);
-  // YZ
+  // YZ 平面
   AddCircleLines(this, center, {0, 1, 0}, {0, 0, 1}, radius, color, segments,
                  depth);
 }
@@ -356,7 +383,7 @@ void Primitive3D::AddCapsule(const RC::Vector3 &p0, const RC::Vector3 &p1,
     return;
   }
 
-  const RC::Vector3 n = VMul(axis, 1.0f / len); // p0->p1
+  const RC::Vector3 n = VMul(axis, 1.0f / len); // p0 → p1 方向
   RC::Vector3 u, v;
   MakeOrthoBasis(n, u, v);
 
@@ -364,16 +391,16 @@ void Primitive3D::AddCapsule(const RC::Vector3 &p0, const RC::Vector3 &p1,
   AddCircleLines(this, p0, u, v, radius, color, segments, depth);
   AddCircleLines(this, p1, u, v, radius, color, segments, depth);
 
-  // 側面の縦ライン（4本）
+  // 側面の縦ライン（4 本）
   const RC::Vector3 dirs[4] = {u, v, VMul(u, -1.0f), VMul(v, -1.0f)};
   for (int i = 0; i < 4; ++i) {
     AddLine(VAdd(p0, VMul(dirs[i], radius)), VAdd(p1, VMul(dirs[i], radius)),
             color, depth);
   }
 
-  // 半球（u 平面 / v 平面 の 2本ずつ）
-  const RC::Vector3 pole0 = VMul(n, -1.0f); // p0 側は -axis
-  const RC::Vector3 pole1 = n;              // p1 側は +axis
+  // 半球（u 平面 / v 平面 の 2 本ずつ）
+  const RC::Vector3 pole0 = VMul(n, -1.0f); // p0 側は -軸方向
+  const RC::Vector3 pole1 = n;              // p1 側は +軸方向
   AddHalfCircle(this, p0, u, pole0, radius, color, segments, depth);
   AddHalfCircle(this, p0, v, pole0, radius, color, segments, depth);
   AddHalfCircle(this, p1, u, pole1, radius, color, segments, depth);
@@ -418,9 +445,9 @@ void Primitive3D::AddFrustum(const RC::Vector3 corners[8],
   if (!corners)
     return;
   const int e[24] = {
-      0, 1, 1, 2, 2, 3, 3, 0, // near
-      4, 5, 5, 6, 6, 7, 7, 4, // far
-      0, 4, 1, 5, 2, 6, 3, 7  // sides
+      0, 1, 1, 2, 2, 3, 3, 0, // Near 面
+      4, 5, 5, 6, 6, 7, 7, 4, // Far 面
+      0, 4, 1, 5, 2, 6, 3, 7  // 側面
   };
   for (int i = 0; i < 24; i += 2) {
     AddLine(corners[e[i]], corners[e[i + 1]], color, depth);
@@ -432,7 +459,7 @@ void Primitive3D::AddFrustumCamera(const RC::Vector3 &camPos,
                                    const RC::Vector3 &up, float fovYRad,
                                    float aspect, float nearZ, float farZ,
                                    const RC::Vector4 &color, bool depth) {
-  // forward/up から right を作って、near/far の平面コーナーを算出
+  // forward / up から right を作って、Near / Far 面のコーナーを算出
   RC::Vector3 f = VNorm(forward);
   RC::Vector3 u = VNorm(up);
   if (VLenSq(f) <= 1e-8f || VLenSq(u) <= 1e-8f)
@@ -465,14 +492,14 @@ void Primitive3D::AddFrustumCamera(const RC::Vector3 &camPos,
   const RC::Vector3 fr = VMul(r, fw * 0.5f);
 
   RC::Vector3 c[8] = {
-      VSub(VSub(nc, nr), nu), // 0 nearLB
-      VAdd(VSub(nc, nr), nu), // 1 nearLT
-      VAdd(VAdd(nc, nr), nu), // 2 nearRT
-      VSub(VAdd(nc, nr), nu), // 3 nearRB
-      VSub(VSub(fc, fr), fu), // 4 farLB
-      VAdd(VSub(fc, fr), fu), // 5 farLT
-      VAdd(VAdd(fc, fr), fu), // 6 farRT
-      VSub(VAdd(fc, fr), fu), // 7 farRB
+      VSub(VSub(nc, nr), nu), // 0 Near 左下
+      VAdd(VSub(nc, nr), nu), // 1 Near 左上
+      VAdd(VAdd(nc, nr), nu), // 2 Near 右上
+      VSub(VAdd(nc, nr), nu), // 3 Near 右下
+      VSub(VSub(fc, fr), fu), // 4 Far 左下
+      VAdd(VSub(fc, fr), fu), // 5 Far 左上
+      VAdd(VAdd(fc, fr), fu), // 6 Far 右上
+      VSub(VAdd(fc, fr), fu), // 7 Far 右下
   };
   AddFrustum(c, color, depth);
 }
@@ -521,7 +548,7 @@ void Primitive3D::DrawRange(ID3D12GraphicsCommandList *cl, bool depth,
   cl->IASetVertexBuffers(0, 1, &vbView_);
   cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
 
-  // RootParam[0] = b0(VS)
+  // ルートパラメータ [0] = b0（VS）
   cl->SetGraphicsRootConstantBufferView(0, cbAddr);
 
   uint32_t offset = depth ? start : (uint32_t)vtxDepth_.size() + start;
@@ -542,7 +569,7 @@ void Primitive3D::Draw(ID3D12GraphicsCommandList *cl, bool depth) {
   uint32_t count = (uint32_t)v.size();
   DrawRange(cl, depth, 0, count);
 
-  // 描いた分は消してOK（“そのフレームだけ”）
+  // 描いた分は消してよい（そのフレームだけ描く前提）
   v.clear();
 }
 

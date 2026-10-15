@@ -1,91 +1,115 @@
 #include "Object3d.hlsli"
 
+// =============================================================================
+// Glass（ガラス）
+//
+// 窓板やガラス容器などの半透明描画用（object3d_glass 系の PSO）。
+// プレマルチプライド済みの色を出力し、PSO 側は深度書き込み OFF。
+// 背面用（FRONT カリング）と表面用（BACK カリング）の PSO があり、2 パスで描ける。
+//
+// マテリアル定数の一部をガラス用に流用している。
+//   environmentCoefficient = IOR（1〜3 の範囲外なら 1.5）
+//   padding                = 粗さ roughness（0〜1。すりガラスほど大きく）
+//
+// ライトの合算は Object3d.PS と同じ考え方（影も同じく反映）。ただし環境光は加えない。
+// フレネルで端ほど不透明・反射が強くなり、環境マップの映り込みもフレネルで掛ける。
+// =============================================================================
+
+/// @brief マテリアル定数（b0）。一部をガラス用に流用する
 struct Material
 {
-    float4 color; // rgb=tint, a=opacity(不透明度)
-    int lightingMode; // 0:なし, 1:Lambert, 2:HalfLambert（ガラスでも使ってOK）
-    float shininess; // スペキュラ指数（ガラスは 256～1024 くらいが映える）
-    float environmentCoefficient; // GlassではIORとして使用
-    float padding; // Glassではroughness(0..1)として使用
-    float4x4 uvTransform;
+    float4 color;                 ///< rgb = 色味、a = 不透明度
+    int lightingMode;             ///< 0: なし、1: Lambert、2: Half-Lambert（ガラスでも使ってよい）
+    float shininess;              ///< スペキュラ指数（ガラスは 256〜1024 くらいが映える）
+    float environmentCoefficient; ///< ガラスでは IOR として使う
+    float padding;                ///< ガラスでは roughness（0〜1）として使う
+    float4x4 uvTransform;         ///< UV 変換
 };
 ConstantBuffer<Material> gMaterial : register(b0);
 
+/// @brief 平行光源と環境光（b1）
 struct DirectionalLight
 {
-    float4 color;
-    float3 direction;
-    float intensity;
+    float4 color;           ///< 光の色
+    float3 direction;       ///< 光の進む向き
+    float intensity;        ///< 強度
 
-    float3 ambientColor;    // 環境光の色
-    float ambientIntensity; // 環境光の強さ（0 で環境光なし）
+    float3 ambientColor;    ///< 環境光の色
+    float ambientIntensity; ///< 環境光の強さ（0 で環境光なし）
 };
 ConstantBuffer<DirectionalLight> gDirectionalLight : register(b1);
 
+/// @brief カメラ情報（b2）
 struct Camera
 {
-    float3 worldPosition;
+    float3 worldPosition; ///< カメラのワールド座標
 };
 ConstantBuffer<Camera> gCamera : register(b2);
 
+/// @brief 点光源 1 灯ぶんのパラメータ（Object3d.PS と同じ並び）
 struct PointLight
 {
-    float4 color;
-    float3 position;
-    float intensity;
-    float radius;
-    float decay;
-    int shadowIndex;   // 影アトラスのタイル番号（-1 で影なし）
-    float padding;
+    float4 color;      ///< 光の色
+    float3 position;   ///< 光の位置
+    float intensity;   ///< 強度
+    float radius;      ///< 届く距離（0 以下なら無効）
+    float decay;       ///< 減衰（指数）
+    int shadowIndex;   ///< 影アトラスのタイル番号（-1 で影なし）
+    float padding;     ///< パディング
 };
-static const uint MAX_POINT_LIGHTS = 256;
+static const uint MAX_POINT_LIGHTS = 256; ///< 点光源の最大数
+/// @brief 点光源の配列（b3）
 cbuffer PointLightsCB : register(b3)
 {
-    uint pointCount;
-    float3 _padPoint;
-    PointLight pointLights[MAX_POINT_LIGHTS];
+    uint pointCount;                          ///< 有効な点光源の数
+    float3 _padPoint;                         ///< パディング
+    PointLight pointLights[MAX_POINT_LIGHTS]; ///< 点光源
 };
 
+/// @brief スポットライト 1 灯ぶんのパラメータ（Object3d.PS と同じ並び）
 struct SpotLight
 {
-    float4 color;
-    float3 position;
-    float intensity;
-    float3 direction;
-    float distance;
-    float decay;
-    float cosAngle;
-    int shadowIndex;   // スポット影アトラスのタイル番号（-1 で影なし）
-    float padding;
+    float4 color;      ///< 光の色
+    float3 position;   ///< 光の位置
+    float intensity;   ///< 強度
+    float3 direction;  ///< 照射方向
+    float distance;    ///< 届く距離（0 以下なら無効）
+    float decay;       ///< 減衰（指数）
+    float cosAngle;    ///< 照射範囲の境界角の cos（これより外側は 0）
+    int shadowIndex;   ///< スポット影アトラスのタイル番号（-1 で影なし）
+    float padding;     ///< パディング
 };
-static const uint MAX_SPOT_LIGHTS = 256;
+static const uint MAX_SPOT_LIGHTS = 256; ///< スポットライトの最大数
+/// @brief スポットライトの配列（b4）
 cbuffer SpotLightsCB : register(b4)
 {
-    uint spotCount;
-    float3 _padSpot;
-    SpotLight spotLights[MAX_SPOT_LIGHTS];
+    uint spotCount;                        ///< 有効なスポットライトの数
+    float3 _padSpot;                       ///< パディング
+    SpotLight spotLights[MAX_SPOT_LIGHTS]; ///< スポットライト
 };
 
+/// @brief 面光源 1 灯ぶんのパラメータ（Object3d.PS と同じ並び）
 struct AreaLight
 {
-    float4 color;
-    float3 position;
-    float intensity;
-    float3 right;
-    float halfWidth;
-    float3 up;
-    float halfHeight;
-    float range;
-    float decay;
-    uint twoSided;
-    int shadowIndex;  // 影アトラスのタイル番号（-1 で影なし）
+    float4 color;     ///< 光の色
+    float3 position;  ///< 面の中心位置
+    float intensity;  ///< 強度
+    float3 right;     ///< 面の右方向
+    float halfWidth;  ///< 右方向の半幅
+    float3 up;        ///< 面の上方向
+    float halfHeight; ///< 上方向の半高（0 以下で線光源）
+    float range;      ///< 影響距離（0 以下なら無効）
+    float decay;      ///< 減衰（指数）
+    uint twoSided;    ///< 1 なら両面
+    int shadowIndex;  ///< 影アトラスのタイル番号（-1 で影なし）
 };
-static const uint MAX_AREA_LIGHTS = 256;
+static const uint MAX_AREA_LIGHTS = 256; ///< 面光源の最大数
+/// @brief 面光源の配列（b5）
 cbuffer AreaLightsCB : register(b5)
 {
-    uint areaCount;
-    float3 _padArea;
-    AreaLight areaLights[MAX_AREA_LIGHTS];
+    uint areaCount;                        ///< 有効な面光源の数
+    float3 _padArea;                       ///< パディング
+    AreaLight areaLights[MAX_AREA_LIGHTS]; ///< 面光源
 };
 
 Texture2D<float4> gTexture : register(t0);
@@ -94,10 +118,13 @@ SamplerState gSampler : register(s0);
 
 struct PixelShaderOutput
 {
-    float4 color : SV_TARGET0;
+    float4 color : SV_TARGET0; ///< 出力色（プレマルチプライド済み）
 };
 
-// HalfLambert/Lambert共通化
+/// @brief 拡散項を求める（Half-Lambert / Lambert の共通化）
+/// @param NdotL        法線とライト方向の内積
+/// @param lightingMode 2 なら Half-Lambert、それ以外は Lambert
+/// @return 拡散の強さ（0〜1）
 float CalcDiffuseTerm(float NdotL, int lightingMode)
 {
     if (lightingMode == 2)
@@ -108,7 +135,10 @@ float CalcDiffuseTerm(float NdotL, int lightingMode)
     return saturate(NdotL);
 }
 
-// Schlick Fresnel
+/// @brief Schlick 近似のフレネル反射率
+/// @param cosTheta 法線と視線の内積
+/// @param F0       正面から見たときの反射率
+/// @return 反射率（0〜1）
 float FresnelSchlick(float cosTheta, float F0)
 {
     float x = 1.0f - saturate(cosTheta);
@@ -116,6 +146,9 @@ float FresnelSchlick(float cosTheta, float F0)
     return F0 + (1.0f - F0) * x5;
 }
 
+/// @brief ガラスの透過色と反射を合成して出力する
+/// @param input 頂点シェーダーからの補間値
+/// @return 出力色（プレマルチプライド済み）
 PixelShaderOutput main(VertexShaderOutput input)
 {
     PixelShaderOutput output;
@@ -151,11 +184,11 @@ PixelShaderOutput main(VertexShaderOutput input)
     float NdotV = saturate(dot(N, V));
 
     // ==========
-    // Fresnel
+    // フレネル
     // ==========
     // Glassでは environmentCoefficient を IORに、padding を roughness に流用
     float iorRaw = gMaterial.environmentCoefficient;
-    float ior = (iorRaw > 1.0f && iorRaw < 3.0f) ? iorRaw : 1.5f; // default 1.5
+    float ior = (iorRaw > 1.0f && iorRaw < 3.0f) ? iorRaw : 1.5f; // 範囲外なら既定値 1.5
     float f = (1.0f - ior) / (1.0f + ior);
     float F0 = f * f; // ガラスだとだいたい 0.04 付近
     float fresnel = FresnelSchlick(NdotV, F0);
@@ -174,7 +207,7 @@ PixelShaderOutput main(VertexShaderOutput input)
     float3 diffuseSum = 0.0f;
     float3 specularSum = 0.0f;
 
-    // ---- Directional
+    // ---- 平行光源
     {
         float3 L = normalize(-gDirectionalLight.direction);
         float NdotL = dot(N, L);
@@ -192,7 +225,7 @@ PixelShaderOutput main(VertexShaderOutput input)
         }
     }
 
-    // ---- Point (MAX 32)
+    // ---- 点光源（最大 MAX_POINT_LIGHTS 灯）
     [loop]
     for (uint i = 0; i < MAX_POINT_LIGHTS; ++i)
     {
@@ -234,7 +267,7 @@ PixelShaderOutput main(VertexShaderOutput input)
         }
     }
 
-    // ---- Spot (MAX 32)
+    // ---- スポットライト（最大 MAX_SPOT_LIGHTS 灯）
     [loop]
     for (uint i = 0; i < MAX_SPOT_LIGHTS; ++i)
     {
@@ -282,7 +315,7 @@ PixelShaderOutput main(VertexShaderOutput input)
         }
     }
 
-    // ---- Area（元の擬似4サンプルそのまま）
+    // ---- 面光源（元の擬似 4 サンプルそのまま）
     const uint aCount = min(areaCount, MAX_AREA_LIGHTS);
     [loop]
     for (uint ai = 0; ai < aCount; ++ai)
@@ -300,7 +333,7 @@ PixelShaderOutput main(VertexShaderOutput input)
         R /= rLen;
         U /= uLen;
 
-        // Tube (線) ライト: halfHeight <= 0 なら right 方向の線分から全方位に光る線光源（Object3d.PS と同じ近似）
+        // チューブ（線）ライト: halfHeight <= 0 なら right 方向の線分から全方位に光る線光源（Object3d.PS と同じ近似）
         if (al.halfHeight <= 0.0f)
         {
             float3 segA = al.position - R * al.halfWidth;

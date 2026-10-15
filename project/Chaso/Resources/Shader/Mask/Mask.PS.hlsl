@@ -11,11 +11,16 @@
 // 既存の RC::DrawModel 系がそのまま流用できる（追加のバインドは不要）。
 // ============================================================================
 
+/// @struct PixelShaderOutput
+/// @brief ピクセル出力
 struct PixelShaderOutput
 {
-    float4 color : SV_TARGET0;
+    float4 color : SV_TARGET0; ///< マスク値（常に白）
 };
 
+/// @brief 強調対象のピクセルとして白を書く
+/// @param input Object3D 系 VS の出力（使わない）
+/// @return 出力色（白）
 PixelShaderOutput main(VertexShaderOutput input)
 {
     PixelShaderOutput output;

@@ -37,7 +37,7 @@ IDXGIAdapter4 *Device::pickHardwareAdapter_() {
     if (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
       continue; // ソフトウェアは除外
 
-    // とりあえず 12.1 を試し、ダメなら 12.0 でも OK
+    // まず 12.1 を試し、ダメなら 12.0 でもよい
     ComPtr<ID3D12Device> probe;
     if (SUCCEEDED(D3D12CreateDevice(a1.Get(), D3D_FEATURE_LEVEL_12_1,
                                     IID_PPV_ARGS(&probe))) ||
@@ -78,7 +78,7 @@ void Device::Init(bool enableDebug, bool gpuValidation) {
   }
 
 
-  // ===== FeatureLevel を高い順で試す & ログ =====
+  // ===== 機能レベルを高い順に試す =====
   const D3D_FEATURE_LEVEL tryLevels[] = {
       D3D_FEATURE_LEVEL_12_2,
       D3D_FEATURE_LEVEL_12_1,
@@ -91,7 +91,7 @@ void Device::Init(bool enableDebug, bool gpuValidation) {
     hr = D3D12CreateDevice(adapter_.Get(), tryLevels[i], IID_PPV_ARGS(&dev));
     if (SUCCEEDED(hr)) {
       featureLevel_ = tryLevels[i];
-      device_.Attach(dev); // 所有権を移譲 (AddRefしない)
+      device_.Attach(dev); // 所有権を移譲（AddRef しない）
       break;
     }
   }
@@ -102,10 +102,10 @@ void Device::Init(bool enableDebug, bool gpuValidation) {
 
 // ============================================================================
 // D3D12 デバッグログの表示設定
-// ここで true / false を切り替えるだけで、各レベルのログ出力を制御できます
+// ここで true / false を切り替えるだけで、各レベルのログ出力を制御できる
 // ============================================================================
 namespace {
-  constexpr bool kShowD3D12Info    = false; // INFO: PSOキャッシュなどの情報
+  constexpr bool kShowD3D12Info    = false; // INFO: PSO キャッシュなどの情報
   constexpr bool kShowD3D12Warning = true;  // WARNING: リソース解放忘れなどの警告
   constexpr bool kShowD3D12Error   = true;  // ERROR/CORRUPTION: 重大なエラー
 }

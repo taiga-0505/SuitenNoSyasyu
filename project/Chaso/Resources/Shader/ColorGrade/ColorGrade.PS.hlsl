@@ -8,7 +8,7 @@
 //
 // レンダーターゲットは *_UNORM_SRGB なので、Sample はリニア値を返し、
 // 書き込み時にハードウェアが再エンコードする。つまりここでの計算はリニア空間。
-// 露出（乗算）はリニアで正しく、コントラストと彩度は中間グレー 0.18 を軸に掛ける。
+// 露出（乗算）はリニアで正しく、コントラストは中間グレー 0.18、彩度は輝度を軸に掛ける。
 //
 // 積む順序は「ブルームの後・FXAA の前」。
 // =============================================================================
@@ -16,6 +16,7 @@
 Texture2D<float32_t4> gTexture : register(t0);
 SamplerState gSampler : register(s0);
 
+// b1: カラーグレーディングのパラメータ
 cbuffer ColorGradeParams : register(b1) {
     float4 colorFilter;   ///< 全体に掛ける色（RGB。A は未使用）
     float exposure;       ///< 露出（EV。0 で等倍、+1 で 2 倍明るい）
@@ -24,20 +25,28 @@ cbuffer ColorGradeParams : register(b1) {
     float temperature;    ///< 色温度（-1 寒色 〜 +1 暖色）
     float tint;           ///< 色偏り（-1 緑 〜 +1 マゼンタ）
     float lerpFactor;     ///< 適用率（0 で無効、1 で全適用）
-    float2 padding;
+    float2 padding;       ///< 16 バイト境界合わせ
 };
 
+/// @struct PixelShaderOutPut
+/// @brief ピクセル出力
 struct PixelShaderOutPut {
-    float4 color : SV_TARGET0;
+    float4 color : SV_TARGET0; ///< 出力色
 };
 
-// リニア空間の中間グレー。コントラストと彩度の軸に使う
+// リニア空間の中間グレー。コントラストの軸に使う
 static const float kMidGrey = 0.18f;
 
+/// @brief BT.709 の係数で輝度を求める
+/// @param color リニア RGB
+/// @return 輝度
 float Luma(float3 color) {
     return dot(color, float3(0.2125f, 0.7154f, 0.0721f));
 }
 
+/// @brief 露出・色温度・カラーフィルタ・コントラスト・彩度を順に掛ける
+/// @param input フルスクリーン VS の出力
+/// @return 出力色（lerpFactor で元の色と混ぜたもの）
 PixelShaderOutPut main(VertexShaderOutput input) {
     PixelShaderOutPut output;
 

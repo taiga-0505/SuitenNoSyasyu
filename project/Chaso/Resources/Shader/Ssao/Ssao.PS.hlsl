@@ -13,7 +13,7 @@
 // AO 用のブラーパスが不要（そのぶん平坦な面にごく薄い縞が出ることがある）。
 //
 // 前提:
-//   - t1 は深度SRV（DXGI_FORMAT_R24_UNORM_X8_TYPELESS）
+//   - t1 は深度 SRV（DXGI_FORMAT_R24_UNORM_X8_TYPELESS）
 //   - 行列は row-vector 規約（DXC に -Zpr が渡されている）
 //   - 積む順序は前のほう（アウトラインの次・Bloom より前）。
 //     色を乗算するだけなので厳密な位置は問わないが、にじみや色調整の前に置く
@@ -25,6 +25,7 @@ Texture2D<float32_t> gDepthTexture : register(t1);
 SamplerState gSampler : register(s0);
 SamplerState gSamplerPoint : register(s1); // ポイント（深度は補間してはいけない）
 
+// b1: SSAO パラメータ
 cbuffer SsaoParams : register(b1) {
     float4x4 projectionInverse; ///< プロジェクション逆行列
     float radius;               ///< サンプリング半径（ワールド単位＝メートル）
@@ -33,8 +34,10 @@ cbuffer SsaoParams : register(b1) {
     float power;                ///< AO のコントラスト（pow の指数）
 };
 
+/// @struct PixelShaderOutPut
+/// @brief ピクセル出力
 struct PixelShaderOutPut {
-    float4 color : SV_TARGET0;
+    float4 color : SV_TARGET0; ///< 出力色
 };
 
 // 16 点スパイラル（単位円内。半径が徐々に広がるので近接と遠方を同時に拾える）
@@ -50,12 +53,18 @@ static const float2 kKernel[16] = {
 };
 
 /// @brief 深度からビュー空間座標を復元する
+/// @param uv    画面 UV
+/// @param depth 深度バッファの値
+/// @return ビュー空間座標
 float3 ReconstructViewPos(float2 uv, float depth) {
     const float4 ndc = float4(uv.x * 2.0f - 1.0f, 1.0f - uv.y * 2.0f, depth, 1.0f);
     const float4 viewPos = mul(ndc, projectionInverse);
     return viewPos.xyz / viewPos.w;
 }
 
+/// @brief 周囲の深度から遮蔽度を求め、シーンの色に AO を乗算する
+/// @param input フルスクリーン VS の出力
+/// @return 出力色
 PixelShaderOutPut main(VertexShaderOutput input) {
     PixelShaderOutPut output;
 

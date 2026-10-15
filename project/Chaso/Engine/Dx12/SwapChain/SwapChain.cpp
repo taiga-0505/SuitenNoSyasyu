@@ -63,12 +63,12 @@ void SwapChain::createSwapChain(HWND hwnd) {
   desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
   desc.BufferCount = frameCount_;
   desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-  // Tearing 対応チェック（未対応ならフラグを落とす
+  // テアリング対応チェック（未対応ならフラグを落とす）
   BOOL tearingSupported = FALSE;
   if (SUCCEEDED(factory_->CheckFeatureSupport(
           DXGI_FEATURE_PRESENT_ALLOW_TEARING, &tearingSupported,
           sizeof(tearingSupported))) &&
-      tearingSupported) { // keep allowTearing_ as is
+      tearingSupported) { // 対応していれば allowTearing_ はそのまま
   } else {
     allowTearing_ = false;
   }
@@ -85,7 +85,7 @@ void SwapChain::createSwapChain(HWND hwnd) {
 
 void SwapChain::createBackBufferRTVs() {
   assert(device_);
-  // RTVヒープが渡されていれば、その先頭からフレーム数ぶん作る
+  // RTV ヒープが渡されていれば、その先頭からフレーム数ぶん作る
   for (UINT i = 0; i < frameCount_; ++i) {
     HRESULT hr = swap_->GetBuffer(i, IID_PPV_ARGS(&backBuffers_[i]));
     assert(SUCCEEDED(hr));

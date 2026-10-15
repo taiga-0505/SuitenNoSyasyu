@@ -1,23 +1,34 @@
 #include "Object3d.hlsli"
 
+// =============================================================================
+// RandomColor（オブジェクトごとのランダム色表示）
+//
+// ビューシェーディングのデバッグ表示用。Material.color をシードにしたハッシュから
+// 鮮やかな色を決めて塗り分け、オブジェクトの境目を見分けやすくする。
+// 陰影は固定方向の簡易シェーディングのみで、シーンのライトは参照しない。
+// =============================================================================
+
+/// @brief マテリアル定数（b0）。このシェーダーでは color をシードにのみ使う
 struct Material
 {
-    float4 color;
-    int lightingMode;
-    float shininess;
-    float environmentCoefficient;
-    float padding;
-    float4x4 uvTransform;
+    float4 color;                 ///< 色のシード（RGBA のビット列をハッシュに使う）
+    int lightingMode;             ///< 未使用
+    float shininess;              ///< 未使用
+    float environmentCoefficient; ///< 未使用
+    float padding;                ///< パディング
+    float4x4 uvTransform;         ///< 未使用
 };
 
 ConstantBuffer<Material> gMaterial : register(b0);
 
 struct PixelShaderOutput
 {
-    float4 color : SV_TARGET0;
+    float4 color : SV_TARGET0; ///< 出力色
 };
 
-// ハッシュ関数: Wang hash
+/// @brief Wang hash で 32 bit 値を攪拌する
+/// @param seed 入力値
+/// @return ハッシュ値
 uint WangHash(uint seed)
 {
     seed = (seed ^ 61u) ^ (seed >> 16u);
@@ -28,7 +39,11 @@ uint WangHash(uint seed)
     return seed;
 }
 
-// HSV → RGB 変換
+/// @brief HSV → RGB 変換
+/// @param hue        色相（0〜1）
+/// @param saturation 彩度（0〜1）
+/// @param value      明度（0〜1）
+/// @return RGB 色
 float3 HsvToRgb(float hue, float saturation, float value)
 {
     float h6 = hue * 6.0f;
@@ -47,6 +62,9 @@ float3 HsvToRgb(float hue, float saturation, float value)
     return rgb + m;
 }
 
+/// @brief マテリアルごとのランダム色に簡易陰影を付けて出力する
+/// @param input 頂点シェーダーからの補間値
+/// @return 出力色
 PixelShaderOutput main(VertexShaderOutput input)
 {
     PixelShaderOutput output;

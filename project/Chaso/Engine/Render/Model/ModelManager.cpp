@@ -17,6 +17,9 @@ namespace RC {
 
 namespace {
 
+/// @brief メッシュキャッシュのキーにするため、パスを正規化する
+/// @param path メッシュファイルのパス
+/// @return 正規化したパス（絶対パス化できなければ相対パスを正規化したもの）
 static std::string NormalizeMeshKey_(const std::string &path) {
   namespace fs = std::filesystem;
 
@@ -88,7 +91,7 @@ std::shared_ptr<::ModelMesh> ModelManager::GetOrLoadMesh_(
     const std::string &path) {
   const std::string key = NormalizeMeshKey_(path);
 
-  // すでにロード済みなら共有 (ロックを取得して確認)
+  // 既にロード済みなら共有する（ロックを取得して確認）
   {
     std::lock_guard lock(mtx_);
     if (auto it = meshCache_.find(key); it != meshCache_.end()) {
@@ -99,7 +102,7 @@ std::shared_ptr<::ModelMesh> ModelManager::GetOrLoadMesh_(
     }
   }
 
-  // 未ロードならロード (重い処理なのでロックを外す)
+  // 未ロードならロードする（重い処理なのでロックを外す）
   auto mesh = std::make_shared<::ModelMesh>();
   if (!mesh->LoadObj(device_,path)) {
     return nullptr;
@@ -127,7 +130,7 @@ int ModelManager::Load(const std::string &path) {
 
   std::string npath = Log::NormalizePath(path);
 
-  // 既に同じパスがロード中、またはロード済みか確認（Meshキャッシュの活用）
+  // 同じパスのメッシュがロード中・ロード済みならキャッシュを使う（GetOrLoadMesh_ 側で判定）
   // ただしハンドルはユニークに返したいので、新しいスロットは常に作る。
   const int handle = AllocSlot_();
   models_[handle].inUse = true;
@@ -145,7 +148,7 @@ int ModelManager::Load(const std::string &path) {
     try {
       auto start = std::chrono::high_resolution_clock::now();
 
-      // 1. メッシュのロード (MeshGenerator等で非常に重い処理)
+      // 1. メッシュのロード（MeshGenerator 等で非常に重い処理）
       std::shared_ptr<::ModelMesh> mesh;
       {
         // GetOrLoadMesh_ 内部で適切にロックするため、ここでは全体をロックしない
@@ -157,7 +160,7 @@ int ModelManager::Load(const std::string &path) {
         return;
       }
 
-      // 2. モデルオブジェクトの初期化 (GPUリソース作成など)
+      // 2. モデルオブジェクトの初期化（GPU リソース作成など）
       {
         std::lock_guard lock(mtx_);
         auto *ptr = Get(handle);

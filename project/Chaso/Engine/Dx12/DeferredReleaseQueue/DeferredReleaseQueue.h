@@ -30,7 +30,9 @@
 ///          シーン遷移時やリソースの動的差し替え時にクラッシュを防止する。
 class DeferredReleaseQueue {
 public:
+  /// @brief デフォルトコンストラクタ
   DeferredReleaseQueue() = default;
+  /// @brief デストラクタ（残っているリソース・処理をすべて解放する）
   ~DeferredReleaseQueue() { FlushAll(); }
 
   // コピー禁止
@@ -38,7 +40,7 @@ public:
   DeferredReleaseQueue &operator=(const DeferredReleaseQueue &) = delete;
 
   /// @brief 遅延解放キューにリソースを登録する
-  /// @param resource 解放予定のリソース (ComPtr で所有権を移動)
+  /// @param resource   解放予定のリソース（ComPtr で所有権を移動。nullptr なら何もしない）
   /// @param fenceValue このフェンス値が完了した後に解放される
   void Enqueue(Microsoft::WRL::ComPtr<ID3D12Resource> resource,
                uint64_t fenceValue);
@@ -46,6 +48,8 @@ public:
   /// @brief GPU が fenceValue を完了したら呼ぶ処理を登録する
   /// @details GPU リソースを持つオブジェクト（モデル・スプライト・テクスチャ等）の破棄や、
   ///          ディスクリプタの返却を「GPU が使い終わるまで」遅らせるのに使う。
+  /// @param fn         完了後に呼ぶ処理（空なら何もしない）
+  /// @param fenceValue 呼び出し条件のフェンス値
   void EnqueueCallback(std::function<void()> fn, uint64_t fenceValue);
 
   /// @brief 完了済みのリソースを解放する（毎フレーム呼び出し）
@@ -62,10 +66,13 @@ public:
   // ── どこからでも使える入口（Dx12Core が Init で登録する） ──
 
   /// @brief 全体で使うキューと「今記録中のフレームが完了したときのフェンス値」を返す関数を登録する
+  /// @param queue          全体で使うキュー（nullptr で登録解除）
+  /// @param nextFenceValue 今記録中のフレームのフェンス値を返す関数
   static void SetGlobal(DeferredReleaseQueue *queue, std::function<uint64_t()> nextFenceValue);
 
   /// @brief 今記録中（または直前に送った）フレームを GPU が終えたら resource を解放する
   /// @details 全体のキューが未登録（起動前・終了後）なら即座に解放する。
+  /// @param resource 解放予定のリソース
   static void DeferRelease(Microsoft::WRL::ComPtr<ID3D12Resource> resource);
 
   /// @brief 全体のキューに溜まっているものを、GPU の完了を待たずにすべて解放する
@@ -76,14 +83,19 @@ public:
 
   /// @brief 今記録中（または直前に送った）フレームを GPU が終えたら fn を呼ぶ
   /// @details 全体のキューが未登録なら即座に呼ぶ。
+  /// @param fn 完了後に呼ぶ処理（空なら何もしない）
   static void DeferCall(std::function<void()> fn);
 
   /// @brief オブジェクトの破棄を GPU が使い終わるまで遅らせる（所有権を預かる）
+  /// @param obj 破棄するオブジェクト（nullptr なら何もしない）
   template <class T> static void DeferDelete(std::unique_ptr<T> obj) {
     if (!obj) return;
     std::shared_ptr<T> holder(std::move(obj));
     DeferCall([holder]() mutable { holder.reset(); });
   }
+  /// @brief オブジェクトの破棄を GPU が使い終わるまで遅らせる（shared_ptr 版）
+  /// @param obj 破棄するオブジェクト（nullptr なら何もしない）
+  /// @note 他に参照が残っていれば、実際の破棄はその参照が無くなったときになる。
   template <class T> static void DeferDelete(std::shared_ptr<T> obj) {
     if (!obj) return;
     DeferCall([holder = std::move(obj)]() mutable { holder.reset(); });
@@ -96,6 +108,7 @@ private:
     uint64_t fenceValue;                             ///< 解放条件のフェンス値
   };
 
+  /// @brief 完了待ちの処理のエントリ
   struct CallbackEntry {
     std::function<void()> fn; ///< 完了後に呼ぶ処理
     uint64_t fenceValue;      ///< 呼び出し条件のフェンス値

@@ -1,11 +1,11 @@
 // ============================================================================
 // ElectricParticle.PS.hlsl
 // ----------------------------------------------------------------------------
-// 電撃パーティクル用の Pixel Shader。
+// 電撃パーティクル用ピクセルシェーダ（gpu_particle_electric PSO）。
 // UV から手続き的に「ギザギザの稲妻 1 本（＋枝分かれ）と発光する芯」を描くので、
 // テクスチャの絵柄には依存しない（FireParticle.PS と同じ方針。gTexture は宣言のみ）。
 //
-// 加算合成 (kBlendModeAdd) 前提。重なった部分が白く飛んで芯ができる。
+// 加算合成（kBlendModeAdd）前提。重なった部分が白く飛んで芯ができる。
 //
 // やっていること:
 //   1. UV を -1〜1 に変換し、固有乱数で板ごとに回転 → 稲妻の向きがバラける
@@ -22,9 +22,11 @@
 Texture2D<float4> gTexture : register(t0); // 手続き描画のため参照しない（バインドの互換用）
 SamplerState gSampler : register(s0);
 
+/// @struct PixelShaderOutput
+/// @brief ピクセル出力
 struct PixelShaderOutput
 {
-    float4 color : SV_TARGET0;
+    float4 color : SV_TARGET0; ///< 出力色
 };
 
 /// @brief 芯の太さ（板の半幅を 1 としたときの比）
@@ -33,7 +35,7 @@ static const float kCoreWidth = 0.045f;
 /// @brief にじみ（グロー）の広がり
 static const float kGlowWidth = 0.20f;
 
-/// @brief 寿命 1 本あたりに稲妻の形が切り替わる回数
+/// @brief 寿命 1 回分（age 0→1）の間に稲妻の形が切り替わる回数
 static const float kShapeRate = 8.0f;
 
 /// @brief 幹の折れ幅（板の半幅に対する比）
@@ -48,7 +50,9 @@ static const float kBranchLength = 0.7f;
 /// @brief 白熱した芯の色（加算されるので 1 を超える値にはしない）
 static const float3 kCoreColor = float3(0.92f, 0.97f, 1.0f);
 
-// 簡易ハッシュ関数（EmitParticle.CS.hlsl と同じもの）
+/// @brief 簡易ハッシュ関数（EmitParticle.CS.hlsl と同じもの）
+/// @param seed シード
+/// @return 0〜1 の擬似乱数
 float Hash(uint seed)
 {
     seed = (seed ^ 61u) ^ (seed >> 16u);
@@ -59,6 +63,9 @@ float Hash(uint seed)
     return float(seed) / 4294967295.0f;
 }
 
+/// @brief Hash を -1〜1 に広げたもの
+/// @param seed シード
+/// @return -1〜1 の擬似乱数
 float HashSigned(uint seed)
 {
     return Hash(seed) * 2.0f - 1.0f;
@@ -70,8 +77,9 @@ float HashSigned(uint seed)
 /// @param segs  分割数
 /// @param amp   折れ幅
 /// @param slope 出力: その位置での傾き dy/dx（線への距離補正に使う）
-/// @details 両端 (x=-1, x=1) の高さは 0 に固定。線が板の左右中央から出入りする形になり、
-///          枝を描くときは「x=-1 の点が幹に付く」ことにも使う。
+/// @return 折れ線の高さ
+/// @details 両端（x = -1, x = 1）の高さは 0 に固定。線が板の左右中央から出入りする形になり、
+///          枝を描くときは「x = -1 の点が幹に付く」ことにも使う。
 float BoltY(float x, uint seed, uint segs, float amp, out float slope)
 {
     float t = saturate((x + 1.0f) * 0.5f) * (float)segs;
@@ -84,6 +92,11 @@ float BoltY(float x, uint seed, uint segs, float amp, out float slope)
 }
 
 /// @brief 幹の形（大きな折れ＋細かなギザギザ）
+/// @param x     -1〜1 の横位置
+/// @param seed  形状シード
+/// @param amp   大きな折れの折れ幅（細かなギザギザはその 0.3 倍）
+/// @param slope 出力: 2 段を合わせた傾き dy/dx
+/// @return 幹の高さ
 float BoltShapeY(float x, uint seed, float amp, out float slope)
 {
     float slopeLow;
@@ -100,6 +113,8 @@ float BoltShapeY(float x, uint seed, float amp, out float slope)
 /// @param amp        折れ幅
 /// @param widthScale 太さの倍率（枝は細くする）
 /// @param env        包絡（両端フェードや先細りを呼び出し側で決める）
+/// @param core       出力: 芯の輝度
+/// @param glow       出力: にじみの輝度
 void BoltIntensity(float2 p, uint seed, float amp, float widthScale, float env,
                    out float core, out float glow)
 {
@@ -119,11 +134,14 @@ void BoltIntensity(float2 p, uint seed, float amp, float widthScale, float env,
     glow = exp(-distV / glowWidth) * env;
 }
 
+/// @brief 板ポリゴンに手続き的に稲妻と発光の芯を描く
+/// @param input GPUParticle.VS の出力（particleParams に寿命の進行度と固有乱数）
+/// @return 出力色（ほぼ透明なピクセルは discard）
 PixelShaderOutput main(VertexShaderOutput input)
 {
     PixelShaderOutput output;
 
-    const float age = input.particleParams.x;  // 0=生成直後, 1=消滅直前
+    const float age = input.particleParams.x;  // 0 = 生成直後, 1 = 消滅直前
     const float rnd = input.particleParams.y;  // パーティクル固有の乱数
 
     // --- 1. 座標系: UV を -1〜1 に変換し、板ごとにランダムに回転 ---
@@ -162,8 +180,8 @@ PixelShaderOutput main(VertexShaderOutput input)
         float2 lq = float2(dot(q, dir), dot(q, float2(-dir.y, dir.x)));
         if (lq.x > 0.0f && lq.x < kBranchLength)
         {
-            float along = lq.x / kBranchLength;             // 0=根元, 1=先端
-            float2 bp = float2(along * 2.0f - 1.0f, lq.y);  // BoltY は x=-1 で 0 → 根元が幹に付く
+            float along = lq.x / kBranchLength;             // 0 = 根元, 1 = 先端
+            float2 bp = float2(along * 2.0f - 1.0f, lq.y);  // BoltY は x = -1 で 0 → 根元が幹に付く
             float taper = 1.0f - along;                     // 先へ行くほど細く暗く
             BoltIntensity(bp, seed + 313u, kBranchAmp, 0.7f, taper, branchCore, branchGlow);
         }

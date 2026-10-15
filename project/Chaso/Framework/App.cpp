@@ -15,12 +15,14 @@
 #pragma comment(lib, "d3d12.lib")
 #include <dxgidebug.h>
 #include <wrl.h>
+/// @brief 生き残っている DXGI / D3D12 オブジェクトをデバッグ出力へ報告する（解放漏れの確認用）
+/// @param tag 報告の見出しに付ける文字列
 inline void ReportLiveObjectsDbg(const char *tag) {
   using Microsoft::WRL::ComPtr;
   OutputDebugStringA(
       ("==== LIVE REPORT @" + std::string(tag) + " ====\n").c_str());
 
-  // Report DXGI
+  // DXGI の生存オブジェクトを報告する
   ComPtr<IDXGIDebug> dxgiDbg;
   if (SUCCEEDED(DXGIGetDebugInterface1(0, IID_PPV_ARGS(&dxgiDbg)))) {
     dxgiDbg->ReportLiveObjects(DXGI_DEBUG_ALL, DXGI_DEBUG_RLO_ALL);
@@ -47,7 +49,7 @@ bool App::Init() {
   // 設定のロード
   LoadAppConfig();
 
-  // Window
+  // ウィンドウ
   window_ = std::make_unique<Window>();
   window_->Initialize(appConfig_.title.c_str(), appConfig_.width, appConfig_.height, appConfig_.fullscreen);
 
@@ -55,7 +57,7 @@ bool App::Init() {
   Log::Print(std::format("[App] Window 生成完了 (Time: {:.3f}ms)", std::chrono::duration<float, std::milli>(now - stepStart).count()));
   stepStart = now;
 
-  // DX12 Core
+  // DX12 コア
   coreDesc_.width = appConfig_.width;
   coreDesc_.height = appConfig_.height;
   core_.Init(window_->GetHwnd(), coreDesc_);
@@ -67,21 +69,21 @@ bool App::Init() {
   Log::Print(std::format("[App] DirectX12 Core 初期化完了 (Time: {:.3f}ms)", std::chrono::duration<float, std::milli>(now - stepStart).count()));
   stepStart = now;
 
-  // Input
+  // 入力
   input_ = std::make_unique<Input>(window_->GetHwnd());
 
   now = std::chrono::high_resolution_clock::now();
   Log::Print(std::format("[App] Input 初期化完了 (Time: {:.3f}ms)", std::chrono::duration<float, std::milli>(now - stepStart).count()));
   stepStart = now;
 
-  // ImGui
+  // ImGui の初期化
   imgui_.Init(window_->GetHwnd(), core_);
 
   now = std::chrono::high_resolution_clock::now();
   Log::Print(std::format("[App] ImGui 初期化完了 (Time: {:.3f}ms)", std::chrono::duration<float, std::milli>(now - stepStart).count()));
   stepStart = now;
 
-  // PipelineManager
+  // パイプライン管理（PipelineManager）
   pm_.Init(device_, coreDesc_.rtvFormat, coreDesc_.dsvFormat);
   pm_.RegisterDefaultPipelines();
 
@@ -89,8 +91,8 @@ bool App::Init() {
   Log::Print(std::format("[App] PipelineManager 初期化完了(Time: {:.3f}ms)", std::chrono::duration<float, std::milli>(now - stepStart).count()));
   stepStart = now;
 
-  // PostProcess
-  // オフスクリーンレンダリング用のテクスチャを初期化（PSOと同じRTVフォーマットを使用）
+  // ポストプロセス
+  // オフスクリーンレンダリング用のテクスチャを初期化（PSO と同じ RTV フォーマットを使用）
   renderTexture_.Initialize(&core_, appConfig_.width, appConfig_.height, coreDesc_.rtvFormat);
   viewportTexture_.Initialize(&core_, appConfig_.width, appConfig_.height, coreDesc_.rtvFormat);
   postProcess_ = std::make_unique<PostProcess>();
@@ -100,7 +102,7 @@ bool App::Init() {
   Log::Print(std::format("[App] PostProcess 初期化完了 (Time: {:.3f}ms)", std::chrono::duration<float, std::milli>(now - stepStart).count()));
   stepStart = now;
 
-  // SceneContext / RC
+  // シーンコンテキスト（SceneContext）と RC の初期化
   sceneCtx_.core = &core_;
   sceneCtx_.input = input_.get();
   sceneCtx_.app = &appConfig_;
@@ -109,7 +111,7 @@ bool App::Init() {
   sceneCtx_.postProcess = postProcess_.get();
   RC::Init(sceneCtx_);
 
-  // EditorManagerはTextureをロードするため、RC::Initの後に初期化する
+  // EditorManager はテクスチャをロードするため、RC::Init の後に初期化する
   editorManager_.Initialize();
 
   now = std::chrono::high_resolution_clock::now();
@@ -120,7 +122,7 @@ bool App::Init() {
   // オーディオデバイスが無い環境では false が返るが、その場合は無音で続行する
   AudioEngine::Get().Init();
 
-  // Game (Initial Scene Load) — 起動シーンは Resources/Setting/AppConfig.json の "bootScene"
+  // ゲーム（初期シーンのロード）。起動シーンは Resources/Setting/AppConfig.json の "bootScene"
   game_.SetBootScene(appConfig_.bootScene);
   game_.Init(sceneCtx_);
 
@@ -137,7 +139,7 @@ bool App::Init() {
 
 int App::Run() {
   // ====================
-  // Main Loop
+  // メインループ
   // ====================
   auto prevTime = std::chrono::high_resolution_clock::now();
 
@@ -148,7 +150,7 @@ int App::Run() {
       DispatchMessage(&msg_);
     } else {
 #if RC_ENABLE_IMGUI
-      // 解像度変更のリクエストを処理（GPUとコマンドリストが安全な状態で行う）
+      // 解像度変更のリクエストを処理（GPU とコマンドリストが安全な状態で行う）
       auto resizeReq = editorManager_.GetResizeRequest();
       if (resizeReq.pending) {
           ResizeWindow(resizeReq.width, resizeReq.height, resizeReq.fullscreen);
@@ -158,23 +160,23 @@ int App::Run() {
 
       auto currentTime = std::chrono::high_resolution_clock::now();
       sceneCtx_.deltaTime = std::chrono::duration<float>(currentTime - prevTime).count();
-      if (sceneCtx_.deltaTime > 0.1f) sceneCtx_.deltaTime = 0.1f; // clamp delta time
+      if (sceneCtx_.deltaTime > 0.1f) sceneCtx_.deltaTime = 0.1f; // 経過時間は最大 0.1 秒に抑える
       prevTime = currentTime;
 
 #if RC_ENABLE_IMGUI
       // ImGui フレーム開始
       imgui_.NewFrame();
 
-      // エディタのUI構築（DockSpace, MenuBarなど）
+      // エディタの UI 構築（DockSpace、MenuBar など）
       {
         CHASO_PROFILE_SCOPE("Editor: UI build");
         editorManager_.Update(&core_, [this]() {
-            // ゲーム（シーン）のUIをMenuBarの中（Windowの右）に構築する
+            // ゲーム（シーン）の UI を MenuBar の中（Window メニューの右）に構築する
             game_.DrawDebugUI(sceneCtx_);
         }, game_.GetCurrentScene());
       }
 
-      // 前フレームのViewportホバー状態を入力クラスに伝達
+      // 前フレームの Viewport ホバー状態を入力クラスに伝達
       input_->SetViewportHovered(editorManager_.IsViewportHovered());
 
       // プレイ状態の同期
@@ -228,11 +230,11 @@ int App::Run() {
       // --- オフスクリーンレンダリング開始 ---
       renderTexture_.TransitionToRenderTarget(cl_);
 
-      // RenderTextureをクリアしてセット（青）
+      // RenderTexture をクリアしてセット（青）
       float clearColor[] = {0.1f, 0.25f, 0.5f, 1.0f};
       cl_->ClearRenderTargetView(renderTexture_.GetRTV(), clearColor, 0, nullptr);
 
-      // 描画先をRenderTextureに、深度バッファはそのまま
+      // 描画先を RenderTexture に、深度バッファはそのまま
       D3D12_CPU_DESCRIPTOR_HANDLE rtv = renderTexture_.GetRTV();
       D3D12_CPU_DESCRIPTOR_HANDLE dsv = core_.Dsv();
       cl_->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
@@ -276,18 +278,18 @@ int App::Run() {
       // ポストプロセス後のオーバーレイ（viewportTexture_ がレンダーターゲットのまま）
       game_.RenderOverlay(sceneCtx_, cl_);
 
-      // Viewport 描画用にSRV状態へ遷移
+      // Viewport 描画用に SRV 状態へ遷移
       viewportTexture_.TransitionToShaderResource(cl_);
 
-      // Particle Preview 描画
+      // パーティクルエディタのプレビュー描画
       editorManager_.RenderParticlePreview(cl_, &core_, &pm_, sceneCtx_.deltaTime);
 
-      // PostProcess等でOMSetRenderTargetsが変更されているため、バックバッファに戻す
+      // PostProcess 等で OMSetRenderTargets が変更されているため、バックバッファに戻す
       D3D12_CPU_DESCRIPTOR_HANDLE backRtv = core_.CurrentRTV();
       cl_->OMSetRenderTargets(1, &backRtv, FALSE, &dsv);
       core_.ResetViewportScissorToBackbuffer(appConfig_.width, appConfig_.height);
 
-      // エディタの各パネル描画（Viewport含む）
+      // エディタの各パネル描画（Viewport 含む）
       {
         CHASO_PROFILE_SCOPE("Editor: UI draw");
         editorManager_.DrawUI(viewportTexture_.GetSRVGPU(), &core_, &pm_, sceneCtx_.deltaTime, game_.GetCurrentScene());
@@ -311,25 +313,25 @@ void App::Update() {
 
 #if RC_ENABLE_IMGUI
   // ====================
-  // Debug UI
+  // デバッグ UI
   // ====================
-  // デバッグUI描画 (App::RunのeditorManager_.Updateの前に移動しました)
+  // デバッグ UI の描画は App::Run の editorManager_.Update の前に移動した
 #endif
 
   // ====================
-  // Input
+  // 入力
   // ====================
   // 入力更新
   input_->Update();
 
   // ====================
-  // Game
+  // ゲーム
   // ====================
   // ゲーム更新
   game_.Update(sceneCtx_);
 
   // ====================
-  // Audio
+  // オーディオ
   // ====================
   // 鳴り終わった SE の回収と、持ち主のいない BGM の停止。
   // シーン遷移（OnExit → OnEnter → 新シーンの Update）が同じフレーム内で終わった後に
@@ -339,9 +341,9 @@ void App::Update() {
 
 void App::Render() {
   // ====================
-  // Game Render
+  // ゲーム描画
   // ====================
-  // 選択中のエンティティIDをシーンに伝達（ギズモ描画用）
+  // 選択中のエンティティ ID をシーンに伝達（ギズモ描画用）
   if (auto* scene = game_.GetCurrentScene()) {
     scene->SetSelectedEntityId(editorManager_.GetSelectedEntityId());
   }
@@ -356,36 +358,36 @@ void App::Term() {
 #endif
 
   // ====================
-  // GPU Wait
+  // GPU 完了待ち
   // ====================
   // GPU 完了待ち
   core_.WaitForGPU();
 
   // ====================
-  // Editor
+  // エディタ
   // ====================
   editorManager_.Term();
 
   // ====================
-  // Game
+  // ゲーム
   // ====================
   // ゲーム終了
   game_.Term();
 
   // ====================
-  // Audio
+  // オーディオ
   // ====================
   // シーン（エンティティ）の破棄が終わってから、全ボイスとクリップを解放する
   AudioEngine::Get().Term();
 
   // ====================
-  // Render Layer
+  // 描画レイヤー
   // ====================
   // RenderCommon 終了
   RC::Term();
 
   // ====================
-  // Pipeline / ImGui / RenderObjects
+  // パイプライン / ImGui / 描画リソース
   // ====================
   // 追加リソースを解放
   renderTexture_.Release();
@@ -397,7 +399,7 @@ void App::Term() {
   imgui_.Shutdown();
 
   // ====================
-  // Core
+  // コア
   // ====================
   // コア終了
   core_.Term();
@@ -405,7 +407,7 @@ void App::Term() {
   cl_ = nullptr;
 
   // ====================
-  // Input / Window
+  // 入力 / ウィンドウ
   // ====================
   // 入力とウィンドウ破棄
   input_.reset();
@@ -415,6 +417,7 @@ void App::Term() {
 }
 
 /// @brief ビルド構成名（AppConfig.json の構成別キーに使う）
+/// @return "Development" / "Debug" / "Release" のいずれか
 static const char *BuildConfigName_() {
 #if defined(RC_DEVELOPMENT)
   return "Development";
@@ -429,6 +432,10 @@ static const char *BuildConfigName_() {
 /// @details "bootScene": "Title"                                   → 全構成で "Title"
 ///          "bootScene": { "Debug": "Sample", "Development": "Stage1", "Release": "Title" }
 ///                                                                   → 構成ごとに切り替え（無いキーは "Release" → 既定値の順）
+/// @param j        読み込んだ AppConfig.json
+/// @param key      読むキー名
+/// @param fallback キーが無い・型が合わないときに返す既定値
+/// @return 現在のビルド構成に対応する文字列
 static std::string ReadPerConfigString_(const nlohmann::json &j, const char *key, const std::string &fallback) {
   if (!j.contains(key)) return fallback;
   const auto &v = j[key];
@@ -502,25 +509,25 @@ void App::ResizeWindow(int width, int height, bool fullscreen) {
   appConfig_.height = height;
   appConfig_.fullscreen = fullscreen;
 
-  // GPU Wait
+  // GPU 完了待ち（使用中のリソースを作り直すため）
   core_.WaitForGPU();
 
-  // 1. Window Resize
+  // 1. ウィンドウのリサイズ
   window_->Resize(appConfig_.width, appConfig_.height, appConfig_.fullscreen);
 
-  // 2. Save Config
+  // 2. 設定の保存
   SaveAppConfig();
 
-  // 3. Core Resize
+  // 3. コアのリサイズ
   coreDesc_.width = appConfig_.width;
   coreDesc_.height = appConfig_.height;
   core_.Resize(appConfig_.width, appConfig_.height);
 
-  // 4. RenderTexture Resize (ディスクリプタを再利用して再初期化)
+  // 4. RenderTexture のリサイズ（ディスクリプタを再利用して再初期化）
   renderTexture_.Initialize(&core_, appConfig_.width, appConfig_.height, coreDesc_.rtvFormat);
   viewportTexture_.Initialize(&core_, appConfig_.width, appConfig_.height, coreDesc_.rtvFormat);
 
-  // 5. PostProcess Resize
+  // 5. PostProcess のリサイズ
   if (postProcess_) {
     postProcess_->Resize(appConfig_.width, appConfig_.height);
   }

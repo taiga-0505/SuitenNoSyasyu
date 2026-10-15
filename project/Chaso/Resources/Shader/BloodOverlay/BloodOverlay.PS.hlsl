@@ -2,10 +2,11 @@
 
 // ============================================================================
 // BloodOverlay
-//   プレイヤーが被弾／瀕死のときに、画面の周辺へ血がへばりつくポストエフェクト。
+//   プレイヤーが被弾／瀕死のときに、画面の周辺へ血がへばりつくポストエフェクト
+//   （bloodoverlay PSO）。
 //   テクスチャは使わず、ハッシュノイズだけで飛沫・にじみ・濡れた艶を作る。
 //
-//   駆動は2系統ある（強いほうが採用される）。
+//   駆動は 2 系統ある（強いほうが採用される）。
 //     hitFlash  : 被弾の瞬間に跳ね上がり、ホスト側で短時間で 0 へ落とす
 //     lowHealth : HP が閾値を下回っている間ずっと掛かる。心拍で脈動する
 //
@@ -13,41 +14,49 @@
 //   血の形を変えたいときはホスト側から seed を振り直す。
 // ============================================================================
 
+/// @struct PixelShaderOutput
+/// @brief ピクセル出力
 struct PixelShaderOutput {
-    float4 color : SV_TARGET0;
+    float4 color : SV_TARGET0; ///< 出力色
 };
 
 Texture2D<float4> gTexture : register(t0);
 SamplerState gSampler : register(s0);
 
-// b1: BloodOverlay Parameters (Total: 64 bytes = float4 x 4)
+// b1: BloodOverlay パラメータ（合計 64 バイト = float4 × 4）
 cbuffer BloodOverlayParams : register(b1) {
-    float time;           // 経過時間（脈動の位相にのみ使う）
-    float hitFlash;       // 被弾フラッシュ 0.0 ~ 1.0
-    float lowHealth;      // 低HP持続 0.0 ~ 1.0
-    float pulseSpeed;     // 脈動の速さ（1.0 で毎秒1拍）
+    float time;           ///< 経過時間（脈動の位相にのみ使う）
+    float hitFlash;       ///< 被弾フラッシュ（0.0〜1.0）
+    float lowHealth;      ///< 低 HP 持続（0.0〜1.0）
+    float pulseSpeed;     ///< 脈動の速さ（1.0 で毎秒 1 周期）
 
-    float4 bloodColor;    // 血の色 (RGB。A は未使用)
+    float4 bloodColor;    ///< 血の色（RGB。A は未使用）
 
-    float coverage;       // 最大時に画面の何割まで血が侵食するか 0.0 ~ 1.0
-    float splatterScale;  // 飛沫の密度（大きいほど細かい粒になる）
-    float desaturate;     // 血の下の彩度をどれだけ落とすか 0.0 ~ 1.0
-    float aspectRatio;    // アスペクト比 (Width / Height)
+    float coverage;       ///< 最大時に画面の何割まで血が侵食するか（0.0〜1.0）
+    float splatterScale;  ///< 飛沫の密度（大きいほど細かい粒になる）
+    float desaturate;     ///< 血の下の彩度をどれだけ落とすか（0.0〜1.0）
+    float aspectRatio;    ///< アスペクト比（Width / Height）
 
-    float seed;           // 飛沫パターンの種。被弾のたびに振り直す
-    float3 _padding;      // 16バイトアライメント補正
+    float seed;           ///< 飛沫パターンの種（0〜1）。被弾のたびに振り直す
+    float3 _padding;      ///< 16 バイト境界合わせ
 };
 
 // ---------------------------------------------------------------------------
 // ノイズ
 // ---------------------------------------------------------------------------
 
+/// @brief 2D 座標から 0〜1 の擬似乱数を作る
+/// @param p 入力座標
+/// @return 0〜1 の擬似乱数
 float Hash21(float2 p) {
     p = frac(p * float2(127.1f, 311.7f));
     p += dot(p, p + 45.32f);
     return frac(p.x * p.y);
 }
 
+/// @brief 2D 座標から 0〜1 の 2 成分の擬似乱数を作る
+/// @param p 入力座標
+/// @return 0〜1 の擬似乱数 2 つ
 float2 Hash22(float2 p) {
     float2 q = float2(dot(p, float2(127.1f, 311.7f)),
                       dot(p, float2(269.5f, 183.3f)));
@@ -55,6 +64,8 @@ float2 Hash22(float2 p) {
 }
 
 /// @brief 値ノイズ（格子点の乱数を滑らかに補間）
+/// @param p 入力座標
+/// @return 0〜1 のノイズ値
 float ValueNoise(float2 p) {
     float2 i = floor(p);
     float2 f = frac(p);
@@ -68,7 +79,9 @@ float ValueNoise(float2 p) {
     return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
 }
 
-/// @brief 4オクターブの fBm。血の境界をギザギザにするのに使う
+/// @brief 4 オクターブの fBm。血の境界をギザギザにするのに使う
+/// @param p 入力座標
+/// @return おおむね 0〜1 のノイズ値
 float Fbm(float2 p) {
     float sum = 0.0f;
     float amp = 0.5f;
@@ -81,12 +94,12 @@ float Fbm(float2 p) {
 }
 
 /// @brief セル状の血だまり／飛沫
-/// @param uv        画面UV（アスペクト補正済みを想定）
+/// @param uv        画面 UV（アスペクト補正済みを想定）
 /// @param scale     グリッド密度。大きいほど細かい粒
 /// @param cellSeed  セル乱数のオフセット。層ごとに変える
 /// @param dripBias  1.0 で下方向に伸びた涙形（垂れた血）、0.0 で正円
 /// @param cull      このしきい値未満のセルは空にする（大きいほどまばら）
-/// @return 0.0（血なし）～ 1.0（粒の中心）
+/// @return 0.0（血なし）〜 1.0（粒の中心）
 float Splatter(float2 uv, float scale, float cellSeed, float dripBias, float cull) {
     float2 g = uv * scale + cellSeed;
     float2 id = floor(g);
@@ -122,7 +135,9 @@ float Splatter(float2 uv, float scale, float cellSeed, float dripBias, float cul
     return 1.0f - smoothstep(0.55f, 1.0f, best);
 }
 
-/// @brief 心拍。1周期に「ドクン・ドクン」の2拍が入る
+/// @brief 心拍。1 周期に「ドクン・ドクン」の 2 拍が入る
+/// @param t 位相（1.0 で 1 周期）
+/// @return 拍の強さ（0〜1）
 /// @note ガウス山は pow() ではなく自乗で作る。pow() は底が負だと結果が未定義で、
 ///       (p - 0.02) は周期の頭で普通に負になる。
 float Heartbeat(float t) {
@@ -136,6 +151,9 @@ float Heartbeat(float t) {
 // 本体
 // ---------------------------------------------------------------------------
 
+/// @brief 画面周辺に血だまりと飛沫を重ね、被弾時は全体に赤味を差す
+/// @param input フルスクリーン VS の出力
+/// @return 出力色（α は 1 固定。被弾・瀕死どちらも無ければ素通し）
 PixelShaderOutput main(VertexShaderOutput input) {
     PixelShaderOutput output;
 
@@ -151,12 +169,12 @@ PixelShaderOutput main(VertexShaderOutput input) {
         return output;
     }
 
-    // --- 画面端からの距離（スーパー楕円 p=4）---
+    // --- 画面端からの距離（スーパー楕円 p = 4）---
     // 放射距離だと 16:9 では上下の辺が 0.5 までしか行かず、左右にだけ血が寄る。
     // かといって矩形距離（max）だと四隅が四辺と同じ濃さで平坦になる。
     // (|x|^4 + |y|^4)^(1/4) なら四辺がちょうど 1.0、四隅が 1.19 になり、
     // 「隅から滲み出して辺へ広がる」という欲しい順序になる。
-    float2 c = abs(uv - 0.5f) * 2.0f; // 0:中心 ~ 1:辺
+    float2 c = abs(uv - 0.5f) * 2.0f; // 0: 中心 〜 1: 辺
     float2 c2 = c * c;
     float edge = sqrt(sqrt(dot(c2, c2))); // = (c.x^4 + c.y^4)^(1/4)
 
@@ -172,7 +190,7 @@ PixelShaderOutput main(VertexShaderOutput input) {
     float threshold = 1.0f - reach;
     float band = smoothstep(threshold, threshold + 0.34f, edgeWarped);
 
-    // 血が絶対に届かない内側は、ここで打ち切って Splatter（9セル探索×2層）を丸ごと省く。
+    // 血が絶対に届かない内側は、ここで打ち切って Splatter（9 セル探索 × 2 層）を丸ごと省く。
     // 画面の大半はこちらに落ちるので、これがこのパスの実効コストを決めている。
     // 返り血の帯（下の inward）より少しだけ広く取ること。
     if (edgeWarped < threshold - 0.16f) {
@@ -180,12 +198,12 @@ PixelShaderOutput main(VertexShaderOutput input) {
         return output;
     }
 
-    // --- 飛沫（2層）。縁の血だまり ＋ まばらな返り血 ---
+    // --- 飛沫（2 層）。縁の血だまり ＋ まばらな返り血 ---
     float2 splatUv = uv * float2(aspectRatio, 1.0f);
     float blobCoarse = Splatter(splatUv, splatterScale * 5.0f, seed * 3.7f, 0.35f, 0.30f);
     float blobFine = Splatter(splatUv + 0.37f, splatterScale * 17.0f, seed * 2.9f + 4.2f, 0.85f, 0.74f);
 
-    // 円が並んで見えないよう、粗い層を高周波ノイズで食い破る（1オクターブで足りる）
+    // 円が並んで見えないよう、粗い層を高周波ノイズで食い破る（1 オクターブで足りる）
     float grain = ValueNoise(splatUv * 26.0f + seed * 5.0f);
     blobCoarse = saturate(blobCoarse * (0.42f + 1.10f * grain));
 

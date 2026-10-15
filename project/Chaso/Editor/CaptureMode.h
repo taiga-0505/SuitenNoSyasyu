@@ -15,32 +15,36 @@ class Scene;
 
 /// @class CaptureMode
 /// @brief 撮影モード（ゲーム画面の全画面表示）
-/// @details 状態は静的に持つ。撮影モードは1つしか無いので実害はない。
+/// @details 状態は静的に持つ。撮影モードは 1 つしか無いので実害はない。
 class CaptureMode {
 public:
   /// @brief 撮影モード中か
+  /// @return 撮影モード中なら true
   static bool IsActive();
 
   /// @brief 撮影モードの ON / OFF を切り替える
+  /// @param active true で撮影モードに入る、false で抜ける
+  /// @note 同じ状態を指定したときは何もしない。
   static void SetActive(bool active);
 
   /// @brief ゲーム画面を全画面で敷く
-  /// @param viewportSrv ゲーム画面のSRV
-  /// @param core Dx12Core（アスペクト比の算出に使う）。nullptr 可
+  /// @param viewportSrv  ゲーム画面の SRV
+  /// @param core         Dx12Core（アスペクト比の算出に使う）。nullptr 可
   /// @param currentScene 現在のシーン。nullptr 可
-  /// @param deltaTime 前フレームからの経過時間（秒）
+  /// @param deltaTime    前フレームからの経過時間（秒）
   /// @note 撮影モード中は EditorManager 側で他のパネルを描かないこと。
   static void Draw(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core *core,
                    Scene *currentScene, float deltaTime);
 
-  /// @brief F11（撮影モードの開始/終了）と F10（録画の開始/停止）を拾う
+  /// @brief F11（撮影モードの開始 / 終了）と F10（録画の開始 / 停止）を拾う
   /// @param core 録画に使う。nullptr なら F10 は無視する
   /// @details 撮影モードに入っていなくても毎フレーム呼ぶこと。
-  /// @return 撮影モードの ON/OFF が切り替わったら true
+  /// @return 撮影モードの ON / OFF が切り替わったら true
   static bool HandleHotkeys(Dx12Core *core = nullptr);
 
   /// @brief 撮影モードに入るとき、シーンを再生状態にする必要があるか
   /// @details 撮るのはプレイ画面なので、EditorManager から PlayState を Playing にしてもらう。
+  /// @return 再生状態にしてほしいなら true
   static bool WantsPlaying();
 
   /// @brief いまマウスがゲーム画面の上にあるか（撮影モード中は常に true）
@@ -50,5 +54,6 @@ public:
   ///          これが false のあいだは射撃が止まるので、落下高さのスライダを
   ///          ドラッグしているあいだに弾が出ることもない。
   /// @note 値は Draw() の中で更新される（Viewport パネルと同じく 1 フレーム遅れ）。
+  /// @return マウスがゲーム画面の上にあるなら true
   static bool IsGameHovered();
 };

@@ -7,15 +7,16 @@
 #include <nlohmann/json.hpp>
 #include <string>
 
+/// @class TextMeshComponent
 /// @brief 3D 空間に押し出し文字（3D 文字メッシュ）を描画するコンポーネント
 /// @details
 /// - TextRendererComponent（スクリーン座標の 2D 文字）とは別物で、
-///   TransformComponent の位置・回転・拡縮がそのまま効く 3D オブジェクトです。
+///   TransformComponent の位置・回転・拡縮がそのまま効く 3D オブジェクト。
 /// - 生成されるメッシュは PrimitiveMesh なので、ライティング・影・テクスチャ・
-///   法線マップ等は PrimitiveMeshComponent と同じものが使えます。
+///   法線マップ等は PrimitiveMeshComponent と同じものが使える。
 /// - text / fontPath / size / depth などの形状パラメータを変えると、
-///   次のフレームで自動的にメッシュが再生成されます（NeedsRebuild 参照）。
-/// - 表面（読める面）は -Z を向き、1 行目のベースラインが原点になります。
+///   次のフレームで自動的にメッシュが再生成される（NeedsRebuild 参照）。
+/// - 表面（読める面）は -Z を向き、1 行目のベースラインが原点になる。
 class TextMeshComponent : public IComponent {
 public:
   // ---- 形状（シリアライズ対象、変更でメッシュ再生成） ----
@@ -30,7 +31,7 @@ public:
   // ---- 見た目（シリアライズ対象、マテリアルへ反映） ----
   bool visible = true;                          ///< 表示フラグ
   RC::Vector4 color = {1.0f, 1.0f, 1.0f, 1.0f}; ///< 乗算色
-  int lightingMode = -1;                        ///< -1: DirectionalLight に追従 / 0:None 1:Lambert 2:Half Lambert
+  int lightingMode = -1;                        ///< -1: DirectionalLight に追従 / 0: なし 1: Lambert 2: Half Lambert
   float shininess = 32.0f;                      ///< 光沢
   float environmentCoeff = 0.0f;                ///< 環境マップ映り込み係数
   RC::Vector2 uvTiling = {1.0f, 1.0f};          ///< UV タイリング
@@ -58,10 +59,16 @@ public:
   RC::TextMeshInfo info;         ///< 生成されたメッシュのローカル AABB・頂点数（Inspector 表示用）
   RC::TextMeshInfo outlineInfo;  ///< 縁取りシェルの AABB・頂点数
 
+  /// @brief 本体メッシュが生成済みかを返す
+  /// @return meshHandle が 0 以上なら true
   bool HasMesh() const { return meshHandle >= 0; }
+
+  /// @brief 縁取りシェルのメッシュが生成済みかを返す
+  /// @return outlineMeshHandle が 0 以上なら true
   bool HasOutlineMesh() const { return outlineMeshHandle >= 0; }
 
   /// @brief 現在の設定から生成パラメータを組み立てる
+  /// @return 形状パラメータを詰めた TextMeshDesc
   RC::TextMeshDesc MakeDesc() const {
     RC::TextMeshDesc d;
     d.text = text;
@@ -75,15 +82,21 @@ public:
   }
 
   /// @brief 本体メッシュの設定と生成済みメッシュが食い違っているか（未生成なら true）
+  /// @return 本体メッシュの再生成が必要なら true
   bool NeedsRebuild() const { return !built || !(MakeDesc() == builtDesc); }
 
   /// @brief 縁取りシェルだけ作り直せばよい状態か（有効/無効・太さの変更）
+  /// @return 縁取りシェルの再生成が必要なら true
   bool NeedsOutlineRebuild() const {
     return outlineEnabled != builtOutlineEnabled || (outlineEnabled && outlineWidth != builtOutlineWidth);
   }
 
+  /// @brief コンポーネントの型名を返す
+  /// @return "TextMeshComponent"
   const char *TypeName() const override { return "TextMeshComponent"; }
 
+  /// @brief 形状・見た目・縁取りの設定を JSON に書き出す
+  /// @return シリアライズ対象のメンバをすべて格納した JSON（ランタイムの値は含まない）
   nlohmann::json Serialize() const override {
     return {
         {"text", text},
@@ -110,6 +123,9 @@ public:
     };
   }
 
+  /// @brief JSON から形状・見た目・縁取りの設定を読み込む
+  /// @param j 読み込み元の JSON（含まれていないキーは現在の値のまま）
+  /// @note align が範囲外（0〜2 以外）なら Center にする。
   void Deserialize(const nlohmann::json &j) override {
     if (j.contains("text")) text = j["text"].get<std::string>();
     if (j.contains("fontPath")) fontPath = j["fontPath"].get<std::string>();

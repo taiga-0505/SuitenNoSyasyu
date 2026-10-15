@@ -17,8 +17,10 @@
 Texture2D<float32_t4> gTexture : register(t0);
 SamplerState gSamplerClamp : register(s2);
 
+/// @struct PixelShaderOutPut
+/// @brief ピクセル出力
 struct PixelShaderOutPut {
-    float4 color : SV_TARGET0;
+    float4 color : SV_TARGET0; ///< 出力色
 };
 
 // エッジと判定する輝度差（相対）。小さいほど積極的にならす
@@ -31,10 +33,16 @@ static const float kDirReduceMin = 1.0f / 128.0f;
 // 混ぜに行く距離の上限（テクセル単位）
 static const float kSpanMax = 8.0f;
 
+/// @brief エッジ判定用の輝度を求める（BT.601 の係数）
+/// @param color RGB
+/// @return 輝度
 float Luma(float3 color) {
     return dot(color, float3(0.299f, 0.587f, 0.114f));
 }
 
+/// @brief 輝度エッジに沿って周囲の色を混ぜ、段差をならす
+/// @param input フルスクリーン VS の出力
+/// @return 出力色（α は 1 固定）
 PixelShaderOutPut main(VertexShaderOutput input) {
     PixelShaderOutPut output;
 

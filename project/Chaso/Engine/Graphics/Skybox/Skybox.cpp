@@ -30,20 +30,20 @@ void Skybox::Initialize(ID3D12Device *device) {
   UploadVB_();
   UploadIB_();
 
-  // CB: WVP
+  // 定数バッファ: WVP
   cbWvp_.dyn.Ptr()->WVP = MakeIdentity4x4();
   cbWvp_.dyn.Ptr()->World = MakeIdentity4x4();
   cbWvp_.dyn.Ptr()->worldInverseTranspose = MakeIdentity4x4();
 
-  // CB: Material
+  // 定数バッファ: マテリアル
   cbMat_.dyn.Ptr()->color = {1, 1, 1, 1};
   cbMat_.dyn.Ptr()->uvTransform = MakeIdentity4x4();
   cbMat_.dyn.Ptr()->lightingMode = 0; // ライティング無効
 
-  // CB: Light（ダミー）
+  // 定数バッファ: ライト（ダミー）
   cbLight_.dyn.Ptr()->color = {1, 1, 1, 1};
   cbLight_.dyn.Ptr()->direction = {0.0f, -1.0f, 0.0f};
-  cbLight_.dyn.Ptr()->intensity = 0.0f; // Skyboxはライティング不要
+  cbLight_.dyn.Ptr()->intensity = 0.0f; // Skybox はライティング不要
 }
 
 void Skybox::Update(const Matrix4x4 &view, const Matrix4x4 &proj) {
@@ -62,7 +62,7 @@ void Skybox::Draw(ID3D12GraphicsCommandList *cmdList) {
   cmdList->IASetIndexBuffer(&ib_.view);
   cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-  // RootParam: 0:Material, 1:WVP, 2:SRV, 3:Light
+  // ルートパラメータ: 0 = マテリアル、1 = WVP、2 = SRV、3 = ライト
   cmdList->SetGraphicsRootConstantBufferView(
       0, cbMat_.dyn.Address());
   cmdList->SetGraphicsRootConstantBufferView(
@@ -91,27 +91,27 @@ void Skybox::BuildBox_() {
   vertices_.clear();
   indices_.clear();
 
-  // 箱の6面（内側を向く）
-  // 各面に4頂点、合計24頂点
-  // position のみ重要（texcoord/normal はダミー）
+  // 箱の 6 面（内側を向く）
+  // 各面に 4 頂点、合計 24 頂点
+  // position のみ重要（texcoord / normal はダミー）
 
   struct Face {
-    Vector4 v[4]; // 4頂点
+    Vector4 v[4]; // 4 頂点
   };
 
   // 内側を見るため、法線方向は内向き（インデックスで対応）
   Face faces[6] = {
-      // 右面 (+X)
+      // 右面（+X）
       {{{1, 1, 1, 1}, {1, 1, -1, 1}, {1, -1, 1, 1}, {1, -1, -1, 1}}},
-      // 左面 (-X)
+      // 左面（-X）
       {{{-1, 1, -1, 1}, {-1, 1, 1, 1}, {-1, -1, -1, 1}, {-1, -1, 1, 1}}},
-      // 上面 (+Y)
+      // 上面（+Y）
       {{{-1, 1, -1, 1}, {1, 1, -1, 1}, {-1, 1, 1, 1}, {1, 1, 1, 1}}},
-      // 下面 (-Y)
+      // 下面（-Y）
       {{{-1, -1, 1, 1}, {1, -1, 1, 1}, {-1, -1, -1, 1}, {1, -1, -1, 1}}},
-      // 前面 (+Z)
+      // 前面（+Z）
       {{{-1, 1, 1, 1}, {1, 1, 1, 1}, {-1, -1, 1, 1}, {1, -1, 1, 1}}},
-      // 後面 (-Z)
+      // 後面（-Z）
       {{{1, 1, -1, 1}, {-1, 1, -1, 1}, {1, -1, -1, 1}, {-1, -1, -1, 1}}},
   };
 
@@ -121,14 +121,14 @@ void Skybox::BuildBox_() {
     for (int v = 0; v < 4; ++v) {
       VertexData vd{};
       vd.position = faces[f].v[v];
-      vd.texcoord = {0.0f, 0.0f}; // Skyboxでは使わない
-      vd.normal = {0.0f, 0.0f, 0.0f}; // Skyboxでは使わない
+      vd.texcoord = {0.0f, 0.0f}; // Skybox では使わない
+      vd.normal = {0.0f, 0.0f, 0.0f}; // Skybox では使わない
       vertices_.push_back(vd);
     }
 
     // 内側を向くインデックス（時計回り＝内側から見て反時計回り）
-    // 三角形1: 0, 1, 2
-    // 三角形2: 2, 1, 3
+    // 三角形 1: 0, 1, 2
+    // 三角形 2: 2, 1, 3
     indices_.push_back(base + 0);
     indices_.push_back(base + 1);
     indices_.push_back(base + 2);

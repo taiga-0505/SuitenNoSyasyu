@@ -17,20 +17,24 @@
 #include "ECS/LightComponent.h"
 #include "ECS/CameraComponent.h"
 
+/// @struct PlayerSpawnData
+/// @brief レベルデータの PlayerSpawn（プレイヤーの出現位置）
 struct PlayerSpawnData {
-  RC::Vector3 translation = {0.0f, 0.0f, 0.0f};
-  RC::Vector3 rotation = {0.0f, 0.0f, 0.0f};
+  RC::Vector3 translation = {0.0f, 0.0f, 0.0f}; ///< 位置
+  RC::Vector3 rotation = {0.0f, 0.0f, 0.0f};    ///< 回転（オイラー角、ラジアン）
 };
 
+/// @struct EnemySpawnData
+/// @brief レベルデータの EnemySpawn（敵の出現位置）
 struct EnemySpawnData {
-  RC::Vector3 translation = {0.0f, 0.0f, 0.0f};
-  RC::Vector3 rotation = {0.0f, 0.0f, 0.0f};
-  std::string fileName;
+  RC::Vector3 translation = {0.0f, 0.0f, 0.0f}; ///< 位置
+  RC::Vector3 rotation = {0.0f, 0.0f, 0.0f};    ///< 回転（オイラー角、ラジアン）
+  std::string fileName;                         ///< レベルデータの file_name（無ければ空）
 };
 
 /// @class LevelLoader
-/// @brief Blenderレベルエディタから出力されたJSONレベルデータを読み込み、
-///        Entityのリストに変換するユーティリティクラス。
+/// @brief Blender レベルエディタから出力された JSON レベルデータを読み込み、
+///        Entity のリストに変換するユーティリティクラス
 class LevelLoader {
 public:
   /// @brief モデルファイルの基準ディレクトリを設定する
@@ -43,9 +47,10 @@ public:
     }
   }
 
-  /// @brief JSONファイルからレベルデータを読み込む
-  /// @param filePath JSONファイルのパス
+  /// @brief JSON ファイルからレベルデータを読み込む
+  /// @param filePathIn JSON ファイルのパス（Chaso::ResolvePath で解決する）
   /// @return 読み込み成功時 true
+  /// @note 呼ぶたびに Entity のリストは作り直すが、スポーンデータのリストは追記になる。
   bool LoadFromFile(const std::string& filePathIn) {
     entities_.clear();
 
@@ -127,22 +132,26 @@ public:
     return true;
   }
 
-  /// @brief 読み込んだEntityのリストを取得する
+  /// @brief 読み込んだ Entity のリストを取得する
+  /// @return Entity のリスト
   const std::vector<std::shared_ptr<Entity>>& GetEntities() const {
     return entities_;
   }
 
-  /// @brief 読み込んだEntityのリストをムーブで取得する（所有権移転）
+  /// @brief 読み込んだ Entity のリストをムーブで取得する（所有権移転）
+  /// @return Entity のリスト（呼び出し後、内部のリストは空になる）
   std::vector<std::shared_ptr<Entity>> TakeEntities() {
     return std::move(entities_);
   }
 
   /// @brief プレイヤースポーンデータのリストを取得する
+  /// @return プレイヤースポーンデータのリスト
   const std::vector<PlayerSpawnData>& GetPlayerSpawns() const {
     return playerSpawns_;
   }
 
   /// @brief 敵スポーンデータのリストを取得する
+  /// @return 敵スポーンデータのリスト
   const std::vector<EnemySpawnData>& GetEnemySpawns() const {
     return enemySpawns_;
   }
@@ -151,12 +160,13 @@ public:
   /// @details true のときは、シーン JSON 側のカメラより
   ///          レベル側のカメラを優先させたいことを意味する。
   ///          呼び出し元（DataDrivenScene）が既存カメラの isMain を降格させる判断に使う。
+  /// @return main 指定のカメラがあれば true
   bool HasMainCamera() const { return hasMainCamera_; }
 
 private:
-  std::vector<std::shared_ptr<Entity>> entities_;
-  std::vector<PlayerSpawnData> playerSpawns_;
-  std::vector<EnemySpawnData> enemySpawns_;
+  std::vector<std::shared_ptr<Entity>> entities_; ///< 読み込んだ Entity
+  std::vector<PlayerSpawnData> playerSpawns_;     ///< 読み込んだプレイヤースポーン
+  std::vector<EnemySpawnData> enemySpawns_;       ///< 読み込んだ敵スポーン
   std::string modelBaseDir_ = "Resources/model/"; ///< モデルファイルの基準ディレクトリ
   bool rotationInDegrees_ = false; ///< JSON の rotation が度数法か（既定はラジアン）
   bool hasMainCamera_ = false;     ///< レベル側にメインカメラ指定があったか
@@ -168,6 +178,8 @@ private:
   /// @brief transform ブロックを TransformComponent へ流し込む
   /// @details MESH / LIGHT / CAMERA で同じ処理を使うため切り出した。
   ///          rotation は rotationInDegrees_ に従ってラジアンへ揃える。
+  /// @param object    レベルデータのオブジェクト（transform が無ければ何もしない）
+  /// @param transform 書き込み先の TransformComponent
   void ApplyTransform(const nlohmann::json& object, TransformComponent& transform) {
     if (!object.contains("transform")) return;
     const auto& tr = object["transform"];
@@ -192,6 +204,9 @@ private:
   /// @brief スポーン系（PlayerSpawn / EnemySpawn）の transform を読む
   /// @details ApplyTransform と同じ単位変換を通すためのラッパ。
   ///          スポーンは Entity を作らないので TransformComponent を経由できない。
+  /// @param object         レベルデータのオブジェクト（transform が無ければ何もしない）
+  /// @param outTranslation 位置の書き込み先
+  /// @param outRotation    回転（ラジアン）の書き込み先
   void ReadSpawnTransform(const nlohmann::json& object,
                           RC::Vector3& outTranslation, RC::Vector3& outRotation) {
     if (!object.contains("transform")) return;
@@ -215,6 +230,8 @@ private:
   ///          向き→回転を求めているので、その逆変換にあたる。
   ///          こうしておけば JSON に direction が無くても
   ///          Blender の回転からライトの向きが復元できる。
+  /// @param rotRad オイラー角（ラジアン）
+  /// @return 前方ベクトル（単位ベクトル）
   static RC::Vector3 DirectionFromEuler(const RC::Vector3& rotRad) {
     const float cp = std::cos(rotRad.x);
     return {
@@ -225,6 +242,9 @@ private:
   }
 
   /// @brief color 配列（RGB でも RGBA でも可）を読む
+  /// @param j        color 配列
+  /// @param fallback 配列でない、または要素が 3 未満のときに返す値
+  /// @return 読み込んだ色（RGB だけなら a = 1）
   static RC::Vector4 ReadColor(const nlohmann::json& j, const RC::Vector4& fallback) {
     if (!j.is_array() || j.size() < 3) return fallback;
     return {
@@ -239,6 +259,10 @@ private:
   // Blender のライトは light_type（SUN / POINT / SPOT / AREA）で種類が決まる。
   // 対応するライトコンポーネントを付けるだけで、ハンドル生成は
   // DataDrivenScene::InitializeRuntimeResources が面倒を見てくれる。
+
+  /// @brief LIGHT オブジェクトからライトの Entity を作る（子も再帰的に読む）
+  /// @param object     レベルデータのオブジェクト（disabled なら何もしない）
+  /// @param parentGuid 親 Entity の GUID（0 なら親なし）
   void ParseLight(const nlohmann::json& object, uint64_t parentGuid) {
     if (object.contains("disabled") && object["disabled"].get<bool>()) return;
 
@@ -318,6 +342,10 @@ private:
   // =================================================================
   // A-05: CAMERA
   // =================================================================
+
+  /// @brief CAMERA オブジェクトからカメラの Entity を作る（子も再帰的に読む）
+  /// @param object     レベルデータのオブジェクト（disabled なら何もしない）
+  /// @param parentGuid 親 Entity の GUID（0 なら親なし）
   void ParseCamera(const nlohmann::json& object, uint64_t parentGuid) {
     if (object.contains("disabled") && object["disabled"].get<bool>()) return;
 
@@ -350,6 +378,8 @@ private:
   }
 
   /// @brief children を型ごとに振り分けて再帰する
+  /// @param object     親オブジェクト（children が無ければ何もしない）
+  /// @param parentGuid 親 Entity の GUID
   void ParseChildren(const nlohmann::json& object, uint64_t parentGuid) {
     if (!object.contains("children")) return;
     for (auto& child : object["children"]) {
@@ -365,6 +395,10 @@ private:
     }
   }
 
+  /// @brief MESH オブジェクトから Entity を作る（子も再帰的に読む）
+  /// @details file_name があれば ModelRendererComponent、collider があれば ColliderComponent を付ける。
+  /// @param object     レベルデータのオブジェクト（disabled なら何もしない）
+  /// @param parentGuid 親 Entity の GUID（0 なら親なし）
   void ParseObjectRecursive(const nlohmann::json& object, uint64_t parentGuid) {
     if (object.contains("disabled") && object["disabled"].get<bool>()) {
       return; // 無効フラグが立っている場合は読み込みをスキップする

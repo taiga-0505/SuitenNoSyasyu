@@ -5,6 +5,9 @@
 
 namespace RC {
 
+/// @brief 度をラジアンに変換する
+/// @param deg 角度（度）
+/// @return 角度（ラジアン）
 static float DegToRad_(float deg) { return deg * 3.1415926535f / 180.0f; }
 
 SpotLightSource::SpotLightSource() {
@@ -12,13 +15,13 @@ SpotLightSource::SpotLightSource() {
   data_.position = {0.0f, 2.0f, 0.0f};
   data_.intensity = 1.0f;
 
-  // デフォルトは「前方 -Z 方向」に照らす想定（必要なら好きに）
+  // 既定は真下（-Y 方向）を照らす（用途に合わせて SetDirection で変える）
   data_.direction = {0.0f, -1.0f, 0.0f};
 
   data_.distance = 15.0f;
   data_.decay = 2.0f;
 
-  // 30度くらいのカットオフ
+  // 30 度くらいのカットオフ
   data_.cosAngle = std::cos(DegToRad_(30.0f));
 }
 

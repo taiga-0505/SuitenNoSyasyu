@@ -11,65 +11,67 @@
 namespace RC {
 
 // ============================================================================
-// 水面パラメータ用 定数バッファ (GPU b6)
+// 水面パラメータ用 定数バッファ（GPU b6）
 // ============================================================================
 
-// HLSL の cbuffer WaterParams と完全に対応するレイアウト
+/// @struct WaterParamsCB
+/// @brief 水面パラメータの定数バッファ
+/// @details HLSL の cbuffer WaterParams と完全に対応するレイアウト。並びを変えるときはシェーダー側も揃える。
 struct WaterParamsCB {
-  float time          = 0.0f;
-  float waveHeight    = 0.3f;
-  float waveSpeed     = 1.5f;
-  float waveFreq      = 0.8f;
+  float time          = 0.0f;  ///< 経過時間（秒）
+  float waveHeight    = 0.3f;  ///< 波 1 の高さ
+  float waveSpeed     = 1.5f;  ///< 波 1 の速さ
+  float waveFreq      = 0.8f;  ///< 波 1 の周波数
 
-  float waveHeight2   = 0.15f;
-  float waveSpeed2    = 1.0f;
-  float waveFreq2     = 1.2f;
-  float waveSteepness = 0.4f;
+  float waveHeight2   = 0.15f; ///< 波 2 の高さ
+  float waveSpeed2    = 1.0f;  ///< 波 2 の速さ
+  float waveFreq2     = 1.2f;  ///< 波 2 の周波数
+  float waveSteepness = 0.4f;  ///< 波の尖り具合
 
-  Vector4 shallowColor = {0.1f, 0.5f, 0.6f, 0.85f};
-  Vector4 deepColor    = {0.02f, 0.1f, 0.25f, 0.95f};
+  Vector4 shallowColor = {0.1f, 0.5f, 0.6f, 0.85f};  ///< 浅い所の色
+  Vector4 deepColor    = {0.02f, 0.1f, 0.25f, 0.95f}; ///< 深い所の色
 
-  float fresnelPower      = 3.0f;
-  float specularPower     = 128.0f;
-  float normalScrollSpeed = 0.03f;
-  float normalStrength    = 0.6f;
+  float fresnelPower      = 3.0f;   ///< フレネル反射の指数
+  float specularPower     = 128.0f; ///< スペキュラの指数
+  float normalScrollSpeed = 0.03f;  ///< 法線マップのスクロール速度
+  float normalStrength    = 0.6f;   ///< 法線マップの強さ
 
-  Vector4 invScreenSize   = {1.0f / 1280.0f, 1.0f / 720.0f, 0.0f, 0.0f};
-  Vector4 cameraNearFar   = {0.1f, 1000.0f, 0.0f, 0.0f};
-  Vector4 foamParams      = {2.0f, 1.0f, 0.0f, 0.0f}; // x: FoamDepth, y: FoamScale
-  Vector4 foamColor       = {1.0f, 1.0f, 1.0f, 1.0f};
+  Vector4 invScreenSize   = {1.0f / 1280.0f, 1.0f / 720.0f, 0.0f, 0.0f}; ///< xy: 画面サイズの逆数
+  Vector4 cameraNearFar   = {0.1f, 1000.0f, 0.0f, 0.0f};                 ///< x: Near、y: Far
+  Vector4 foamParams      = {2.0f, 1.0f, 0.0f, 0.0f}; ///< x: FoamDepth、y: FoamScale、z: 波の高さによる色付けの強さ
+  Vector4 foamColor       = {1.0f, 1.0f, 1.0f, 1.0f}; ///< 泡の色
 
   /// @brief 障害物の最大数。HLSL の gObstacles[4] と
   ///        RC::WaterSurface::kMaxObstacles と必ず揃えること
   static constexpr int kMaxObstacles = 4;
 
-  Vector4 obstacles[kMaxObstacles] = {}; // xyz: position, w: radius
+  Vector4 obstacles[kMaxObstacles] = {}; ///< 障害物（xyz: 位置、w: 半径）
   // x: 障害物の数
-  // y: 反射波の強さ (1.0 で入射波と同じ振幅の完全反射)
+  // y: 反射波の強さ（1.0 で入射波と同じ振幅の完全反射）
   //    ※ 0 は「反射なし」にならない。シェーダ側が (値 > 0) ? 値 : 1.0 と
   //       フォールバックするため既定値へ化ける（技術的負債 D-14）
   // z: 反射波の到達範囲（障害物半径に対する倍率）
   Vector4 obstacleCount = {0.0f, 1.0f, 3.0f, 0.0f};
 
   // 海面のリアル化（OceanWaves.hlsli / Water.PS.hlsl）。WaterComponent の既定値と揃える
-  // x: 詳細波の強さ, y: 尖り, z: 白波の強さ, w: 頂点で変位させる最短波長(m)
+  // x: 詳細波の強さ、y: 尖り、z: 白波の強さ、w: 頂点で変位させる最短波長（m）
   Vector4 oceanParams  = {1.0f, 0.6f, 0.8f, 3.0f};
-  // x: 透明度(m), y: 遠景フェード距離(m), z: 法線マップのタイルサイズ(m, 0=従来UV), w: 白波の量
+  // x: 透明度（m）、y: 遠景フェード距離（m）、z: 法線マップのタイルサイズ（m。0 = 従来 UV）、w: 白波の量
   Vector4 oceanParams2 = {3.0f, 150.0f, 0.0f, 0.5f};
-  // rgb: 波頭を透ける光の色, a: 強さ
+  // rgb: 波頭を透ける光の色、a: 強さ
   Vector4 sssColor     = {0.10f, 0.62f, 0.52f, 0.9f};
   // 屈折（スクリーンテクスチャ）
-  // x: 有効 (1/0。シーン色のコピーが取れたフレームだけ 1 になる), y: 歪みの強さ(画面UV), z: 交差部のフェード幅(m)
+  // x: 有効（1/0。シーン色のコピーが取れたフレームだけ 1 になる）、y: 歪みの強さ（画面 UV）、z: 交差部のフェード幅（m）
   Vector4 refractParams = {0.0f, 0.04f, 0.5f, 0.0f};
 };
 static_assert(sizeof(WaterParamsCB) % 16 == 0, "WaterParamsCB は 16 バイト境界に揃えること（HLSL cbuffer と一致させる）");
 
-// シングルトン的に定数バッファリソースを管理
+// 定数バッファはファイル内の静的変数としてシングルトン的に持つ
 /// @brief 水面パラメータの CB。値は CPU 側に持ち、バインド時に今フレームの領域へ送る
-/// @details 以前は Map しっぱなしの固定 CB だった（CPU と GPU を並行させると上書き競合が起きる）
+/// @details 以前は Map しっぱなしの固定 CB だった（CPU と GPU を並行させると上書き競合が起きる）。
 static RC::DynamicCB<WaterParamsCB> s_waterCB;
 static WaterParamsCB* s_waterCBMapped = nullptr; ///< 書き込み先（= s_waterCB.Ptr()）
-static bool s_waterCBInitialized = false;
+static bool s_waterCBInitialized = false;        ///< EnsureWaterCB 済みか
 
 // ============================================================================
 // 屈折用：水を描く直前の画面のコピー
@@ -77,11 +79,14 @@ static bool s_waterCBInitialized = false;
 // 描画中のレンダーターゲットはそのまま SRV として読めない（書き込み中のため）ので、
 // 水を描く直前に同じ形式のテクスチャへ CopyResource して、それを t6 として読む。
 // PS はこのコピーを法線で歪めて引くことで、水中の物体がゆらいで見える「屈折」を作る。
-static Microsoft::WRL::ComPtr<ID3D12Resource> s_sceneCopy;
-static SRVManager::Handle s_sceneCopySrv;
-static bool s_refractionEnabled = true;
+static Microsoft::WRL::ComPtr<ID3D12Resource> s_sceneCopy; ///< シーン色のコピー先テクスチャ
+static SRVManager::Handle s_sceneCopySrv;                   ///< s_sceneCopy の SRV
+static bool s_refractionEnabled = true;                     ///< 屈折を使うか（SetWaterRefraction で切り替える）
 
-/// @brief 現在の描画先をシーン色コピーへ写す。成功したら t6 に載せる SRV を返す（失敗時は ptr=0）
+/// @brief 現在の描画先をシーン色コピーへ写す
+/// @param cl コマンドリスト
+/// @return t6 に載せる SRV。失敗時（MSAA・作成失敗など）は ptr = 0
+/// @note 描画先のサイズ・形式が変わったらコピー先を作り直す。
 static D3D12_GPU_DESCRIPTOR_HANDLE CaptureSceneColor(ID3D12GraphicsCommandList *cl) {
   auto &ctx = GetRenderContext();
   if (!ctx.Ctx() || !ctx.Ctx()->core) return {};
@@ -162,19 +167,21 @@ static D3D12_GPU_DESCRIPTOR_HANDLE CaptureSceneColor(ID3D12GraphicsCommandList *
 // いったんこの静的領域へ控え、描画時に定数バッファへ写す。
 // 取得系（GetWaterObstacles など）もこちらを読むので、
 // 水面を描く前でも設定した値がそのまま返る。
-static Vector4 s_obstacles[WaterParamsCB::kMaxObstacles] = {};
-static int s_obstacleCount = 0;
-static float s_reflectStrength = 1.0f; // 1.0 = 入射波と同じ振幅で跳ね返す
-static float s_reflectRange = 3.0f;    // 反射波の到達範囲（半径倍率）
+static Vector4 s_obstacles[WaterParamsCB::kMaxObstacles] = {}; ///< 障害物の控え（xyz: 位置、w: 半径）
+static int s_obstacleCount = 0;        ///< 有効な障害物の数
+static float s_reflectStrength = 1.0f; ///< 反射波の強さ（1.0 = 入射波と同じ振幅で跳ね返す）
+static float s_reflectRange = 3.0f;    ///< 反射波の到達範囲（半径倍率）
 
 // 確認用の上書き（C-03）。
 // WaterObstacleScript が毎フレーム SetWaterReflectParams を呼び直すので、
 // 外から一度書いた値は次のフレームで消える。定数バッファへ写す直前で
 // 横取りすることで、ゲームを動かしたまま反射の効きを見比べられるようにする。
-static bool s_reflectOverride = false;
-static float s_reflectOverrideStrength = 1.0f;
-static float s_reflectOverrideRange = 3.0f;
+static bool s_reflectOverride = false;         ///< 確認用の上書きが有効か
+static float s_reflectOverrideStrength = 1.0f; ///< 上書き時の反射波の強さ
+static float s_reflectOverrideRange = 3.0f;    ///< 上書き時の反射波の到達範囲（半径倍率）
 
+/// @brief 水面の定数バッファを（初回だけ）既定値で用意する
+/// @note RenderContext が未初期化なら何もしない（次の呼び出しで再試行する）。
 static void EnsureWaterCB() {
   if (s_waterCBInitialized) return;
 
@@ -189,7 +196,7 @@ static void EnsureWaterCB() {
 }
 
 // ============================================================================
-// API
+// 公開 API
 // ============================================================================
 
 int GenerateWaterPlane(float width, float height, uint32_t segments, int normalMapHandle) {
@@ -217,7 +224,7 @@ void DrawWater(int meshHandle, int normalMapHandle) {
       const auto& vp = core->Viewport();
       s_waterCBMapped->invScreenSize.x = 1.0f / (vp.Width > 0 ? vp.Width : 1280.0f);
       s_waterCBMapped->invScreenSize.y = 1.0f / (vp.Height > 0 ? vp.Height : 720.0f);
-      // MainCamera の Near/Far を取得したいが、固定値でも大抵は0.1 / 1000.0。
+      // MainCamera の Near / Far を取得したいが、固定値でも大抵は 0.1 / 1000.0。
       // SceneContext にカメラがあれば取得可能だが、とりあえず固定値で更新（必要なら後で修正）
       s_waterCBMapped->cameraNearFar.x = 0.1f;
       s_waterCBMapped->cameraNearFar.y = 1000.0f;
@@ -257,13 +264,14 @@ void DrawWater(int meshHandle, int normalMapHandle) {
 
       // b6: WaterParams は、下で屈折の有無（refractParams.x）を書いてからバインドする
 
-      // t4: InteractiveWave HeightMap をバインド (RootParameter 12)
+      // t4: 波紋のハイトマップをバインド（RootParameter 12）
       D3D12_GPU_DESCRIPTOR_HANDLE interactiveSrv = GetInteractiveWaterHeightMap();
       if (interactiveSrv.ptr != 0) {
         cl->SetGraphicsRootDescriptorTable(12, interactiveSrv);
       }
 
-      // t5: Depth Texture for Foam (RootParameter 13)
+      // t5: 泡の判定に使う深度テクスチャ（RootParameter 13）
+      // 深度バッファが作り直されたら SRV も作り直す
       if (ctx.Ctx() && ctx.Ctx()->core) {
         auto* core = ctx.Ctx()->core;
         static SRVManager::Handle s_depthSrv;
@@ -284,7 +292,7 @@ void DrawWater(int meshHandle, int normalMapHandle) {
         }
 
         if (s_depthSrv.IsValid()) {
-          // SRVとしてサンプリングするためにバリアで遷移
+          // SRV としてサンプリングするためにバリアで遷移
           D3D12_RESOURCE_BARRIER barrier = {};
           barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
           barrier.Transition.pResource = currentDepthResource;
@@ -296,7 +304,7 @@ void DrawWater(int meshHandle, int normalMapHandle) {
           cl->SetGraphicsRootDescriptorTable(13, s_depthSrv.gpu);
         }
 
-        // t6: Scene Color（屈折用。RootParameter 14）
+        // t6: シーン色（屈折用。RootParameter 14）
         // コピーが取れなかったフレームは屈折を切り、ルートパラメータが空にならないよう深度 SRV を仮に載せておく
         D3D12_GPU_DESCRIPTOR_HANDLE sceneSrv = s_refractionEnabled ? CaptureSceneColor(cl) : D3D12_GPU_DESCRIPTOR_HANDLE{};
         if (s_waterCBMapped) {
@@ -318,7 +326,7 @@ void DrawWater(int meshHandle, int normalMapHandle) {
       ctx.PrimitiveMeshes().ApplyTexture(meshHandle, normalMapHandle);
       m->Draw(cl, world);
 
-      // 描画後、元のDEPTH_WRITE状態に戻す
+      // 描画後、元の DEPTH_WRITE 状態に戻す
       if (ctx.Ctx() && ctx.Ctx()->core) {
         ID3D12Resource* currentDepthResource = ctx.Ctx()->core->GetDepthResource();
         if (currentDepthResource) {

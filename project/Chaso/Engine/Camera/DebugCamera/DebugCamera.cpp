@@ -25,13 +25,13 @@ void DebugCamera::Update(float dt) {
     return;
   }
 
-  // ── 修飾キー判定 (Shift, Ctrl) ──
+  // ── 修飾キー判定（Shift, Ctrl） ──
   bool isShift = input_->IsKeyPressed(DIK_LSHIFT) || input_->IsKeyPressed(DIK_RSHIFT);
   bool isCtrl  = input_->IsKeyPressed(DIK_LCONTROL) || input_->IsKeyPressed(DIK_RCONTROL);
 
   // ── カメラの向きから Forward／Right／Up を計算 ──
-  float yaw = rotation_.y;   // Yaw（Y軸回転）
-  float pitch = rotation_.x; // Pitch（X軸回転）
+  float yaw = rotation_.y;   // Yaw（Y 軸回転）
+  float pitch = rotation_.x; // Pitch（X 軸回転）
   Vector3 forward = {std::sinf(yaw) * std::cosf(pitch), std::sinf(pitch),
                      std::cosf(yaw) * std::cosf(pitch)};
   Vector3 right = {std::cosf(yaw), 0.0f, -std::sinf(yaw)};
@@ -40,15 +40,15 @@ void DebugCamera::Update(float dt) {
                    -std::cosf(yaw) * std::sinf(pitch)};
   Vector3 worldUp = {0.0f, 1.0f, 0.0f};
 
-  // ── 移動速度計算 (SHIFTで加速 / CTRLで減速) ──
+  // ── 移動速度計算（Shift で加速 / Ctrl で減速） ──
   float currentMoveSpeed = moveSpeed_;
   if (isShift) {
     currentMoveSpeed *= boostMultiplier_;
   } else if (isCtrl) {
-    currentMoveSpeed *= 0.25f; // Ctrl時は精密移動
+    currentMoveSpeed *= 0.25f; // Ctrl 時は精密移動
   }
 
-  // ── キー入力による相対移動 (Blender Walk/Fly Navigation) ──
+  // ── キー入力による相対移動（Blender の Walk / Fly Navigation 風） ──
   // WASD: 前後左右
   if (input_->IsKeyPressed(DIK_W)) {
     translation_ =
@@ -66,7 +66,7 @@ void DebugCamera::Update(float dt) {
     translation_ =
         Add(translation_, Multiply(right, currentMoveSpeed * deltaTime_));
   }
-  // E / Q: 上下移動 (Blender Walk Navigation準拠: Eで上昇、Qで下降)
+  // E / Q: 上下移動（Blender の Walk Navigation 準拠: E で上昇、Q で下降）
   if (input_->IsKeyPressed(DIK_E)) {
     translation_.y += currentMoveSpeed * deltaTime_;
   }
@@ -79,31 +79,31 @@ void DebugCamera::Update(float dt) {
   LONG mouseY = input_->GetMouseY();
   LONG wheel  = input_->GetMouseZ();
 
-  // マウス中ボタン(MMB: 2) または 右クリック(1) の操作
+  // マウス中ボタン（MMB: 2）または右クリック（1）の操作
   if (input_->IsMousePressed(2)) {
     if (isShift) {
-      // Shift + 中クリックドラッグ : 平行移動 (Pan)
+      // Shift + 中クリックドラッグ : 平行移動（パン）
       float panSpeed = mousePanSpeed_ * (isShift ? (boostMultiplier_ * 0.5f) : 1.0f);
-      // Xドラッグ: カメラを横方向に移動 (画面を掴んでドラッグ)
+      // X ドラッグ: カメラを横方向に移動（画面を掴んでドラッグ）
       translation_ = Add(translation_, Multiply(right, -mouseX * panSpeed));
-      // Yドラッグ: カメラを上下方向に移動 (画面を掴んでドラッグ)
+      // Y ドラッグ: カメラを上下方向に移動（画面を掴んでドラッグ）
       translation_ = Add(translation_, Multiply(camUp, mouseY * panSpeed));
     } else if (isCtrl) {
-      // Ctrl + 中クリックドラッグ : ズーム (前後移動)
+      // Ctrl + 中クリックドラッグ : ズーム（前後移動）
       float zoomSpeed = mouseZoomSpeed_ * (isShift ? boostMultiplier_ : 1.0f);
       translation_ = Add(translation_, Multiply(forward, -mouseY * zoomSpeed));
     } else {
-      // 中クリックドラッグ単独 : 視点回転 (Orbit / Rotate)
+      // 中クリックドラッグ単独 : 視点回転（オービット / 回転）
       rotation_.y += mouseX * mouseRotateSpeed_;
       rotation_.x += mouseY * mouseRotateSpeed_;
     }
   } else if (input_->IsMousePressed(1)) {
-    // 右クリックドラッグ : 視点回転 (従来操作との互換性 & FPSルック)
+    // 右クリックドラッグ : 視点回転（従来操作との互換性と FPS 風の視点操作のため）
     rotation_.y += mouseX * mouseRotateSpeed_;
     rotation_.x += mouseY * mouseRotateSpeed_;
   }
 
-  // ── マウスホイールによる前後移動 (ズーム) ──
+  // ── マウスホイールによる前後移動（ズーム） ──
   if (wheel != 0) {
     float wheelMultiplier = isShift ? boostMultiplier_ : 1.0f;
     translation_ = Add(translation_, Multiply(forward, wheel * mouseWheelSpeed_ * wheelMultiplier));
@@ -119,8 +119,8 @@ void DebugCamera::Update(float dt) {
   if (input_->IsKeyPressed(DIK_RIGHT))
     rotation_.y += rotateSpeed_ * deltaTime_;
 
-  // ── Pitch角の制限 (反転・宙返り防止) ──
-  const float maxPitch = 89.0f * (3.14159265f / 180.0f); // 約1.55ラジアン (89度)
+  // ── Pitch 角の制限（真上・真下を越えて反転・宙返りしないように） ──
+  const float maxPitch = 89.0f * (3.14159265f / 180.0f); // 約 1.55 ラジアン（89 度）
   rotation_.x = std::clamp(rotation_.x, -maxPitch, maxPitch);
 
   // ── ビュー行列の再計算 ──
@@ -128,7 +128,7 @@ void DebugCamera::Update(float dt) {
 }
 
 void DebugCamera::Reset() {
-  translation_ = {0.0f, 0.0f, -8.0f}; // 原点にリセット
+  translation_ = {0.0f, 0.0f, -8.0f}; // 初期位置（メンバの初期値と同じ）にリセット
   rotation_ = {0.0f, 0.0f, 0.0f};     // 回転なしにリセット
 }
 
@@ -149,7 +149,7 @@ void DebugCamera::SetTransform(const Vector3 &pos, const Vector3 &rot) {
 }
 
 // ==================
-// view再計算
+// ビュー行列の再計算
 // ==================
 void DebugCamera::RebuildView_() {
   Matrix4x4 world = MakeAffineMatrix({1, 1, 1}, rotation_, translation_);

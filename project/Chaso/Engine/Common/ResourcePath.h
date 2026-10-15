@@ -13,16 +13,19 @@
 ///          ゲーム側で同名ファイルを置けばエンジン側を上書きできる（ゲーム側が優先）。
 namespace Chaso {
 
-/// @brief エンジンのルートディレクトリ（作業ディレクトリ基準）。既定は "Chaso"。
+/// @brief エンジンのルートディレクトリの保存先（作業ディレクトリ基準。既定は "Chaso"）
+/// @return ルートディレクトリ文字列への参照
 inline std::string &EngineRootRef_() {
   static std::string root = "Chaso";
   return root;
 }
 
 /// @brief エンジンのルートディレクトリを変更する（通常は変更不要）
+/// @param root 新しいルートディレクトリ（作業ディレクトリ基準）
 inline void SetEngineRoot(const std::string &root) { EngineRootRef_() = root; }
 
 /// @brief エンジンのルートディレクトリを取得する
+/// @return ルートディレクトリ（作業ディレクトリ基準）
 inline const std::string &EngineRoot() { return EngineRootRef_(); }
 
 /// @brief パスを解決する
@@ -44,17 +47,23 @@ inline std::filesystem::path ResolvePath(const std::filesystem::path &path) {
   return path;
 }
 
-/// @brief std::string 版
+/// @brief パスを解決する（std::string 版）
+/// @param path "Resources/..." 形式の相対パス
+/// @return 解決したパス（区切り文字は '/'）
 inline std::string ResolvePath(const std::string &path) {
   return ResolvePath(std::filesystem::path(path)).generic_string();
 }
 
-/// @brief const char* 版
+/// @brief パスを解決する（const char* 版）
+/// @param path "Resources/..." 形式の相対パス（nullptr は空文字として扱う）
+/// @return 解決したパス（区切り文字は '/'）
 inline std::string ResolvePath(const char *path) {
   return ResolvePath(std::string(path ? path : ""));
 }
 
-/// @brief std::wstring 版（DXC など wchar_t API 向け）
+/// @brief パスを解決する（std::wstring 版。DXC など wchar_t API 向け）
+/// @param path "Resources/..." 形式の相対パス
+/// @return 解決したパス（区切り文字は '/'）
 inline std::wstring ResolvePath(const std::wstring &path) {
   return ResolvePath(std::filesystem::path(path)).generic_wstring();
 }
@@ -70,8 +79,8 @@ inline constexpr const char *kEditorConfigPath = "Resources/Setting/EditorConfig
 inline constexpr const char *kGameSettingsPath = "Resources/Setting/GameSettings.json"; ///< プレイヤー設定（感度・音量）
 
 /// @brief 設定ファイルのパスを用意する（読み書きの直前に呼ぶ）
-/// @details - Resources/Setting/ が無ければ作る（保存時に ofstream が失敗しないように）
-///          - 旧配置（project/ 直下の同名ファイル）だけがある場合は Resources/Setting/ へ移動する
+/// @details - Resources/Setting/ が無ければ作る（保存時に ofstream が失敗しないように）。
+///          - 旧配置（project/ 直下の同名ファイル）だけがある場合は Resources/Setting/ へ移動する。
 /// @param path kAppConfigPath などの設定ファイルパス
 /// @return そのまま path を返す（ifstream / ofstream にそのまま渡せる）
 inline const char *PrepareSettingPath(const char *path) {

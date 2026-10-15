@@ -5,6 +5,9 @@
 
 namespace RC {
 
+/// @brief 256 バイト境界に切り上げる
+/// @param size 元のサイズ（バイト）
+/// @return 256 の倍数に切り上げたサイズ
 static UINT Align256_(UINT size) { return (size + 255u) & ~255u; }
 
 void PointLightManager::Init(ID3D12Device *device) {
@@ -20,7 +23,7 @@ void PointLightManager::Init(ID3D12Device *device) {
   if (!initialized_)
     return;
 
-  // slot[0] = デフォルト（基本OFF）
+  // slot[0] は既定のライト（強さ 0 で実質オフ）
   slots_.emplace_back();
   slots_[0].inUse = true;
 
@@ -60,7 +63,7 @@ bool PointLightManager::IsValid_(int handle) const {
 }
 
 int PointLightManager::ResolveFallbackHandle_() const {
-  // activeが無い時は default(0)
+  // アクティブが無いときは既定のライト（0）
   return 0;
 }
 
@@ -71,9 +74,9 @@ int PointLightManager::Create() {
   const int h = AllocSlot_();
   auto &slot = slots_[h];
   slot.inUse = true;
-  slot.light = PointLightSource{}; // defaults
+  slot.light = PointLightSource{}; // 既定値で初期化
 
-  // 最初の1個は自動でアクティブに（好みで消してOK）
+  // 最初の 1 個は自動でアクティブにする（不要なら消してよい）
   if (activeCount_ == 0) {
     AddActive(h);
   }
@@ -107,7 +110,7 @@ bool PointLightManager::AddActive(int handle) {
   if (!IsValid_(handle))
     return false;
 
-  // 既に入ってるなら OK 扱い
+  // 既に入っているなら成功扱い
   for (int i = 0; i < activeCount_; ++i) {
     if (active_[i] == handle)
       return true;
@@ -124,7 +127,7 @@ bool PointLightManager::AddActive(int handle) {
 void PointLightManager::RemoveActive(int handle) {
   for (int i = 0; i < activeCount_; ++i) {
     if (active_[i] == handle) {
-      // 詰める
+      // 後ろを 1 つずつ前へ詰める
       for (int j = i; j < activeCount_ - 1; ++j) {
         active_[j] = active_[j + 1];
       }
@@ -176,7 +179,7 @@ void PointLightManager::EnsureCB_() {
   mapped_ = dyn_.Ptr();
   if (mapped_) {
     // アップロードヒープは 0 初期化されないので、一度だけ全体をクリアしておく。
-    // 以降の SyncCB_ は count と使用中エントリだけを書く（シェーダは count で break する）
+    // 以降の SyncCB_ は count と使用中エントリだけを書く（シェーダは count でループを打ち切る）
     *mapped_ = ::PointLightsCB{};
   }
 }
@@ -188,7 +191,7 @@ void PointLightManager::SyncCB_() {
   uint32_t outCount = 0;
   const uint32_t n = (uint32_t)(std::min)(activeCount_, kMaxActive);
 
-  // enabled なライトだけを詰める（使用中のエントリだけ書く。全 256 灯分の再構築はしない）
+  // 有効なライトだけを詰める（使用中のエントリだけ書く。全 256 灯分の再構築はしない）
   for (uint32_t i = 0; i < n; ++i) {
     const int h = active_[i];
     if (!IsValid_(h))

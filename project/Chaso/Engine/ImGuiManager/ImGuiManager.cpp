@@ -6,7 +6,7 @@
 #include <string>
 
 void ImGuiManager::reserveSrvSlotForImGui_(Dx12Core &core) {
-  core.SRV().AllocateCPU(1); // スロット0を確保（以降は1〜）
+  core.SRV().AllocateCPU(1); // スロット 0 を確保（以降は 1〜）
 }
 
 void ImGuiManager::Init(HWND hwnd, Dx12Core &core, bool enableDocking, float jpFontSize,
@@ -34,7 +34,7 @@ void ImGuiManager::Init(HWND hwnd, Dx12Core &core, bool enableDocking, float jpF
 
   ImGui_ImplWin32_Init(hwnd);
 
-  // SRVManager を UserData に渡して、AllocFn/FreeFn で動的割り当てを行う
+  // SRVManager を UserData に渡して、AllocFn / FreeFn で動的割り当てを行う
   SRVManager *srvMgr = &core.SRVMan();
 
   ImGui_ImplDX12_InitInfo initInfo = {};
@@ -78,7 +78,7 @@ void ImGuiManager::Init(HWND hwnd, Dx12Core &core, bool enableDocking, float jpF
   ImGui_ImplDX12_Init(&initInfo);
 #endif
 
-  // ImGui有無に関わらずスロット0は予約して並びを固定
+  // ImGui の有無に関わらずスロット 0 は予約して並びを固定
   reserveSrvSlotForImGui_(core);
 
   initialized_ = true;

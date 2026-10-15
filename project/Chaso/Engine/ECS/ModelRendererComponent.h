@@ -4,30 +4,36 @@
 #include "Math/MathTypes.h"
 #include <nlohmann/json.hpp>
 
-/// @brief Component for 3D model rendering.
-/// Holds a model handle and is automatically drawn by the RenderSystem.
+/// @class ModelRendererComponent
+/// @brief 3D モデルを描画するコンポーネント
+/// @details モデルハンドルを保持し、RenderSystem が自動で描画する。
 class ModelRendererComponent : public IComponent {
 public:
-  int modelHandle = -1;   ///< Model handle (returned by RC::LoadModel())
-  int texOverride = -1;   ///< Texture override (-1 for default)
-  int normalMapOverride = -1; ///< Normal Map texture override
-  int roughnessMapOverride = -1; ///< Roughness Map texture override
-  bool visible = true;    ///< Visibility flag
-  int blendMode = 0;      ///< Blend mode
-  RC::Vector4 color = {1.0f, 1.0f, 1.0f, 1.0f}; ///< Multiply color
-  float environmentCoeff = 0.0f; ///< Environment map reflection coefficient
-  int lightingMode = -1;  ///< -1: follow DirectionalLight / 0:None 1:Lambert 2:Half Lambert
+  int modelHandle = -1;   ///< モデルハンドル（RC::LoadModel() の戻り値）
+  int texOverride = -1;   ///< 差し替えるテクスチャのハンドル（-1 なら既定のテクスチャ）
+  int normalMapOverride = -1; ///< 差し替える法線マップのハンドル
+  int roughnessMapOverride = -1; ///< 差し替えるラフネスマップのハンドル
+  bool visible = true;    ///< 表示するか
+  int blendMode = 0;      ///< ブレンドモード
+  RC::Vector4 color = {1.0f, 1.0f, 1.0f, 1.0f}; ///< 乗算色
+  float environmentCoeff = 0.0f; ///< 環境マップの映り込み係数
+  int lightingMode = -1;  ///< -1: DirectionalLight の設定に従う / 0: なし 1: Lambert 2: Half Lambert
 
-  /// @brief Check if a valid model is assigned
+  /// @brief 有効なモデルが設定されているかを返す
+  /// @return modelHandle が 0 以上なら true
   bool HasModel() const { return modelHandle >= 0; }
 
-  std::string modelPath; ///< Asset path for serialization
-  std::string texturePath; ///< Texture asset path for serialization
-  std::string normalMapPath; ///< Normal Map asset path for serialization
-  std::string roughnessMapPath; ///< Roughness Map asset path for serialization
+  std::string modelPath; ///< シリアライズ用のアセットパス
+  std::string texturePath; ///< シリアライズ用のテクスチャのアセットパス
+  std::string normalMapPath; ///< シリアライズ用の法線マップのアセットパス
+  std::string roughnessMapPath; ///< シリアライズ用のラフネスマップのアセットパス
 
+  /// @brief コンポーネントの型名を返す
+  /// @return "ModelRendererComponent"
   const char* TypeName() const override { return "ModelRendererComponent"; }
 
+  /// @brief アセットパスと描画設定を JSON に書き出す
+  /// @return 各アセットパス・visible・blendMode・color・environmentCoeff・lightingMode を格納した JSON
   nlohmann::json Serialize() const override {
     return {
       {"modelPath", modelPath},
@@ -42,12 +48,14 @@ public:
     };
   }
 
+  /// @brief JSON からアセットパスと描画設定を読み込む
+  /// @param j 読み込み元の JSON（含まれていないキーは現在の値のまま）
   void Deserialize(const nlohmann::json& j) override {
     if (j.contains("modelPath")) modelPath = j["modelPath"].get<std::string>();
     if (j.contains("texturePath")) texturePath = j["texturePath"].get<std::string>();
     if (j.contains("normalMapPath")) normalMapPath = j["normalMapPath"].get<std::string>();
     if (j.contains("roughnessMapPath")) roughnessMapPath = j["roughnessMapPath"].get<std::string>();
-    // Backward compatibility for texOverride if needed
+    // texOverride の後方互換が必要になったらここで扱う
     if (j.contains("visible")) visible = j["visible"].get<bool>();
     if (j.contains("blendMode")) blendMode = j["blendMode"].get<int>();
     if (j.contains("color")) {

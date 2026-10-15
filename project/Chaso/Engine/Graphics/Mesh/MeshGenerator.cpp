@@ -60,12 +60,12 @@ ModelData MeshGenerator::GenerateBox(float width, float height, float depth) {
     Vector3 bitangent;
   };
   Face faces[6] = {
-      {{0, 0, 1},  {-1, 0, 0}, {0, 1, 0}}, // Front (Looking from +Z: X- is Right)
-      {{0, 0, -1}, {1, 0, 0},  {0, 1, 0}}, // Back (Looking from -Z: X+ is Right)
-      {{0, 1, 0},  {1, 0, 0},  {0, 0, 1}}, // Top (Looking from +Y: X+ is Right, Z+ is Forward... wait, let's just use explicit)
-      {{0, -1, 0}, {1, 0, 0},  {0, 0, -1}},// Bottom 
-      {{1, 0, 0},  {0, 0, 1},  {0, 1, 0}}, // Right (Looking from +X: Z+ is Right)
-      {{-1, 0, 0}, {0, 0, -1}, {0, 1, 0}}, // Left (Looking from -X: Z- is Right)
+      {{0, 0, 1},  {-1, 0, 0}, {0, 1, 0}}, // 前面（+Z 側から見て X- が右）
+      {{0, 0, -1}, {1, 0, 0},  {0, 1, 0}}, // 背面（-Z 側から見て X+ が右）
+      {{0, 1, 0},  {1, 0, 0},  {0, 0, 1}}, // 上面（+Y）
+      {{0, -1, 0}, {1, 0, 0},  {0, 0, -1}},// 底面（-Y）
+      {{1, 0, 0},  {0, 0, 1},  {0, 1, 0}}, // 右面（+X 側から見て Z+ が右）
+      {{-1, 0, 0}, {0, 0, -1}, {0, 1, 0}}, // 左面（-X 側から見て Z- が右）
   };
 
   for (int i = 0; i < 6; ++i) {
@@ -82,7 +82,7 @@ ModelData MeshGenerator::GenerateBox(float width, float height, float depth) {
         data.vertices.push_back(vtx);
       }
     }
-    // CW winding
+    // 時計回り（CW）の巻き順
     data.indices.push_back(baseIdx + 0);
     data.indices.push_back(baseIdx + 2);
     data.indices.push_back(baseIdx + 3);
@@ -186,11 +186,11 @@ ModelData MeshGenerator::GenerateRingEx(float innerRadius, float outerRadius,
     }
 
     if (isVerticalUV) {
-      // Angle -> V, Radius -> U
+      // 角度 → V、半径 → U
       vInner.texcoord = {1.0f, ratio};
       vOuter.texcoord = {0.0f, ratio};
     } else {
-      // Angle -> U, Radius -> V
+      // 角度 → U、半径 → V
       vInner.texcoord = {ratio, 1.0f};
       vOuter.texcoord = {ratio, 0.0f};
     }
@@ -201,12 +201,12 @@ ModelData MeshGenerator::GenerateRingEx(float innerRadius, float outerRadius,
 
   for (uint32_t i = 0; i < segments; ++i) {
     uint32_t base = i * 2;
-    // CW winding
+    // 時計回り（CW）の巻き順
     if (isXY) {
-        // XY plane, normal +Z. 
-        // Index base+0 is inner, base+1 is outer.
-        // angle increases CCW. 
-        // to be CW from +Z view:
+        // XY 平面（法線 +Z）。
+        // base+0 が内側、base+1 が外側の頂点。
+        // 角度は反時計回りに増えるので、
+        // +Z 側から見て時計回りになるように並べる。
         data.indices.push_back(base + 0);
         data.indices.push_back(base + 1);
         data.indices.push_back(base + 3);
@@ -214,7 +214,7 @@ ModelData MeshGenerator::GenerateRingEx(float innerRadius, float outerRadius,
         data.indices.push_back(base + 3);
         data.indices.push_back(base + 2);
     } else {
-        // XZ plane, normal +Y.
+        // XZ 平面（法線 +Y）
         data.indices.push_back(base + 0);
         data.indices.push_back(base + 2);
         data.indices.push_back(base + 3);
@@ -224,9 +224,9 @@ ModelData MeshGenerator::GenerateRingEx(float innerRadius, float outerRadius,
     }
   }
 
-  // Note: innerColor and outerColor are not stored in VertexData.
-  // They should be handled by the shader using texcoord.u/v.
-  // For now, we've set inner: V=1 (or U=1), outer: V=0 (or U=0).
+  // NOTE: VertexData に色が無いため innerColor / outerColor は保持されない。
+  // 内外の色はシェーダ側で texcoord.u / v を使って扱う。
+  // 現状は内側を V=1（縦 UV なら U=1）、外側を V=0（縦 UV なら U=0）にしている。
 
   data.rootNode.name = "RingEx";
   return data;
@@ -273,7 +273,7 @@ ModelData MeshGenerator::GenerateSphere(float radius, uint32_t slices, uint32_t 
 ModelData MeshGenerator::GenerateCylinder(float radius, float height, uint32_t segments) {
   ModelData data;
   float h2 = height * 0.5f;
-  // Side
+  // 側面
   for (uint32_t i = 0; i <= segments; ++i) {
     float rad = (float)i / segments * 2.0f * M_PI;
     float c = std::cos(rad);
@@ -301,7 +301,7 @@ ModelData MeshGenerator::GenerateCylinder(float radius, float height, uint32_t s
     data.indices.push_back(base + 1);
     data.indices.push_back(base + 3);
   }
-  // Caps
+  // 上下の蓋
   uint32_t topCenterIdx = (uint32_t)data.vertices.size();
   data.vertices.push_back({.position = {0, h2, 0, 1}, .texcoord = {0.5f, 0.5f}, .normal = {0, 1, 0}});
   uint32_t bottomCenterIdx = (uint32_t)data.vertices.size();
@@ -323,12 +323,12 @@ ModelData MeshGenerator::GenerateCylinder(float radius, float height, uint32_t s
   }
 
   for (uint32_t i = 0; i < segments; ++i) {
-    // Top cap (CW)
+    // 上の蓋（CW）
     data.indices.push_back(topCenterIdx);
     data.indices.push_back(topRingStart + i + 1);
     data.indices.push_back(topRingStart + i);
 
-    // Bottom cap (CW)
+    // 下の蓋（CW）
     data.indices.push_back(bottomCenterIdx);
     data.indices.push_back(bottomRingStart + i);
     data.indices.push_back(bottomRingStart + i + 1);
@@ -397,7 +397,7 @@ ModelData MeshGenerator::GenerateEffectCylinder(
     vBR.texcoord = {ubR, vbR};
     vBR.normal = {-sNext, 0.0f, cNext};
 
-    // インデックスバッファ不使用（Particle描画用）
+    // インデックスバッファ不使用（Particle 描画用）
     data.vertices.push_back(vTL);
     data.vertices.push_back(vTR);
     data.vertices.push_back(vBL);
@@ -414,14 +414,14 @@ ModelData MeshGenerator::GenerateEffectCylinder(
 ModelData MeshGenerator::GenerateCone(float radius, float height, uint32_t segments) {
   ModelData data;
   float h2 = height * 0.5f;
-  data.vertices.push_back({.position = {0, h2, 0, 1}, .texcoord = {0.5f, 0.0f}, .normal = {0, 1, 0}}); // Top
+  data.vertices.push_back({.position = {0, h2, 0, 1}, .texcoord = {0.5f, 0.0f}, .normal = {0, 1, 0}}); // 先端
   for (uint32_t i = 0; i <= segments; ++i) {
     float rad = (float)i / segments * 2.0f * M_PI;
     float c = std::cos(rad);
     float s = std::sin(rad);
     VertexData v;
     v.position = {c * radius, -h2, s * radius, 1.0f};
-    v.normal = {c, 0.5f, s}; // Approximate normal
+    v.normal = {c, 0.5f, s}; // 近似の法線（側面の実際の傾きとは一致しない）
     float len = std::sqrt(v.normal.x*v.normal.x + v.normal.y*v.normal.y + v.normal.z*v.normal.z);
     v.normal.x /= len; v.normal.y /= len; v.normal.z /= len;
     v.texcoord = {(float)i/segments, 1.0f};
@@ -433,7 +433,7 @@ ModelData MeshGenerator::GenerateCone(float radius, float height, uint32_t segme
     data.indices.push_back(i + 1);
   }
 
-  // Bottom cap
+  // 底面の蓋
   uint32_t centerIdx = (uint32_t)data.vertices.size();
   data.vertices.push_back({.position = {0, -h2, 0, 1}, .texcoord = {0.5f, 0.5f}, .normal = {0, -1, 0}});
   uint32_t ringStart = (uint32_t)data.vertices.size();
@@ -488,7 +488,7 @@ ModelData MeshGenerator::GenerateCapsule(float radius, float height, uint32_t sl
       uint32_t lt = (y + 1) * (slices + 1) + x;
       uint32_t rt = lt + 1;
 
-      // CW winding (like Sphere)
+      // 時計回り（CW）の巻き順（Sphere と同じ）
       data.indices.push_back(lb);
       data.indices.push_back(rb);
       data.indices.push_back(lt);
@@ -527,7 +527,7 @@ ModelData MeshGenerator::GenerateTorus(float majorRadius, float minorRadius, uin
       uint32_t rb = (j + 1) * (minorSegments + 1) + i;
       uint32_t lt = lb + 1;
       uint32_t rt = rb + 1;
-      // CW winding
+      // 時計回り（CW）の巻き順
       data.indices.push_back(lb);
       data.indices.push_back(lt);
       data.indices.push_back(rb);

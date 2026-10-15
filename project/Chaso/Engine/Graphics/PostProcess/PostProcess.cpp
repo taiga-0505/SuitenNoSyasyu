@@ -15,6 +15,9 @@
 #include <utility> // std::swap (MoveEffect)
 
 namespace {
+/// @brief ログ出力用にエフェクト種別の名前を取得する
+/// @param type エフェクトの種類
+/// @return 列挙子と同じ綴りの名前（不明な値は "Unknown"）
 const char* ToString(PostEffectType type) {
   switch (type) {
   case PostEffectType::Grayscale: return "Grayscale";
@@ -42,6 +45,9 @@ const char* ToString(PostEffectType type) {
   }
 }
 
+/// @brief ログ出力用にエフェクトスタックを「A -> B -> C」の形の文字列にする
+/// @param effects 適用順に並んだエフェクトの配列
+/// @return 連結した文字列（空なら "None"）
 std::string ActiveEffectsToString(const std::vector<PostEffectType>& effects) {
   if (effects.empty()) return "None";
   std::string result;
@@ -192,7 +198,7 @@ void PostProcess::Initialize(Dx12Core *dxCore,
     }
   }
 
-  // ノイズテクスチャはRC::Init後に遅延初期化される (InitDissolveNoiseTextures)
+  // ノイズテクスチャは RC::Init 後に遅延初期化される（InitDissolveNoiseTextures）
 
   // RandomNoise CBuffer 初期化
   {
@@ -591,8 +597,8 @@ void PostProcess::Resize(uint32_t width, uint32_t height) {
   }
 
   // DepthStencil::Resize は深度リソース自体を作り直すため、
-  // キャッシュ済みの深度SRVは破棄しないと解放済みリソースを指したままになる。
-  // (DepthBasedOutline / Underwater / Caustics が共有している)
+  // キャッシュ済みの深度 SRV は破棄しないと解放済みリソースを指したままになる。
+  // （DepthBasedOutline / Underwater / Caustics が共有している）
   if (depthSrv_.IsValid()) {
     dxCore_->SRVMan().Free(depthSrv_);
     depthSrv_ = {};
@@ -1224,7 +1230,7 @@ void PostProcess::InitDissolveNoiseTextures() {
   if (dissolveNoiseInitialized_) return;
   dissolveNoiseInitialized_ = true;
 
-  // Resources/noise/ フォルダからPNGをリストアップ
+  // Resources/noise/ フォルダから PNG をリストアップ
   const std::string noiseDir = Chaso::ResolvePath("Resources/noise");
   if (!std::filesystem::exists(noiseDir)) return;
 
@@ -1239,7 +1245,7 @@ void PostProcess::InitDissolveNoiseTextures() {
     NoiseEntry ne;
     ne.path = entry.path().string();
     ne.name = entry.path().stem().string();
-    // srgb=false: マスクはリニア値として扱う
+    // srgb = false: マスクはリニア値として扱う
     ne.srv = texMan.Load(ne.path, false);
     dissolveNoiseTextures_.push_back(ne);
     Log::Print(std::format("[PostProcess] Dissolve noise loaded: {}", ne.name));
@@ -1386,7 +1392,7 @@ void PostProcess::EnsurePingPongTextures() {
 }
 
 // ============================================================================
-// 1パス描画
+// 1 パス描画
 // ============================================================================
 
 void PostProcess::DrawSinglePass(ID3D12GraphicsCommandList *cmdList,
@@ -1396,7 +1402,7 @@ void PostProcess::DrawSinglePass(ID3D12GraphicsCommandList *cmdList,
   // NOTE: null を D3D12 に渡すと D3D12Core.dll の奥でアクセス違反になり、
   //       呼び出し元が分からないスタックになる。ここで弾いて原因を残す。
   if (!pipeline || !pipeline->Root() || !pipeline->PSO()) {
-    // エフェクト種別ごとに1回だけ出す（毎フレーム呼ばれるためログが埋まる）
+    // エフェクト種別ごとに 1 回だけ出す（毎フレーム呼ばれるためログが埋まる）
     static std::set<PostEffectType> logged;
     if (logged.insert(effectType).second) {
       Log::Print(std::format(
@@ -1413,10 +1419,10 @@ void PostProcess::DrawSinglePass(ID3D12GraphicsCommandList *cmdList,
   cmdList->SetPipelineState(pipeline->PSO());
   cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-  // RootSignatureType::PostProcess → params[0] が SRV table (t0)
+  // RootSignatureType::PostProcess → params[0] が SRV テーブル（t0）
   cmdList->SetGraphicsRootDescriptorTable(0, srcSRV);
 
-  // params[1] が RootConstants (b0) — エフェクト固有パラメータ
+  // params[1] がルート定数（b0）— エフェクト固有パラメータ
   struct PostEffectConstants {
     uint32_t param0;
     uint32_t param1;
@@ -1450,24 +1456,24 @@ void PostProcess::DrawSinglePass(ID3D12GraphicsCommandList *cmdList,
       depthSrv_ = dxCore_->SRVMan().CreateTexture2D(
           dxCore_->GetDepthResource(), DXGI_FORMAT_R24_UNORM_X8_TYPELESS, 1);
     }
-    // params[2]: t1
+    // params[2]: t1（深度 SRV）
     cmdList->SetGraphicsRootDescriptorTable(2, depthSrv_.gpu);
-    // params[3]: b1
+    // params[3]: b1（DepthBasedOutline の CBuffer）
     cmdList->SetGraphicsRootConstantBufferView(3, dynMaterial_.Address());
   }
 
   if (effectType == PostEffectType::Dissolve) {
-    // params[2]: t1 (ノイズマスクテクスチャ)
+    // params[2]: t1（ノイズマスクテクスチャ）
     if (!dissolveNoiseTextures_.empty()) {
       int idx = dissolveNoiseIndex_ % static_cast<int>(dissolveNoiseTextures_.size());
       cmdList->SetGraphicsRootDescriptorTable(2, dissolveNoiseTextures_[idx].srv);
     }
-    // params[3]: b1 (DissolveParams CBuffer)
+    // params[3]: b1（DissolveParams の CBuffer）
     cmdList->SetGraphicsRootConstantBufferView(3, dynDissolve_.Address());
   }
 
   if (effectType == PostEffectType::RandomNoise) {
-    // params[3]: b1 (RandomNoise CBuffer)
+    // params[3]: b1（RandomNoise の CBuffer）
     cmdList->SetGraphicsRootConstantBufferView(3, dynRandom_.Address());
   }
 
@@ -1476,23 +1482,23 @@ void PostProcess::DrawSinglePass(ID3D12GraphicsCommandList *cmdList,
       depthSrv_ = dxCore_->SRVMan().CreateTexture2D(
           dxCore_->GetDepthResource(), DXGI_FORMAT_R24_UNORM_X8_TYPELESS, 1);
     }
-    // params[2]: t1 (Depth SRV)
+    // params[2]: t1（深度 SRV）
     cmdList->SetGraphicsRootDescriptorTable(2, depthSrv_.gpu);
-    // params[3]: b1 (SSAO CBuffer。projectionInverse を含む)
+    // params[3]: b1（SSAO の CBuffer。projectionInverse を含む）
     cmdList->SetGraphicsRootConstantBufferView(3, dynSsao_.Address());
   }
 
   if (effectType == PostEffectType::ColorGrade) {
-    // params[3]: b1 (ColorGrade CBuffer)
+    // params[3]: b1（ColorGrade の CBuffer）
     cmdList->SetGraphicsRootConstantBufferView(3, dynColorGrade_.Address());
   }
 
   // Bloom と Fxaa は t0 と b0 だけで足りるので追加バインドは無い
 
   if (effectType == PostEffectType::MaskOutline && maskSrv_.ptr != 0) {
-    // params[2]: t1 (マスクRT)
+    // params[2]: t1（マスク RT）
     cmdList->SetGraphicsRootDescriptorTable(2, maskSrv_);
-    // params[3]: b1 (MaskOutline CBuffer)
+    // params[3]: b1（MaskOutline の CBuffer）
     cmdList->SetGraphicsRootConstantBufferView(3, dynMaskOutline_.Address());
   }
 
@@ -1501,9 +1507,9 @@ void PostProcess::DrawSinglePass(ID3D12GraphicsCommandList *cmdList,
       depthSrv_ = dxCore_->SRVMan().CreateTexture2D(
           dxCore_->GetDepthResource(), DXGI_FORMAT_R24_UNORM_X8_TYPELESS, 1);
     }
-    // params[2]: t1 (Depth SRV)
+    // params[2]: t1（深度 SRV）
     cmdList->SetGraphicsRootDescriptorTable(2, depthSrv_.gpu);
-    // params[3]: b1 (Underwater CBuffer)
+    // params[3]: b1（Underwater の CBuffer）
     cmdList->SetGraphicsRootConstantBufferView(3, dynUnderwater_.Address());
   }
 
@@ -1512,9 +1518,9 @@ void PostProcess::DrawSinglePass(ID3D12GraphicsCommandList *cmdList,
       depthSrv_ = dxCore_->SRVMan().CreateTexture2D(
           dxCore_->GetDepthResource(), DXGI_FORMAT_R24_UNORM_X8_TYPELESS, 1);
     }
-    // params[2]: t1 (Depth SRV)
+    // params[2]: t1（深度 SRV）
     cmdList->SetGraphicsRootDescriptorTable(2, depthSrv_.gpu);
-    // params[3]: b1 (Caustics CBuffer)
+    // params[3]: b1（Caustics の CBuffer）
     cmdList->SetGraphicsRootConstantBufferView(3, dynCaustics_.Address());
   }
 
@@ -1523,24 +1529,24 @@ void PostProcess::DrawSinglePass(ID3D12GraphicsCommandList *cmdList,
       depthSrv_ = dxCore_->SRVMan().CreateTexture2D(
           dxCore_->GetDepthResource(), DXGI_FORMAT_R24_UNORM_X8_TYPELESS, 1);
     }
-    // params[2]: t1 (Depth SRV)
+    // params[2]: t1（深度 SRV）
     cmdList->SetGraphicsRootDescriptorTable(2, depthSrv_.gpu);
-    // params[3]: b1 (LightShaft CBuffer)
+    // params[3]: b1（LightShaft の CBuffer）
     cmdList->SetGraphicsRootConstantBufferView(3, dynLightShaft_.Address());
   }
 
   if (effectType == PostEffectType::ScreenDroplets) {
-    // params[3]: b1 (ScreenDroplets CBuffer)
+    // params[3]: b1（ScreenDroplets の CBuffer）
     cmdList->SetGraphicsRootConstantBufferView(3, dynScreenDroplets_.Address());
   }
 
   if (effectType == PostEffectType::BloodOverlay) {
-    // params[3]: b1 (BloodOverlay CBuffer)
+    // params[3]: b1（BloodOverlay の CBuffer）
     cmdList->SetGraphicsRootConstantBufferView(3, dynBloodOverlay_.Address());
   }
 
   if (effectType == PostEffectType::InkOverlay) {
-    // params[3]: b1 (InkOverlay CBuffer)
+    // params[3]: b1（InkOverlay の CBuffer）
     cmdList->SetGraphicsRootConstantBufferView(3, dynInkOverlay_.Address());
   }
 
@@ -1584,7 +1590,7 @@ void PostProcess::Draw(ID3D12GraphicsCommandList *cmdList,
     return;
   }
 
-  // --- 1エフェクト：シングルパス ---
+  // --- 1 エフェクト：シングルパス ---
   if (activeEffects_.size() == 1) {
     SetFinalRenderTarget();
     DrawSinglePass(cmdList, renderTexture.GetSRVGPU(),
@@ -1593,7 +1599,7 @@ void PostProcess::Draw(ID3D12GraphicsCommandList *cmdList,
     return;
   }
 
-  // --- 2エフェクト以上：マルチパス（ピンポン） ---
+  // --- 2 エフェクト以上：マルチパス（ピンポン） ---
   EnsurePingPongTextures();
 
   RenderTexture *textures[2] = {pingPongA_.get(), pingPongB_.get()};
@@ -1603,7 +1609,7 @@ void PostProcess::Draw(ID3D12GraphicsCommandList *cmdList,
     const bool isFirst = (i == 0);
     const bool isLast = (i == count - 1);
 
-    // ── ソースSRV ──
+    // ── ソース SRV ──
     D3D12_GPU_DESCRIPTOR_HANDLE srcSRV;
     if (isFirst) {
       // 最初のパス：入力テクスチャ（App の RenderTexture、すでに SRV 状態）
@@ -2279,7 +2285,7 @@ void PostProcess::DrawImGui([[maybe_unused]] const char *label) {
       }
 
       ImGui::Indent();
-      // 並び替えはリストを書き換えるので、この描画フレーム中は1回だけ行う
+      // 並び替えはリストを書き換えるので、この描画フレーム中は 1 回だけ行う
       int moveFrom = -1;
       int moveOffset = 0;
       for (size_t i = 0; i < effects.size(); ++i) {
