@@ -1,7 +1,0 @@
-{
-    "workbench.editorAssociations": {
-        "**/scripts/使い方.md": "vscode.markdown.preview.editor"
-    },
-    "files.encoding": "utf8",
-    "files.autoGuessEncoding": true
-}
