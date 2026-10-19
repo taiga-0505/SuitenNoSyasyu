@@ -12,6 +12,7 @@
 #include "Framework/App.h"
 #include "Game/Framework/GameModeBase.h"
 #include "Game/Framework/StageProgress.h"
+#include "Game/Framework/SharkChaseCutscene.h"
 #include "Scene.h"
 
 #if RC_ENABLE_IMGUI
@@ -72,6 +73,14 @@
 ///                         ステージ 1〜5（StageProgress に載っているシーン）のときだけ出る。
 ///     "cardDelay" / "cardFadeIn" / "cardHold" / "cardFadeOut" : ステージ名の出方（秒）。
 ///                         既定の合計 2.15 秒は、水面を抜ける（浮上全体の 7 割 ≒ 2.2 秒）前に消えきる長さ。
+///     "sharkChase"      : 浮上の前に「サメに追われ → 振り向いて墨で倒す」三人称カットシーンを入れる
+///                         （SharkChaseCutscene。{ "enabled": true, ... }。既定は無効。Stage1 で使用）。
+///                         有効なときの流れ:
+///                           1'. Begin       : カットシーン開始。カメラは三人称で深海のタコとサメを映す。
+///                           1''. 追跡〜撃破 : カメラが最後にタコの頭（浮上開始の向き）へ寄って一人称に戻る。
+///                           2.  浮上        : 戻った位置から goal へ riseDuration で浮上（ステージ名カードは
+///                                             ここから出す）。以降は通常と同じ。
+///                         intro_playing はカットシーンの間も立てたまま（レール・入力・HUD は止まったまま）。
 class DeepRiseIntroScript : public ScriptableEntity {
 public:
   bool alwaysPlay = false;
@@ -91,6 +100,7 @@ public:
   float cardFadeIn = 0.6f;  ///< 下から浮かび上がりながら現れる時間
   float cardHold = 0.9f;    ///< 出きったまま見せる時間
   float cardFadeOut = 0.45f;///< 上へ抜けながら消える時間
+  SharkChaseParams sharkChase; ///< 浮上前のサメ追跡カットシーン（既定は無効）
 
   /// @brief 設定項目を JSON に書き出す
   /// @return 設定項目を格納した JSON
@@ -113,6 +123,7 @@ public:
         {"cardFadeIn", cardFadeIn},
         {"cardHold", cardHold},
         {"cardFadeOut", cardFadeOut},
+        {"sharkChase", sharkChase.ToJson()},
     };
   }
 
@@ -146,13 +157,16 @@ public:
     readF("cardFadeIn", cardFadeIn);
     readF("cardHold", cardHold);
     readF("cardFadeOut", cardFadeOut);
+    if (j.contains("sharkChase")) sharkChase.FromJson(j["sharkChase"]);
   }
 
 #if RC_ENABLE_IMGUI
   /// @brief インスペクタに浮上・ステージ名カードの状態と各パラメータ、再生し直すボタンを表示する
   void OnImGui() override {
-    ImGui::Text("State: %s  t=%.2f / %.2f", playing_ ? "rising" : (finished_ ? "finished" : "idle"),
-                t_, riseDuration);
+    ImGui::Text("State: %s  t=%.2f / %.2f",
+                chasing_ ? "shark chase" : (playing_ ? "rising" : (finished_ ? "finished" : "idle")), t_,
+                riseDuration);
+    ImGui::Text("Chase: %s", chase_.PhaseName());
     ImGui::Checkbox("Always Play", &alwaysPlay);
     ImGui::DragFloat("Rise Depth (m)", &riseDepth, 0.5f, 1.0f, 200.0f);
     ImGui::DragFloat("Rise Duration (s)", &riseDuration, 0.05f, 0.2f, 20.0f);
@@ -169,9 +183,10 @@ public:
     ImGui::DragFloat("Card Fade In (s)", &cardFadeIn, 0.01f, 0.05f, 3.0f);
     ImGui::DragFloat("Card Hold (s)", &cardHold, 0.01f, 0.0f, 5.0f);
     ImGui::DragFloat("Card Fade Out (s)", &cardFadeOut, 0.01f, 0.05f, 3.0f);
+    sharkChase.DrawImGui();
     if (ImGui::Button("Replay")) {
       // 元の位置に戻してからやり直す（レールが動いたあとなら現在地からの浮上になる）
-      if (playing_) RestoreCamera();
+      if (playing_ || chasing_) RestoreCamera();
       Begin();
     }
   }
@@ -216,6 +231,24 @@ protected:
     paused_ = (deltaTime <= 0.0f);
     if (deltaTime <= 0.0f) return;
 
+    // サメ追跡カットシーン：カメラを握っているあいだは浮上を始めない。
+    // 返してもらったら、その位置（タコの頭）から浮上する。沈むサメ・墨はその後も動かして片付ける
+    if (chase_.IsActive()) {
+      auto *tr = GetComponent<TransformComponent>();
+      chase_.Update(deltaTime, chasing_ ? tr : nullptr);
+      if (chasing_) {
+        if (tr) UpdateBubbleEmitterAt(chase_.OctopusPos());
+        if (!chase_.IsDirecting()) {
+          chasing_ = false;
+          BeginRise(true);
+        }
+      }
+    } else if (chasing_) {
+      // 念のため（カットシーンが途中で片付けられた）：今の位置から浮上へ
+      chasing_ = false;
+      BeginRise(true);
+    }
+
     if (playing_) {
       UpdateRise(deltaTime);
     }
@@ -232,6 +265,8 @@ protected:
 
   /// @brief 輪郭の除外矩形・タグ・泡エンティティ・フォントを後片付けする
   void OnDestroy() override {
+    chase_.Cleanup();
+    chasing_ = false;
     ClearOutlineExclusion();
     if (Entity *self = GetEntity()) self->ClearTag(kTagIntroPlaying);
     if (auto e = bubbles_.lock()) e->Destroy();
@@ -441,11 +476,9 @@ private:
     startPos_ = {goalPos_.x, goalPos_.y - riseDepth, goalPos_.z};
     startRot_ = {risePitchStart, goalRot_.y, goalRot_.z};
     t_ = 0.0f;
-    playing_ = true;
     finished_ = false;
-
-    tr->position = startPos_;
-    tr->rotation = startRot_;
+    chase_.Cleanup();
+    chasing_ = false;
 
     if (Entity *self = GetEntity()) self->SetTag(kTagIntroPlaying, 1);
 
@@ -459,6 +492,44 @@ private:
       }
     }
 
+    // サメ追跡カットシーン：先にそちらを再生し、カメラを返してもらってから浮上する
+    if (sharkChase.enabled) {
+      if (Scene *scene = GetScene()) {
+        playing_ = false;
+        cardActive_ = false;
+        chase_.Begin(scene, GetSceneContext(), sharkChase, goalPos_, startRot_, *tr);
+        chasing_ = true;
+        // 泡はタコのまわりに湧かせる（水面に近づいたら UpdateBubbleEmitterAt が止める）
+        bubbleEmitting_ = false;
+        if (bubbles) {
+          if (bubbles_.expired()) SpawnBubbleEmitter();
+          SetBubbleEmission(kBubbleEmitPerFrame);
+          bubbleEmitting_ = true;
+        }
+        Log::Print("[DeepRiseIntroScript] shark chase begin");
+        return;
+      }
+    }
+
+    BeginRise();
+  }
+
+  /// @brief 浮上を始める
+  /// @param fromCurrent true ならカメラの今の位置（カットシーンが返したタコの頭）から、
+  ///                    false なら startPos_（goal の真下 riseDepth）から
+  void BeginRise(bool fromCurrent = false) {
+    auto *tr = GetComponent<TransformComponent>();
+    if (!tr) return;
+    if (fromCurrent) startPos_ = tr->position;
+    t_ = 0.0f;
+    playing_ = true;
+    finished_ = false;
+
+    tr->position = startPos_;
+    tr->rotation = startRot_;
+
+    if (Entity *self = GetEntity()) self->SetTag(kTagIntroPlaying, 1);
+
     // ステージ名カード（フォントが用意できていて、ステージ 1〜5 のときだけ）
     cardTime_ = 0.0f;
     cardActive_ = showStageCard && cardStage_ >= 0 && cardTitleFont_ >= 0 && cardLabelFont_ >= 0;
@@ -469,6 +540,8 @@ private:
       if (bubbles_.expired()) SpawnBubbleEmitter();
       SetBubbleEmission(kBubbleEmitPerFrame);
       bubbleEmitting_ = true;
+    } else {
+      SetBubbleEmission(0);
     }
     Log::Print("[DeepRiseIntroScript] rise begin (depth " + std::to_string(riseDepth) + "m)");
   }
@@ -606,7 +679,25 @@ private:
     tr->position = {camTr.position.x + fwd.x * 10.0f, y, camTr.position.z + fwd.z * 10.0f};
   }
 
+  /// @brief カットシーン中、泡の射出点をタコのまわりへ置く（浅くなったら射出を止める）
+  /// @param center タコの位置
+  void UpdateBubbleEmitterAt(const RC::Vector3 &center) {
+    if (bubbleEmitting_ && (waterY_ - center.y) < kBubbleStopDepth) {
+      SetBubbleEmission(0);
+      bubbleEmitting_ = false;
+    }
+    auto e = bubbles_.lock();
+    if (!e) return;
+    auto *tr = e->GetComponent<TransformComponent>();
+    if (!tr) return;
+    const float boxHalfH = 2.5f;
+    const float y = (std::min)(center.y - 1.0f, waterY_ - kBubbleStopDepth - boxHalfH);
+    tr->position = {center.x, y, center.z};
+  }
+
   // ---- 状態 ----
+  SharkChaseCutscene chase_; ///< 浮上前のサメ追跡カットシーン
+  bool chasing_ = false;     ///< カットシーンがカメラを握っている
   bool playing_ = false;
   bool finished_ = false;
   float t_ = 0.0f;

@@ -258,6 +258,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClInclude Include="..\Chaso\Game\Scene\DataDrivenScene\DataDrivenScene.h" />
     <ClInclude Include="..\Application\Game\Scripts\EnemyBaseScript.h" />
     <ClInclude Include="..\Application\Game\Framework\PartPose.h" />
+    <ClInclude Include="..\Application\Game\Framework\SharkChaseCutscene.h" />
     <ClInclude Include="..\Application\Game\Framework\TitleBlackboard.h" />
   </ItemGroup>
   <ItemGroup>
