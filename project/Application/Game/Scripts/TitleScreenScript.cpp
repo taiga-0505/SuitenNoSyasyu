@@ -853,6 +853,8 @@ private:
     RC::Vector3 push{};         ///< 船などに押しのけられた量（xz、m）。ばねで基準位置へ戻る
     RC::Vector3 pushVel{};      ///< 押しのけの戻る速さ（m/s）
     float shake = 0.0f;         ///< ぶつかったときの揺れの強さ（rad。減衰していく）
+    /// 真上から見た形（縁取り込みの距離場）。タコが文字の形に沿ってしがみつくのに使う
+    std::shared_ptr<const TitleBlackboard::LetterMask> mask;
   };
 
   // ------------------------------------------------------------------
@@ -966,10 +968,110 @@ private:
       f.halfW = (std::max)(std::fabs(tm.info.min.x), std::fabs(tm.info.max.x));
       f.zMin = tm.info.min.y;
       f.zMax = tm.info.max.y;
+      // 真上から見た形（縁取り込み）を距離場に焼いておく（タコがしがみつく場所・足を這わせる場所）
+      f.mask = BuildLetterMask(tm.MakeDesc(), outlineEnabled, outlineW);
     }
 
     f.entity = entity;
     return f;
+  }
+
+  /// @brief 文字を真上から見た形（縁取りがあれば縁取り込み）を符号付き距離場にする
+  /// @param desc 文字メッシュの生成パラメータ（本体と同じもの）
+  /// @param outline 縁取りを含めるか
+  /// @param outlineW 縁取りの太さ（em 比）
+  /// @return 距離場（作れなければ nullptr。そのときは足元の長方形として扱われる）
+  /// @details メッシュを CPU 側でもう 1 度作り、表裏の面（XY に面積のある三角形）を格子へ塗ってから
+  ///          2 パスの面取り距離（chamfer）で距離を求める。文字ごとに 1 回、生成時だけ。
+  static std::shared_ptr<const TitleBlackboard::LetterMask> BuildLetterMask(const RC::TextMeshDesc &desc,
+                                                                             bool outline, float outlineW) {
+    ModelData data;
+    RC::TextMeshInfo info;
+    bool ok = outline && outlineW > 0.0f && RC::TextMeshGenerator::GenerateOutline(desc, outlineW, data, &info);
+    if (!ok) {
+      data = ModelData{};
+      ok = RC::TextMeshGenerator::Generate(desc, data, &info);
+    }
+    if (!ok || data.vertices.size() < 3) return nullptr;
+
+    auto m = std::make_shared<TitleBlackboard::LetterMask>();
+    const float cell = (std::max)(desc.size / 64.0f, 0.005f);
+    const int pad = 6;
+    m->cell = cell;
+    m->x0 = info.min.x - static_cast<float>(pad) * cell;
+    m->y0 = info.min.y - static_cast<float>(pad) * cell;
+    m->w = std::clamp(static_cast<int>(std::ceil((info.max.x - info.min.x) / cell)) + pad * 2 + 1, 2, 512);
+    m->h = std::clamp(static_cast<int>(std::ceil((info.max.y - info.min.y) / cell)) + pad * 2 + 1, 2, 512);
+    const int W = m->w, H = m->h;
+    std::vector<uint8_t> solid(static_cast<size_t>(W) * H, 0);
+
+    // 三角形を塗る（側面は XY に面積が無いので自然に飛ばされる）
+    const size_t triCount = data.indices.empty() ? data.vertices.size() / 3 : data.indices.size() / 3;
+    for (size_t t = 0; t < triCount; ++t) {
+      uint32_t i0 = static_cast<uint32_t>(t * 3), i1 = i0 + 1, i2 = i0 + 2;
+      if (!data.indices.empty()) {
+        i0 = data.indices[t * 3];
+        i1 = data.indices[t * 3 + 1];
+        i2 = data.indices[t * 3 + 2];
+      }
+      if (i0 >= data.vertices.size() || i1 >= data.vertices.size() || i2 >= data.vertices.size()) continue;
+      const auto &a = data.vertices[i0].position, &b = data.vertices[i1].position, &c = data.vertices[i2].position;
+      const float area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+      if (std::fabs(area) < 1e-9f) continue;
+      const int gx0 = (std::max)(0, static_cast<int>(std::floor(((std::min)({a.x, b.x, c.x}) - m->x0) / cell)));
+      const int gx1 = (std::min)(W - 1, static_cast<int>(std::ceil(((std::max)({a.x, b.x, c.x}) - m->x0) / cell)));
+      const int gy0 = (std::max)(0, static_cast<int>(std::floor(((std::min)({a.y, b.y, c.y}) - m->y0) / cell)));
+      const int gy1 = (std::min)(H - 1, static_cast<int>(std::ceil(((std::max)({a.y, b.y, c.y}) - m->y0) / cell)));
+      const float sgn = area > 0.0f ? 1.0f : -1.0f;
+      for (int gy = gy0; gy <= gy1; ++gy) {
+        const float py = m->y0 + static_cast<float>(gy) * cell;
+        for (int gx = gx0; gx <= gx1; ++gx) {
+          const float px = m->x0 + static_cast<float>(gx) * cell;
+          const float e0 = ((b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x)) * sgn;
+          const float e1 = ((c.x - b.x) * (py - b.y) - (c.y - b.y) * (px - b.x)) * sgn;
+          const float e2 = ((a.x - c.x) * (py - c.y) - (a.y - c.y) * (px - c.x)) * sgn;
+          if (e0 >= 0.0f && e1 >= 0.0f && e2 >= 0.0f) solid[static_cast<size_t>(gy) * W + gx] = 1;
+        }
+      }
+    }
+
+    // 面取り距離（格子単位）：target と違う種類のセルまでの距離
+    auto chamfer = [&](uint8_t target) {
+      const float kInf = 1e6f, kD = 1.41421356f;
+      std::vector<float> d(static_cast<size_t>(W) * H, kInf);
+      for (size_t i = 0; i < d.size(); ++i) {
+        if (solid[i] != target) d[i] = 0.0f;
+      }
+      auto relax = [&](int x, int y, int nx, int ny, float w) {
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) return;
+        float &v = d[static_cast<size_t>(y) * W + x];
+        v = (std::min)(v, d[static_cast<size_t>(ny) * W + nx] + w);
+      };
+      for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+          relax(x, y, x - 1, y, 1.0f);
+          relax(x, y, x, y - 1, 1.0f);
+          relax(x, y, x - 1, y - 1, kD);
+          relax(x, y, x + 1, y - 1, kD);
+        }
+      }
+      for (int y = H - 1; y >= 0; --y) {
+        for (int x = W - 1; x >= 0; --x) {
+          relax(x, y, x + 1, y, 1.0f);
+          relax(x, y, x, y + 1, 1.0f);
+          relax(x, y, x + 1, y + 1, kD);
+          relax(x, y, x - 1, y + 1, kD);
+        }
+      }
+      return d;
+    };
+    const std::vector<float> dIn = chamfer(1);  // 文字の中 → いちばん近い外
+    const std::vector<float> dOut = chamfer(0); // 外 → いちばん近い文字
+    m->sdf.resize(static_cast<size_t>(W) * H);
+    for (size_t i = 0; i < m->sdf.size(); ++i) {
+      m->sdf[i] = solid[i] ? -(dIn[i] - 0.5f) * cell : (dOut[i] - 0.5f) * cell;
+    }
+    return m;
   }
 
   /// @brief タイトル文字列を 1 文字ずつ 3D 文字として生成し、letters_ に登録する
@@ -1684,6 +1786,9 @@ private:
       L.yaw = f.yaw;
       L.rotation = tr->rotation;
       L.topY = tr->position.y + f.depth * s * 0.5f;
+      L.mask = f.mask;
+      L.maskScale = s;
+      L.maskCenterY = (f.zMin + f.zMax) * 0.5f;
       L.visible = s > 0.05f && f.introY > -0.05f;
     }
   }
