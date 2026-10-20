@@ -6,8 +6,7 @@
     出力先: generated/package/<タイトル>_<日時>/ と同名の .zip（generated/ は .gitignore 済み）
 
     パッケージの構成（exe は「../project/」「Resources/」を作業ディレクトリ基準で読むため project/ を再現する）:
-        <パッケージ名>/
-            起動.bat              … project/ を作業ディレクトリにして ChasoApp.exe を起動
+        <パッケージ名>.zip       … zip 直下が project/（パッケージ名のフォルダは挟まない）
             project/
                 ChasoApp.exe, dxcompiler.dll
                 Resources/        … .blend などの制作用データは除外
@@ -133,11 +132,6 @@ if ($LASTEXITCODE -ge 8) {
 }
 Write-OK "Resources をコピーしました（除外: $($ExcludeDirs -join ', '), $($ExcludeFiles -join ', ')）"
 
-# 起動用バッチ（中身は ASCII のみ。exe は ../project/ と Resources/ を作業ディレクトリ基準で読む）
-$bat = "@echo off`r`ncd /d `"%~dp0project`"`r`nstart `"`" `"ChasoApp.exe`"`r`n"
-[System.IO.File]::WriteAllText((Join-Path $StageDir "起動.bat"), $bat, [System.Text.Encoding]::ASCII)
-Write-OK "起動.bat を作成しました"
-
 $sizeMB = [math]::Round(((Get-ChildItem $StageDir -Recurse -File | Measure-Object Length -Sum).Sum / 1MB), 1)
 Write-Info "フォルダサイズ: $sizeMB MB"
 
@@ -149,10 +143,11 @@ if (-not $NoZip) {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }
     # 日本語ファイル名が化けないよう UTF-8 でエントリ名を書く
+    # includeBaseDirectory=$false: zip 直下を project/ にする（パッケージ名のフォルダを挟まない）
     [System.IO.Compression.ZipFile]::CreateFromDirectory(
         $StageDir, $ZipPath,
         [System.IO.Compression.CompressionLevel]::Optimal,
-        $true,
+        $false,
         [System.Text.Encoding]::UTF8)
     $zipMB = [math]::Round((Get-Item $ZipPath).Length / 1MB, 1)
     Write-OK "zip を作成しました: $ZipPath ($zipMB MB)"
