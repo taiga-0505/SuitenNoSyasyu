@@ -16,6 +16,7 @@
 #include "Common/Log/Log.h"
 #include <format>
 #include <cmath>
+#include <algorithm>
 
 namespace RC {
 
@@ -82,6 +83,29 @@ void DrawCircle(const Vector2 &center, float radius, const Vector4 &color,
 
   float thickness = 1.0f;
   prim->SetCircle(center, radius, fillMode, thickness, color, feather);
+  prim->Draw(ctx.CL());
+}
+
+void DrawRing(const Vector2 &center, float innerRadius, float thickness,
+              const Vector4 &color, float feather) {
+  auto &ctx = GetRenderContext();
+  if (!ctx.IsInitialized() || !ctx.CL()) {
+    return;
+  }
+
+  if (!ctx.BindPipeline("primitive2d")) {
+    return;
+  }
+
+  auto *prim = ctx.EnsurePrimitive2D();
+  if (!prim) {
+    return;
+  }
+
+  // 枠線モードの円は「半径 r の円周を中心に太さ thickness の帯」なので、
+  // 円周を帯の中央（innerRadius + thickness / 2）に置く
+  thickness = (std::max)(thickness, 1.0f);
+  prim->SetCircle(center, innerRadius + thickness * 0.5f, kWire, thickness, color, feather);
   prim->Draw(ctx.CL());
 }
 

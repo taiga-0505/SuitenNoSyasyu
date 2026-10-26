@@ -9,8 +9,84 @@
 #include <iostream>
 #include <sstream>
 #include <iomanip>
+#include <nlohmann/json.hpp>
+#include "Common/ResourcePath.h"
 
 namespace {
+  /// @brief 配布 exe で残すログファイルの最大数（古いものから削除）
+  constexpr size_t kMaxPackagedLogFiles = 20;
+
+  /// @brief 配布パッケージの exe を直接起動したかどうか
+  /// @details 開発時: exe は generated/outputs/<構成>/ にあり、作業ディレクトリは project/（VS / build_and_run.ps1）。
+  ///          配布時: exe は project/ にあり、ダブルクリックで起動すると作業ディレクトリ = exe のフォルダになる。
+  ///          よって「exe のフォルダ == 作業ディレクトリ」なら配布 exe の起動とみなす。
+  bool IsPackagedLaunch() {
+    namespace fs = std::filesystem;
+    std::wstring buf(MAX_PATH, L'\0');
+    DWORD len = 0;
+    while ((len = GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()))) >= buf.size()) {
+      buf.resize(buf.size() * 2);
+    }
+    if (len == 0) return false;
+    buf.resize(len);
+    std::error_code ec;
+    const bool same = fs::equivalent(fs::path(buf).parent_path(), fs::current_path(ec), ec);
+    return !ec && same;
+  }
+
+  /// @brief AppConfig.json の title（Release 用）を読む。読めなければ "ChasoApp"
+  std::string ReadReleaseTitle() {
+    std::string title = "ChasoApp";
+    std::ifstream ifs(Chaso::kAppConfigPath);
+    if (!ifs) return title;
+    try {
+      nlohmann::json j;
+      ifs >> j;
+      if (j.contains("title")) {
+        const auto &v = j["title"];
+        if (v.is_string()) {
+          title = v.get<std::string>();
+        } else if (v.is_object() && v.contains("Release") && v["Release"].is_string()) {
+          title = v["Release"].get<std::string>();
+        }
+      }
+    } catch (...) {
+    }
+    return title;
+  }
+
+  /// @brief 配布 exe 用のログフォルダ（%LOCALAPPDATA%\<タイトル>\logs）を返す。取得できなければ空
+  std::filesystem::path GetPackagedLogDir() {
+    wchar_t buf[MAX_PATH]{};
+    const DWORD len = GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH) return {};
+
+    // タイトルをフォルダ名に使えるようにする（UTF-8 → wstring、禁止文字は '_'）
+    const std::string title = ReadReleaseTitle();
+    const int size = MultiByteToWideChar(CP_UTF8, 0, title.c_str(), -1, nullptr, 0);
+    std::wstring name(size > 0 ? size - 1 : 0, L'\0');
+    if (size > 1) MultiByteToWideChar(CP_UTF8, 0, title.c_str(), -1, name.data(), size);
+    for (auto &c : name) {
+      if (c < 32 || wcschr(L"<>:\"/\\|?*", c)) c = L'_';
+    }
+    if (name.empty()) name = L"ChasoApp";
+
+    return std::filesystem::path(buf) / name / L"logs";
+  }
+
+  /// @brief 古いログファイルを削除して最大数に収める
+  void PruneOldLogs(const std::filesystem::path &dir, size_t keep) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    std::vector<fs::path> logs;
+    for (const auto &e : fs::directory_iterator(dir, ec)) {
+      if (e.is_regular_file(ec) && e.path().extension() == ".log") logs.push_back(e.path());
+    }
+    if (logs.size() <= keep) return;
+    std::sort(logs.begin(), logs.end()); // ファイル名が日時なので名前順 = 古い順
+    for (size_t i = 0; i < logs.size() - keep; ++i) fs::remove(logs[i], ec);
+  }
+
   /// @brief 未処理例外をログに書き出してからプロセスを終了させる例外フィルター
   /// @param exceptionPointers 例外情報
   /// @return EXCEPTION_EXECUTE_HANDLER（プロセスを終了させる）
@@ -78,8 +154,20 @@ void Log::Initialize() {
   SetUnhandledExceptionFilter(UnhandledExceptionFilterFunc);
 
   // ログのディレクトリを用意
-  std::filesystem::create_directory("../logs");
-  std::filesystem::create_directory("../logs/app");
+  //   開発環境から起動（VS / build_and_run.ps1。構成問わず）: ../logs/app/
+  //   配布パッケージの exe を直接起動                         : %LOCALAPPDATA%\<AppConfig の title.Release>\logs
+  std::error_code ec;
+  std::filesystem::path logDir = "../logs/app";
+  if (IsPackagedLaunch()) {
+    if (std::filesystem::path appData = GetPackagedLogDir(); !appData.empty()) {
+      std::filesystem::create_directories(appData, ec);
+      if (!ec) {
+        logDir = appData;
+        PruneOldLogs(logDir, kMaxPackagedLogFiles - 1); // これから 1 つ作るので 1 つ空ける
+      }
+    }
+  }
+  std::filesystem::create_directories(logDir, ec);
   // 現在の時間を取得（UTC）
   std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
   // ログファイルの名前にコンマ何秒はいらないので、削って秒にする
@@ -90,9 +178,12 @@ void Log::Initialize() {
   // format を使って「年月日_時分秒」の文字列に変換
   std::string dateString = std::format("{:%Y-%m-%d_%H-%M-%S}", localTime);
   // 時間を使ってファイル名を決定
-  std::string logFilePath = std::string("../logs/app/") + dateString + ".log";
-  // ファイルを開いて保持する
+  const std::filesystem::path logFilePath = logDir / (dateString + ".log");
+  // ファイルを開いて保持する（path で渡すので日本語フォルダ名でも開ける）
   sLogFile_.open(logFilePath, std::ios::out | std::ios::trunc);
+
+  const std::u8string u8path = logFilePath.generic_u8string();
+  Print("[Log] Log file: " + std::string(u8path.begin(), u8path.end()));
 }
 
 void Log::Finalize() {

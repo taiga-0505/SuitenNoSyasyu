@@ -182,6 +182,9 @@
     <ClInclude Include="..\Application\Game\Framework\ExposureFlash.h">
       <Filter>Game\Framework</Filter>
     </ClInclude>
+    <ClInclude Include="..\Application\Game\Framework\DeathScreenFx.h">
+      <Filter>Game\Framework</Filter>
+    </ClInclude>
     <ClInclude Include="..\Chaso\Game\Scene\Fade\Fade.h">
       <Filter>Game\Scene\Fade</Filter>
     </ClInclude>

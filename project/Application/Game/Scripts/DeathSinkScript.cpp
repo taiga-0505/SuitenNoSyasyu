@@ -5,6 +5,7 @@
 #include "Scene.h"
 #include "Game/Framework/WaterCameraFx.h"
 #include "Game/Framework/TransitionDemo.h"
+#include "Game/Framework/DeathScreenFx.h"
 
 #if RC_ENABLE_IMGUI
 #include "imgui/imgui.h"
@@ -34,9 +35,15 @@
 ///        遷移表（Resources/SceneFlow.json）のきっかけ "gameover" で遷移する（通常は Result へ "dive"）。
 ///        Result 側は深海から浮上して始まる。
 ///
+///   画面演出（DeathScreenFx）:
+///     力尽きた瞬間からレンズに血が付き（水に入ると洗い流される）、色が抜けていく。
+///     沈み始めると 2 回重い瞬きをして、darkDepth に着く（画面が暗くなりきる）頃に瞼が閉じきる。
+///     遷移は瞼が閉じきるまで待つ。
+///     瞼は GAME OVER の文字より手前に描くので、スクリプト順は RailShooterController の後に置くこと。
+///
 ///   JSON (scriptDataList):
 ///     "enabled" / "delay" / "fallTime" / "sinkTime" / "depth" / "lookUpPitch" / "tiltTime" /
-///     "roll" / "darkDepth" / "bubbles"
+///     "roll" / "darkDepth" / "bubbles" / "screenFx"（DeathScreenFx の調整値）
 class DeathSinkScript : public ScriptableEntity {
 public:
   bool enabled = true;
@@ -49,6 +56,7 @@ public:
   float roll = 0.18f;         ///< 沈みながら横に傾く量（rad）
   float darkDepth = 24.0f;    ///< この深さで遷移する（UnderwaterLook の deepDepth と揃える）
   bool bubbles = true;
+  DeathScreenFx screenFx;     ///< 血・色が抜ける・瞬き
 
   /// @brief 設定項目を JSON に書き出す
   /// @return 設定項目を格納した JSON
@@ -56,7 +64,7 @@ public:
     return {{"enabled", enabled},   {"delay", delay},       {"fallTime", fallTime},
             {"sinkTime", sinkTime}, {"depth", depth},       {"lookUpPitch", lookUpPitch},
             {"tiltTime", tiltTime}, {"roll", roll},         {"darkDepth", darkDepth},
-            {"bubbles", bubbles}};
+            {"bubbles", bubbles},   {"screenFx", screenFx.ToJson()}};
   }
 
   /// @brief JSON から設定項目を読み込む
@@ -75,6 +83,7 @@ public:
     f("roll", roll);
     f("darkDepth", darkDepth);
     b("bubbles", bubbles);
+    if (j.contains("screenFx") && j["screenFx"].is_object()) screenFx.FromJson(j["screenFx"]);
   }
 
 #if RC_ENABLE_IMGUI
@@ -92,6 +101,8 @@ public:
     ImGui::DragFloat("Roll", &roll, 0.01f, -1.0f, 1.0f);
     ImGui::DragFloat("Dark Depth (m)", &darkDepth, 0.5f, 1.0f, 200.0f);
     ImGui::Checkbox("Bubbles", &bubbles);
+    ImGui::SeparatorText("Screen FX (血・色抜け・瞬き)");
+    screenFx.DrawImGui();
   }
 #endif
 
@@ -101,6 +112,8 @@ protected:
     phase_ = Phase::Idle;
     demo_ = false;
     demoTimer_ = 0.0f;
+    requestT_ = 0.0f;
+    screenFx.Clear(nullptr); // 状態だけ初期化（PostProcess はシーン切り替えで片付いている）
     if (Entity *self = GetEntity()) self->ClearTag(kOwnerTag); // 前回のプレイで保存された分を消す
     if (enabled && bubbles) bubbles_.Spawn(GetScene(), "DeathBubbles");
   }
@@ -134,6 +147,9 @@ protected:
       waterY_ = WaterCameraFx::FindWaterY(GetScene());
       phase_ = Phase::Wait;
       t_ = 0.0f;
+      requestT_ = 0.0f;
+      // 血はデモ（力尽きていない）では出さない。色抜けと瞬きは同じ見え方にする
+      screenFx.Begin(RC::GetRenderContext().GetPostProcess(), !demo_);
       Log::Print(demo_ ? "[DeathSinkScript] begin (transition demo)" : "[DeathSinkScript] begin");
     }
 
@@ -169,6 +185,7 @@ protected:
       // 着水の勢いのまま沈み、水の抵抗でゆっくりになっていく
       // 沈み始めた最初のフレームだけ泡を放出する
       if (t_ <= dt * 1.5f && bubbles) bubbles_.SetEmission(WaterCameraFx::Bubbles::kEmitPerFrame);
+      screenFx.StartBlink(TimeUntilDark()); // 沈み始めたら瞬きを開始（2 回目以降は無視される）
       const float u = t_ / (std::max)(sinkTime, 1e-3f);
       const float targetY = waterY_ - depth;
       tr->position.y = sinkStartY_ + (targetY - sinkStartY_) * WaterCameraFx::EaseOutQuad(u);
@@ -182,7 +199,10 @@ protected:
     case Phase::Done: {
       tr->position.y -= 2.0f * dt; // 遷移が始まるまで止まって見えないように
       UpdateTilt(*tr, dt);
-      if (!requested_) {
+      screenFx.StartBlink(0.0f); // Sink を 1 フレームで抜けた場合の保険（下限の長さで閉じる）
+      // 瞼が閉じきるまでは遷移を要求しない（閉じきった色＝Dive 遷移の色なので、そのままつながる）
+      if (!requested_ && screenFx.BlinkFinished()) {
+        requestT_ += dt;
         // 行き先と演出は遷移表のきっかけ "gameover"（GameMode の決着と同じ行）で引く
         if (resultTarget_.empty()) {
           if (demo_) {
@@ -197,11 +217,11 @@ protected:
           }
         }
         requested_ = !resultTarget_.empty() && RequestSceneChange(resultTarget_, resultTransition_);
-        if (!requested_ && t_ > 1.5f) {
+        if (!requested_ && requestT_ > 1.5f) {
           // 何らかの理由で通らない（遷移中など）。素の遷移で送る
           Log::Print("[DeathSinkScript] transition refused, falling back");
           requested_ = !resultTarget_.empty() && RequestSceneChange(resultTarget_);
-          if (!requested_ && t_ > 3.0f) {
+          if (!requested_ && requestT_ > 3.0f) {
             self->ClearTag(kOwnerTag);
             requested_ = true; // 諦める（DataDrivenScene 側の要求はもう出ないので、ここで止める）
           }
@@ -215,18 +235,37 @@ protected:
 
     // 泡をカメラに追従させる（Wait 中はまだ動かないので不要）
     if (phase_ != Phase::Wait) bubbles_.Follow(*tr, waterY_);
+
+    // 血・色抜け・瞬きの時間を進める（水に入ったら血を洗い流し始める）
+    screenFx.Update(RC::GetRenderContext().GetPostProcess(), dt, tr->position.y < waterY_);
   }
 
-  /// @brief 遷移担当タグを外し、泡を破棄する
+  /// @brief 瞼を描く（GAME OVER の文字より手前。スクリプト順で RailShooterController の後に呼ばれる）
+  void OnOverlayRender() override { screenFx.DrawLids(); }
+
+  /// @brief 遷移担当タグを外し、泡を破棄し、画面演出を元に戻す
   void OnDestroy() override {
     if (Entity *self = GetEntity()) self->ClearTag(kOwnerTag);
     bubbles_.Destroy();
+    screenFx.Clear(RC::GetRenderContext().GetPostProcess());
   }
 
 private:
   /// @brief 演出の進行段階
   enum class Phase { Idle = 0, Wait, Fall, Sink, Done };
   static constexpr const char *kOwnerTag = "result_transition_owner";
+
+  /// @brief 沈み始めてから darkDepth（画面が暗くなりきる深さ）に着くまでの見込み時間
+  /// @details Sink の深さは sinkStartY_ → waterY_ - depth を EaseOutQuad(t / sinkTime) で進むので、
+  ///          1 - (1 - u)^2 = frac を u について解いて sinkTime を掛ける。
+  /// @return 秒（すでに darkDepth より深いところで沈み始めたなら 0）
+  float TimeUntilDark() const {
+    const float d0 = (std::max)(0.0f, waterY_ - sinkStartY_); // 沈み始めの深さ
+    const float span = depth - d0;
+    if (span <= 1e-3f) return 0.0f;
+    const float frac = std::clamp((darkDepth - d0) / span, 0.0f, 1.0f);
+    return sinkTime * (1.0f - std::sqrt(1.0f - frac));
+  }
 
   /// @brief 水面を見上げる向きへ、少し横に傾きながらゆっくり回す
   /// @param tr 回転させるカメラの Transform
@@ -247,6 +286,7 @@ private:
   RC::Vector3 startPos_{};
   RC::Vector3 startRot_{};
   bool requested_ = false;
+  float requestT_ = 0.0f;    ///< 遷移の要求を出し始めてからの経過（要求が通らないときの保険用）
   bool demo_ = false;        ///< 遷移の見せ用デモで沈んでいる（TransitionDemo）
   float demoTimer_ = 0.0f;   ///< 開始演出が終わってからの経過（デモ用）
   std::string resultTarget_;    ///< 遷移表で引いた行き先（Done に入ってから 1 回だけ引く）

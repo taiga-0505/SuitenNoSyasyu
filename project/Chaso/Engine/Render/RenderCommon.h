@@ -1316,6 +1316,18 @@ void DrawBox(const Vector2 &pos1, const Vector2 &pos2, const Vector4 &color,
 void DrawCircle(const Vector2 &center, float radius, const Vector4 &color,
                 kFillMode fillMode = kFill, float feather = 1.0f);
 
+/// @brief 太さを指定してリング（円環）を描画する
+/// @details 内側の半径 innerRadius から外側へ thickness ピクセルの帯を塗る。
+///          feather は帯の外側（内側の穴の方向にも）へ広がるぼかし。
+///          太い帯で「円の外側」を塗れるので、円弧状の縁を持つ覆い（瞼など）に使える。
+/// @param center      中心（画面ピクセル座標）
+/// @param innerRadius 内側の半径（ピクセル）
+/// @param thickness   帯の太さ（ピクセル）
+/// @param color       色（RGBA）
+/// @param feather     アンチエイリアス幅（ピクセル）
+void DrawRing(const Vector2 &center, float innerRadius, float thickness,
+              const Vector4 &color, float feather = 1.0f);
+
 /// @brief 三角形を描画する
 /// @param pos1     頂点 1（画面ピクセル座標）
 /// @param pos2     頂点 2（画面ピクセル座標）
