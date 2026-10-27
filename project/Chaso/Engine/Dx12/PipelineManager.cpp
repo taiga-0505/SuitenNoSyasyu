@@ -1443,6 +1443,21 @@ void PipelineManager::RegisterDefaultPipelines() {
                     InputLayoutType::None, opt);
   }
 
+  // visionbleed：意識が遠のく視界（周辺から水彩のように滲むぼかしと二重像。b0 に bleed / ghost / pigment / time）
+  {
+    GPipelineOptions opt{};
+    opt.rootType = RootSignatureType::PostProcess;
+    opt.enableDepth = false;
+    opt.enableDepthWrite = false;
+    opt.enableAlphaBlend = false;
+    opt.cull = D3D12_CULL_MODE_NONE;
+
+    CreateFromFiles("visionbleed.none",
+                    fullscreenVs,
+                    L"Resources/Shader/VisionBleed/VisionBleed.PS.hlsl",
+                    InputLayoutType::None, opt);
+  }
+
   // ====================
   // コンピュートシェーダー
   // ====================

@@ -37,13 +37,23 @@
 ///
 ///   画面演出（DeathScreenFx）:
 ///     力尽きた瞬間からレンズに血が付き（水に入ると洗い流される）、色が抜けていく。
+///     視界の周辺から水彩のような滲み（なめらかなぼかし・色のにじみ・減光）が入り込み、沈むほど中央へ進む。
 ///     沈み始めると 2 回重い瞬きをして、darkDepth に着く（画面が暗くなりきる）頃に瞼が閉じきる。
+///     瞼が開き直るたびに一瞬二重に見え、ゆっくり 1 枚に戻る。
+///     沈むにつれて水面から差す光は細く弱くなり、上へ遠ざかっていく。
 ///     遷移は瞼が閉じきるまで待つ。
 ///     瞼は GAME OVER の文字より手前に描くので、スクリプト順は RailShooterController の後に置くこと。
 ///
+///   最後の息（breath*）:
+///     沈み始めてから瞼が閉じきるまでの breathAt の位置（既定は 1 回目の瞬きで瞼が開き直すところ。
+///     瞼が閉じている間に吐くと見えない）で、口元から大きめの泡を吐き、しばらくゴボゴボと漏らす。
+///     沈む速さが泡の上昇よりずっと速いので、泡はカメラの動きを引き継ぎ、カメラから見て
+///     ゆっくり昇っていくようにしてある（WaterCameraFx::BreathBurst）。
+///
 ///   JSON (scriptDataList):
 ///     "enabled" / "delay" / "fallTime" / "sinkTime" / "depth" / "lookUpPitch" / "tiltTime" /
-///     "roll" / "darkDepth" / "bubbles" / "screenFx"（DeathScreenFx の調整値）
+///     "roll" / "darkDepth" / "bubbles" / "breath" / "breathAt" / "breathCount" / "breathTime" /
+///     "breathTrail" / "screenFx"（DeathScreenFx の調整値）
 class DeathSinkScript : public ScriptableEntity {
 public:
   bool enabled = true;
@@ -56,15 +66,22 @@ public:
   float roll = 0.18f;         ///< 沈みながら横に傾く量（rad）
   float darkDepth = 24.0f;    ///< この深さで遷移する（UnderwaterLook の deepDepth と揃える）
   bool bubbles = true;
-  DeathScreenFx screenFx;     ///< 血・色が抜ける・瞬き
+  bool breath = true;         ///< 最後の息（大きな泡を一度に吐く）を出すか
+  float breathAt = 0.33f;     ///< 吐くタイミング（沈み始め 0 〜 瞼が閉じきる 1 の位置。既定は 1 回目の瞬きで開き直すところ）
+  int breathCount = 16;       ///< 吐き出しの 1 フレームあたりの泡の数（漏れはこの 1/5）
+  float breathTime = 0.1f;    ///< 吐き出しの長さ（秒）
+  float breathTrail = 0.5f;   ///< 吐いたあとにゴボゴボと漏れ続ける長さ（秒）
+  DeathScreenFx screenFx;     ///< 血・色が抜ける・瞬き・視界の滲み・水面の光
 
   /// @brief 設定項目を JSON に書き出す
   /// @return 設定項目を格納した JSON
   nlohmann::json Serialize() override {
-    return {{"enabled", enabled},   {"delay", delay},       {"fallTime", fallTime},
-            {"sinkTime", sinkTime}, {"depth", depth},       {"lookUpPitch", lookUpPitch},
-            {"tiltTime", tiltTime}, {"roll", roll},         {"darkDepth", darkDepth},
-            {"bubbles", bubbles},   {"screenFx", screenFx.ToJson()}};
+    return {{"enabled", enabled},     {"delay", delay},           {"fallTime", fallTime},
+            {"sinkTime", sinkTime},   {"depth", depth},           {"lookUpPitch", lookUpPitch},
+            {"tiltTime", tiltTime},   {"roll", roll},             {"darkDepth", darkDepth},
+            {"bubbles", bubbles},     {"breath", breath},         {"breathAt", breathAt},
+            {"breathCount", breathCount}, {"breathTime", breathTime}, {"breathTrail", breathTrail},
+            {"screenFx", screenFx.ToJson()}};
   }
 
   /// @brief JSON から設定項目を読み込む
@@ -83,6 +100,11 @@ public:
     f("roll", roll);
     f("darkDepth", darkDepth);
     b("bubbles", bubbles);
+    b("breath", breath);
+    f("breathAt", breathAt);
+    if (j.contains("breathCount") && j["breathCount"].is_number_integer()) breathCount = j["breathCount"].get<int>();
+    f("breathTime", breathTime);
+    f("breathTrail", breathTrail);
     if (j.contains("screenFx") && j["screenFx"].is_object()) screenFx.FromJson(j["screenFx"]);
   }
 
@@ -101,7 +123,13 @@ public:
     ImGui::DragFloat("Roll", &roll, 0.01f, -1.0f, 1.0f);
     ImGui::DragFloat("Dark Depth (m)", &darkDepth, 0.5f, 1.0f, 200.0f);
     ImGui::Checkbox("Bubbles", &bubbles);
-    ImGui::SeparatorText("Screen FX (血・色抜け・瞬き)");
+    ImGui::SeparatorText("Last Breath (最後の息)");
+    ImGui::Checkbox("Breath", &breath);
+    ImGui::SliderFloat("Breath At (0-1)", &breathAt, 0.0f, 1.0f);
+    ImGui::SliderInt("Breath Count / frame", &breathCount, 1, 40);
+    ImGui::DragFloat("Breath Time (s)", &breathTime, 0.01f, 0.02f, 1.0f);
+    ImGui::DragFloat("Breath Trail (s)", &breathTrail, 0.05f, 0.0f, 3.0f);
+    ImGui::SeparatorText("Screen FX (血・色抜け・瞬き・滲み・水面の光)");
     screenFx.DrawImGui();
   }
 #endif
@@ -113,9 +141,11 @@ protected:
     demo_ = false;
     demoTimer_ = 0.0f;
     requestT_ = 0.0f;
+    breathed_ = false;
     screenFx.Clear(nullptr); // 状態だけ初期化（PostProcess はシーン切り替えで片付いている）
     if (Entity *self = GetEntity()) self->ClearTag(kOwnerTag); // 前回のプレイで保存された分を消す
     if (enabled && bubbles) bubbles_.Spawn(GetScene(), "DeathBubbles");
+    if (enabled && breath) breath_.Spawn(GetScene(), "DeathBreath");
   }
 
   /// @brief 力尽きたこと（またはデモ開始）を検知し、待機→落下→沈降→遷移要求の順にカメラを動かす
@@ -148,6 +178,7 @@ protected:
       phase_ = Phase::Wait;
       t_ = 0.0f;
       requestT_ = 0.0f;
+      breathed_ = false;
       // 血はデモ（力尽きていない）では出さない。色抜けと瞬きは同じ見え方にする
       screenFx.Begin(RC::GetRenderContext().GetPostProcess(), !demo_);
       Log::Print(demo_ ? "[DeathSinkScript] begin (transition demo)" : "[DeathSinkScript] begin");
@@ -236,6 +267,14 @@ protected:
     // 泡をカメラに追従させる（Wait 中はまだ動かないので不要）
     if (phase_ != Phase::Wait) bubbles_.Follow(*tr, waterY_);
 
+    // 最後の息：沈み始めてから breathAt の位置で 1 回だけ吐く（水中にいるときだけ）
+    if (breath && !breathed_ && screenFx.Blinking() && screenFx.SinkProgress() >= breathAt &&
+        tr->position.y < waterY_) {
+      breath_.Trigger(static_cast<uint32_t>((std::max)(breathCount, 1)), breathTime, breathTrail);
+      breathed_ = true;
+    }
+    breath_.Update(*tr, waterY_, dt);
+
     // 血・色抜け・瞬きの時間を進める（水に入ったら血を洗い流し始める）
     screenFx.Update(RC::GetRenderContext().GetPostProcess(), dt, tr->position.y < waterY_);
   }
@@ -247,6 +286,7 @@ protected:
   void OnDestroy() override {
     if (Entity *self = GetEntity()) self->ClearTag(kOwnerTag);
     bubbles_.Destroy();
+    breath_.Destroy();
     screenFx.Clear(RC::GetRenderContext().GetPostProcess());
   }
 
@@ -293,6 +333,8 @@ private:
   std::string resultTransition_; ///< 遷移表で引いた演出
   static constexpr const char *kTriggerGameOver = "gameover"; ///< 遷移表のきっかけ名
   WaterCameraFx::Bubbles bubbles_;
+  WaterCameraFx::BreathBurst breath_; ///< 最後の息
+  bool breathed_ = false;             ///< 今回の沈降で最後の息を吐いたか
 };
 
 REGISTER_SCRIPT(DeathSinkScript)

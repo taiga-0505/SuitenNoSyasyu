@@ -269,6 +269,170 @@ private:
   std::weak_ptr<Entity> entity_; ///< エミッタのエンティティ
 };
 
+/// @brief 最後の息。カメラのすぐ前・少し下（口のあたり）から大きめの泡を吐き出す
+/// @details 力尽きて沈む途中に 1 回だけ使う（DeathSinkScript）。
+///          沈む速さ（初速で 20m/s 近い）に対して泡の上昇（数 m/s）が遅すぎるため、
+///          ワールドに置いたまま昇らせると、画面からは一瞬で上へ吹き飛んで見えなくなる。
+///          そこで射出のたびにカメラの今の移動量を泡の速度へ足し（速度の継承）、
+///          さらにカメラの減速ぶんを毎フレーム重力（負＝上向き）として全部の泡に掛けて、
+///          カメラから見て一定の速さでゆっくり昇っていくようにしている
+///          （重力を掛けないと、減速するカメラに泡が追い越されて「落ちていく」ように見える）。
+///          GPU パーティクルは水面で消えないので、ワールドでの上昇速度と深さから寿命を決め、
+///          水面に届く前に消えるようにしてある（沈んでいる間は泡も下へ動くので、まず届かない）。
+class BreathBurst {
+public:
+  static constexpr float kRelativeRise = 0.03f; ///< カメラから見た上昇速度（1 フレームあたり。60fps で ≒ 1.8 m/s）
+  static constexpr float kMaxLife = 1.5f;       ///< 寿命の上限（秒）
+  static constexpr float kMaxGravity = 60.0f;   ///< 重力の補正の上限（シーンの巻き戻しなどで跳ねないように）
+  static constexpr float kSurfaceMargin = 1.0f; ///< 水面からこの距離（m）手前で消えきるようにする
+  static constexpr float kMouthAhead = 1.6f;    ///< 口元：視線の何 m 先か
+  static constexpr float kMouthDown = 0.45f;    ///< 口元：視点から何 m 下か
+
+  /// @brief エミッタを作る（初期化で一瞬止まるので、演出の直前ではなく OnCreate で呼ぶ）
+  /// @param scene エミッタを作るシーン（nullptr なら何もしない）
+  /// @param name  作るエンティティの名前
+  /// @note 既にエミッタを持っている場合は何もしない。作った直後は射出数 0。
+  void Spawn(Scene *scene, const std::string &name) {
+    if (!scene || !entity_.expired()) return;
+    auto e = scene->CreateEntity(name);
+    auto &tr = e->AddComponent<TransformComponent>();
+    tr.position = {0.0f, -200.0f, 0.0f}; // 使うまでは画面外
+    auto &gpu = e->AddComponent<GPUParticleComponent>();
+    if (auto *ps = gpu.particleSystem.get()) {
+      ps->SetPipelinePrefix("gpu_particle_bubble");
+      ps->SetParticleType(ParticleType::Default);
+      ps->SetBlendMode(kBlendModeNormal);
+      ps->SetMaxParticles(512);
+      ps->SetEmitCount(0);
+      ps->emitterShape_ = EmitterShape::Sphere;
+      ps->shapeRadius_ = 0.35f;            // 口元から一塊で出る
+      ps->baseVelocity_ = {0.0f, kRelativeRise, 0.0f};
+      ps->velocityVariance_ = 0.012f;      // 少しばらけて揺れながら昇る
+      ps->gravity_ = 0.0f;
+      ps->minLifeTime_ = kMaxLife * 0.6f;
+      ps->maxLifeTime_ = kMaxLife;
+      ps->minScale_ = 0.05f;               // 至近なので小さめでも大きく見える
+      ps->maxScale_ = 0.26f;
+      ps->startColor_ = {0.92f, 0.98f, 1.0f, 0.9f};
+      ps->endColor_ = {0.92f, 0.98f, 1.0f, 0.0f};
+    }
+    scene->InitDynamicEntityRuntime(*e);
+    entity_ = e;
+  }
+
+  /// @brief 吐き出す（以後 Update で射出数を時間とともに落としていく）
+  /// @param burstCount 吐き出しの 1 フレームあたりの射出数
+  /// @param burstTime  吐き出しの長さ（秒）
+  /// @param trailTime  吐いたあとにゴボゴボと漏れ続ける長さ（秒。射出数は吐き出しの 1/5）
+  void Trigger(uint32_t burstCount, float burstTime, float trailTime) {
+    burstCount_ = (std::max)(burstCount, 1u);
+    burstTime_ = (std::max)(burstTime, 0.0f);
+    trailTime_ = (std::max)(trailTime, 0.0f);
+    t_ = 0.0f;
+    active_ = true;
+  }
+
+  /// @brief 毎フレーム呼ぶ（吐いていない間も、カメラの移動量を測るために呼ぶ）
+  /// @param cam    追従するカメラの Transform
+  /// @param waterY 水面のワールド Y
+  /// @param dt     経過時間（秒）
+  void Update(const TransformComponent &cam, float waterY, float dt) {
+    // カメラの 1 フレームあたりの移動量（パーティクルの速度は 1 フレームあたりの移動量）
+    RC::Vector3 camStep = {0.0f, 0.0f, 0.0f};
+    if (hasPrev_) {
+      camStep = {cam.position.x - prevCam_.x, cam.position.y - prevCam_.y, cam.position.z - prevCam_.z};
+    }
+    const float stepChangeY = hasPrevStep_ ? camStep.y - prevStepY_ : 0.0f;
+    prevCam_ = cam.position;
+    prevStepY_ = camStep.y;
+    hasPrevStep_ = hasPrev_;
+    hasPrev_ = true;
+    if (dt <= 0.0f) return;
+    if (!active_ && aliveT_ <= 0.0f) return;
+
+    auto e = entity_.lock();
+    if (!e) { active_ = false; aliveT_ = 0.0f; return; }
+    auto *tr = e->GetComponent<TransformComponent>();
+    auto *gpu = e->GetComponent<GPUParticleComponent>();
+    GPUParticle *ps = gpu ? gpu->particleSystem.get() : nullptr;
+    if (!tr || !ps) { active_ = false; aliveT_ = 0.0f; return; }
+
+    // カメラの減速（移動量の変化）を、泡全体への重力として掛ける。
+    // UpdateParticle.CS は velocity.y -= gravity * dt なので、変化量 stepChangeY を足すには
+    // gravity = -stepChangeY / dt。最後に吐いた泡が消えきるまで続ける。
+    aliveT_ -= dt;
+    if (aliveT_ > 0.0f) {
+      ps->gravity_ = std::clamp(-stepChangeY / dt, -kMaxGravity, kMaxGravity);
+    } else {
+      ps->gravity_ = 0.0f;
+    }
+    if (!active_) return;
+
+    // 口元：視線の少し先・少し下（rotation.x は +π/2 で真下、負で見上げ。y はヨー）
+    const float rx = cam.rotation.x, ry = cam.rotation.y;
+    const RC::Vector3 fwd = {std::sin(ry) * std::cos(rx), -std::sin(rx), std::cos(ry) * std::cos(rx)};
+    tr->position = {cam.position.x + fwd.x * kMouthAhead,
+                    cam.position.y + fwd.y * kMouthAhead - kMouthDown,
+                    cam.position.z + fwd.z * kMouthAhead};
+
+    // 速度の継承：カメラと一緒に動きつつ、カメラから見て kRelativeRise で昇る
+    ps->baseVelocity_ = {camStep.x, camStep.y + kRelativeRise, camStep.z};
+
+    // 寿命：ワールドで上へ動いているときだけ、水面に届く前に消えるよう縮める
+    const float depth = waterY - tr->position.y;
+    const float upPerSec = (std::max)(ps->baseVelocity_.y, 0.0f) / dt;
+    float life = kMaxLife;
+    if (upPerSec > 0.01f) life = (std::min)(life, (depth - kSurfaceMargin) / upPerSec);
+    if (life < 0.3f) { // 浅すぎる：吐いても水面から飛び出すだけなので出さない
+      Stop(*ps);
+      return;
+    }
+    ps->maxLifeTime_ = life;
+    ps->minLifeTime_ = life * 0.6f;
+
+    t_ += dt;
+    if (t_ <= burstTime_) {
+      ps->SetEmitCount(burstCount_);
+    } else if (t_ <= burstTime_ + trailTime_) {
+      ps->SetEmitCount((std::max)(burstCount_ / 5u, 1u));
+    } else {
+      Stop(*ps);
+      return;
+    }
+    aliveT_ = life + dt; // 今フレームに吐いた泡が消えきるまで重力の補正を続ける
+  }
+
+  /// @brief エミッタのエンティティを破棄する
+  void Destroy() {
+    if (auto e = entity_.lock()) e->Destroy();
+    entity_.reset();
+    active_ = false;
+    aliveT_ = 0.0f;
+    hasPrev_ = false;
+    hasPrevStep_ = false;
+  }
+
+private:
+  /// @brief 射出を止める
+  /// @param ps 対象のパーティクルシステム
+  void Stop(GPUParticle &ps) {
+    ps.SetEmitCount(0);
+    active_ = false;
+  }
+
+  std::weak_ptr<Entity> entity_; ///< エミッタのエンティティ
+  uint32_t burstCount_ = 0;      ///< 吐き出しの射出数
+  float burstTime_ = 0.0f;       ///< 吐き出しの長さ（秒）
+  float trailTime_ = 0.0f;       ///< 漏れの長さ（秒）
+  float t_ = 0.0f;               ///< 吐き始めてからの経過（秒）
+  bool active_ = false;          ///< 出している最中か
+  float aliveT_ = 0.0f;          ///< 吐いた泡がまだ残っている見込みの秒数（重力の補正を続ける）
+  RC::Vector3 prevCam_{};        ///< 前フレームのカメラ位置（移動量を測る）
+  float prevStepY_ = 0.0f;       ///< 前フレームのカメラの縦の移動量（減速を測る）
+  bool hasPrev_ = false;         ///< prevCam_ が有効か
+  bool hasPrevStep_ = false;     ///< prevStepY_ が有効か
+};
+
 // ------------------------------------------------------------------
 // 飛び込み
 // ------------------------------------------------------------------

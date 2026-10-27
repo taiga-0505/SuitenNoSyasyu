@@ -40,6 +40,7 @@ const char* ToString(PostEffectType type) {
   case PostEffectType::ScreenDroplets:return "ScreenDroplets";
   case PostEffectType::BloodOverlay:return "BloodOverlay";
   case PostEffectType::InkOverlay:  return "InkOverlay";
+  case PostEffectType::VisionBleed: return "VisionBleed";
   case PostEffectType::None:      return "None";
   default:                        return "Unknown";
   }
@@ -134,6 +135,9 @@ void PostProcess::Initialize(Dx12Core *dxCore,
 
   pipelineInkOverlay_ = pipelineManager_->Get("inkoverlay.none");
   assert(pipelineInkOverlay_ && "Failed to get inkoverlay pipeline");
+
+  pipelineVisionBleed_ = pipelineManager_->Get("visionbleed.none");
+  assert(pipelineVisionBleed_ && "Failed to get visionbleed pipeline");
 
   // CBuffer 初期化
   D3D12_HEAP_PROPERTIES uploadHeap{D3D12_HEAP_TYPE_UPLOAD};
@@ -1226,6 +1230,16 @@ void PostProcess::SetInkOverlayColor(float r, float g, float b, float opacity) {
 }
 
 // ============================================================================
+// VisionBleed パラメータ
+// ============================================================================
+
+void PostProcess::SetVisionBleed(float bleed, float ghost, float pigment) {
+  visionBleed_ = std::clamp(bleed, 0.0f, 1.0f);
+  visionGhost_ = std::clamp(ghost, 0.0f, 0.1f);
+  visionPigment_ = std::clamp(pigment, 0.0f, 1.0f);
+}
+
+// ============================================================================
 void PostProcess::InitDissolveNoiseTextures() {
   if (dissolveNoiseInitialized_) return;
   dissolveNoiseInitialized_ = true;
@@ -1368,6 +1382,8 @@ GraphicsPipeline *PostProcess::GetPipelineForEffect(PostEffectType type) {
     return pipelineBloodOverlay_;
   case PostEffectType::InkOverlay:
     return pipelineInkOverlay_;
+  case PostEffectType::VisionBleed:
+    return pipelineVisionBleed_;
   case PostEffectType::None:
   default:
     return pipelineCopy_;
@@ -1447,6 +1463,11 @@ void PostProcess::DrawSinglePass(ID3D12GraphicsCommandList *cmdList,
     constants.param1 = *(uint32_t *)&bloomIntensity_;
     constants.param2 = *(uint32_t *)&bloomRadius_;
     constants.param3 = *(uint32_t *)&bloomKnee_;
+  } else if (effectType == PostEffectType::VisionBleed) {
+    constants.param0 = *(uint32_t *)&visionBleed_;
+    constants.param1 = *(uint32_t *)&visionGhost_;
+    constants.param2 = *(uint32_t *)&visionPigment_;
+    constants.param3 = *(uint32_t *)&randomTime_; // 境界のうねり・色ムラの時間
   }
 
   cmdList->SetGraphicsRoot32BitConstants(1, 4, &constants, 0);
@@ -2262,6 +2283,23 @@ void PostProcess::DrawImGui([[maybe_unused]] const char *label) {
       if (ImGui::SliderFloat("Ink Opacity (不透明度)", &inkColor_[3], 0.0f, 1.0f)) {
         SetInkOverlayColor(inkColor_[0], inkColor_[1], inkColor_[2], inkColor_[3]);
       }
+      ImGui::Unindent();
+    }
+
+    bool visionBleed = HasEffect(PostEffectType::VisionBleed);
+    if (ImGui::Checkbox("VisionBleed (意識が遠のく視界)", &visionBleed)) {
+      if (visionBleed) {
+        AddEffect(PostEffectType::VisionBleed);
+      } else {
+        RemoveEffect(PostEffectType::VisionBleed);
+      }
+    }
+    if (visionBleed) {
+      ImGui::Indent();
+      ImGui::TextDisabled("ゲーム中は DeathScreenFx が毎フレーム上書きします");
+      ImGui::SliderFloat("Bleed (周辺からの滲み)", &visionBleed_, 0.0f, 1.0f);
+      ImGui::SliderFloat("Ghost (二重像のずれ UV)", &visionGhost_, 0.0f, 0.05f, "%.4f");
+      ImGui::SliderFloat("Pigment (色ムラ)", &visionPigment_, 0.0f, 1.0f);
       ImGui::Unindent();
     }
 

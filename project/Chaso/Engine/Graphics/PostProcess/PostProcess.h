@@ -37,6 +37,7 @@ enum class PostEffectType {
   ScreenDroplets, ///< レンズ水滴（水上・水中の遷移や着水時にレンズへ付いて流れる水滴）
   BloodOverlay, ///< 被弾・瀕死のときに画面の周辺へ付く血（手続き型。テクスチャ不要）
   InkOverlay,   ///< タコの墨がレンズに貼り付いて視界を塞ぐ（手続き型。テクスチャ不要）
+  VisionBleed,  ///< 意識が遠のく視界（周辺から水彩のように滲むぼかし・色のにじみと二重像。手続き型）
 };
 
 /// @class PostProcess
@@ -386,6 +387,19 @@ public:
   /// @param z 向きの Z 成分
   void SetLightShaftSunDirection(float x, float y, float z);
 
+  /// @brief 光柱全体の強さを取得する
+  /// @return 強さ
+  float GetLightShaftIntensity() const { return lightShaftIntensity_; }
+  /// @brief 深さによる指数減衰の強さを取得する
+  /// @return 減衰の強さ
+  float GetLightShaftDensity() const { return lightShaftDensity_; }
+  /// @brief 光柱の断面のコントラストを取得する
+  /// @return コントラスト
+  float GetLightShaftContrast() const { return lightShaftContrast_; }
+  /// @brief Caustics 全体の強さを取得する
+  /// @return 強さ
+  float GetCausticsIntensity() const { return causticsIntensity_; }
+
   /// @brief 模様の密度・速度・水面高さを Caustics と同期させる
   /// @details 光柱の断面と床の網目は同じパターンを共有しているため、
   ///          scale / speed / waterHeight がズレると位置が合わなくなる。
@@ -498,6 +512,17 @@ public:
   ///          毎回まったく同じ形の血が出る。種はここが唯一の持ち主。
   void RerollBloodOverlaySplatter();
 
+  // ===========================
+  // VisionBleed パラメータ
+  // ===========================
+
+  /// @brief 意識が遠のく視界の強さをまとめて設定する
+  /// @details b0 のルート定数で渡すので CBuffer は持たない。毎フレーム呼んでよい。
+  /// @param bleed 周辺からの滲み（0.0 でなし 〜 1.0 で中央まで滲む）
+  /// @param ghost 二重像のずれ（UV。画面幅に対する割合。0 でなし。0.02 で 720p 時に約 26px）
+  /// @param pigment 濡れた領域の色ムラの強さ（0.0〜1.0）
+  void SetVisionBleed(float bleed, float ghost, float pigment);
+
   /// @brief ポストエフェクトを 1 つだけ設定する
   /// @details 既存のエフェクトスタックをクリアして、指定されたエフェクトのみを設定する。
   /// @param type 設定するエフェクトの種類（None でエフェクトなし）
@@ -597,6 +622,7 @@ private:
   GraphicsPipeline *pipelineScreenDroplets_ = nullptr;    ///< ScreenDroplets 用
   GraphicsPipeline *pipelineBloodOverlay_ = nullptr;      ///< BloodOverlay 用
   GraphicsPipeline *pipelineInkOverlay_ = nullptr;        ///< InkOverlay 用
+  GraphicsPipeline *pipelineVisionBleed_ = nullptr;       ///< VisionBleed 用
 
   std::vector<PostEffectType> activeEffects_; ///< アクティブなエフェクトスタック（適用順）
 
@@ -721,6 +747,11 @@ private:
   float bloomIntensity_ = 0.85f; ///< 加算強度
   float bloomRadius_ = 4.0f;     ///< にじみの広がり（ピクセル）
   float bloomKnee_ = 0.35f;      ///< 閾値付近の柔らかさ
+
+  // VisionBleed パラメータ（b0 のルート定数 4 つ = bleed / ghost / pigment / time に収まるので CBuffer は持たない）
+  float visionBleed_ = 0.0f; ///< 周辺からの滲み（0〜1）
+  float visionGhost_ = 0.0f; ///< 二重像のずれ（UV）
+  float visionPigment_ = 0.0f; ///< 濡れた領域の色ムラの強さ（0〜1）
 
   // SSAO パラメータ
   // NOTE: projectionInverse を含むので専用 CBuffer。行列は SetProjectionInverse が毎フレーム流す。

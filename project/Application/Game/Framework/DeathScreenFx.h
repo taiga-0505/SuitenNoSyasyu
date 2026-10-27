@@ -7,12 +7,13 @@
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cmath>
+#include <initializer_list>
 
 #if RC_ENABLE_IMGUI
 #include "imgui/imgui.h"
 #endif
 
-/// @brief 力尽きたときの画面演出（レンズの血・色が抜ける・瞬き）をまとめて管理する
+/// @brief 力尽きたときの画面演出（レンズの血・色が抜ける・瞬き・視界の滲み・水面の光）をまとめて管理する
 /// @details 使い方（DeathSinkScript から呼ぶ）：
 ///   - 力尽きた瞬間に Begin()。以降は毎フレーム Update()。
 ///   - 沈み始めたら StartBlink(暗くなりきるまでの秒数)。瞼はその時間で 2 回半開きになりながら閉じきる。
@@ -26,11 +27,19 @@
 ///     レンズに付いたものなので、水中の歪みや色が乗らないよう常にスタックの最後（墨があればその手前）に置く。
 ///   ・色が抜ける（ColorGrade の彩度）：desaturateTime 秒かけて saturationTo まで落とす。
 ///     ColorGrade が無ければ自分で積み、外すのも自分で積んだときだけ（ExposureFlash と同じ作法）。
+///   ・視界の滲み（VisionBleed）：周辺から水彩のような滲み（なめらかなぼかし・色のにじみ・縁の濃淡・減光）が内側へ入り込む。
+///     力尽きた瞬間に少し出て、沈むにつれて bleedEnd まで進み、瞼が閉じかけるたびに一段強くなる
+///     （開き直すと少し引くが、元には戻らない）。
+///     二重像は瞼が開き直る瞬間に跳ね上がり、ghostSettle 秒ほどで 1 枚に戻る（焦点が合わない感じ）。
+///     眼の側の効果なので、景色（水中の歪みなど）より後・レンズの血と墨より前に置く。
+///   ・水面の光が遠ざかる（LightShaft / Caustics）：沈むにつれて光柱を細く・弱くし、
+///     深さ減衰を強めて「光の届く層」を上へ押し上げる。床の網目も消していく。
+///     水中に入った直後の値を基準として覚え、Clear で戻す。
 ///   ・瞼：ポストエフェクトの後に 2D の円弧で上下から閉じる。開いている部分が「中央が広く目尻が細い」
 ///     アーモンド形になるよう、縁は上瞼が ∩、下瞼が ∪ の弧（大きな円の外側を太いリングで塗る）。
 ///     色は Dive 遷移の色と同じなので、
 ///     閉じきったところから Result の「深海からの浮上」へ継ぎ目なくつながる。
-///   ・遷移の幕（Dissolve）が掛かっている間は、ColorGrade を積んだり血を最後へ移したりしない
+///   ・遷移の幕（Dissolve）が掛かっている間は、ColorGrade / VisionBleed を積んだり血を最後へ移したりしない
 ///     （幕の後ろへ回ると、幕の色まで灰色になったり血が幕の上に出たりするため）。
 struct DeathScreenFx {
   // ---- 調整値（DeathSinkScript の JSON キー "screenFx"） ----
@@ -45,6 +54,22 @@ struct DeathScreenFx {
   bool blink = true;            ///< 瞬きするか（false なら沈みきった時点ですぐ遷移）
   float blinkDuration = 0.0f;   ///< 沈み始めてから瞼が閉じきるまで（秒）。0 以下なら暗くなりきる時刻に自動で合わせる
   float blinkMin = 1.2f;        ///< 自動のときの下限（秒。すでに深いところで力尽きたとき用）
+
+  bool bleed = true;            ///< 視界の滲みを出すか
+  float bleedOnHit = 0.15f;     ///< 力尽きた直後の滲み（0〜1）
+  float bleedEnd = 0.8f;        ///< 瞼が閉じきる頃の滲み（0〜1）
+  float bleedLidGain = 0.3f;    ///< 瞼の閉じ具合 1 あたりに上乗せする滲み
+  float bleedPigment = 0.5f;    ///< 濡れた領域の色ムラ（水彩の濃淡）の強さ（0〜1）
+  bool doubleVision = true;     ///< 瞼が開き直るときに二重に見せるか
+  float ghostMax = 0.018f;      ///< 二重像の最大のずれ（UV。画面幅に対する割合）
+  float ghostGain = 2.2f;       ///< 瞼が開いた量 1 あたりに足す二重像の強さ
+  float ghostSettle = 0.45f;    ///< 二重像が 1 枚に戻る速さ（時定数。秒）
+
+  bool lightFade = true;        ///< 沈むにつれて水面の光を遠ざけるか
+  float shaftIntensityTo = 0.2f;  ///< 閉じきる頃の光柱の強さ（基準に対する倍率）
+  float shaftDensityMul = 3.0f;   ///< 閉じきる頃の深さ減衰（基準に対する倍率。大きいほど光が浅い層だけに残る）
+  float shaftContrastMul = 1.8f;  ///< 閉じきる頃の光柱の断面コントラスト（基準に対する倍率。大きいほど細い）
+  float causticsTo = 0.0f;        ///< 閉じきる頃の床の網目の強さ（基準に対する倍率）
 
   /// @brief 演出を開始する（力尽きた瞬間に 1 回呼ぶ）
   /// @param pp        対象の PostProcess（nullptr なら状態だけ進める）
@@ -78,14 +103,22 @@ struct DeathScreenFx {
   /// @return 閉じきった、または瞬きが無効なら true
   bool BlinkFinished() const { return !blink || (rt_.blinking && rt_.blinkT >= rt_.blinkLen); }
 
-  /// @brief 毎フレーム呼ぶ。時間を進め、彩度と血を PostProcess に流し込む
+  /// @brief 沈み始めてから瞼が閉じきるまでの進み具合
+  /// @return 0（沈み始め・未開始）〜 1（閉じきった）
+  float SinkProgress() const {
+    if (!rt_.blinking) return 0.0f;
+    return std::clamp(rt_.blinkT / (std::max)(rt_.blinkLen, 0.1f), 0.0f, 1.0f);
+  }
+
+  /// @brief 毎フレーム呼ぶ。時間を進め、彩度・血・滲み・水面の光を PostProcess に流し込む
   /// @param pp         反映先の PostProcess（nullptr なら時間だけ進める）
   /// @param dt         経過時間（秒）
-  /// @param underwater カメラが水中にいるか（血を洗い流し始めるきっかけ）
+  /// @param underwater カメラが水中にいるか（血を洗い流し始める・水面の光の基準を取るきっかけ）
   void Update(PostProcess *pp, float dt, bool underwater) {
     if (!rt_.active) return;
     rt_.t += dt;
     if (rt_.blinking) rt_.blinkT += dt;
+    UpdateGhost(dt); // 瞼の動きは pp が無くても追っておく
     if (!pp) return;
     const bool curtain = pp->HasEffect(PostEffectType::Dissolve);
 
@@ -109,6 +142,19 @@ struct DeathScreenFx {
       }
     }
 
+    // --- 視界の滲み・二重像 ---
+    if (bleed || doubleVision) {
+      if (!pp->HasEffect(PostEffectType::VisionBleed) && !curtain) {
+        pp->AddEffect(PostEffectType::VisionBleed);
+        rt_.ownsVision = true;
+      }
+      const float b = BleedAmount();
+      const float ghost = doubleVision ? ghostMax * rt_.ghost : 0.0f;
+      const float pigment = bleed ? bleedPigment : 0.0f;
+      pp->SetVisionBleed(b, ghost, pigment);
+      rt_.visionTouched = true;
+    }
+
     // --- レンズの血 ---
     if (rt_.bloodOn) {
       if (underwater && rt_.washT < 0.0f && rt_.t >= bloodMinShow) rt_.washT = 0.0f;
@@ -126,10 +172,14 @@ struct DeathScreenFx {
         // 洗い流しきった：外す
         pp->RemoveEffect(PostEffectType::BloodOverlay);
         rt_.bloodOn = false;
-      } else if (!curtain) {
-        EnsureBloodOnTop(pp);
       }
     }
+
+    // --- 水面の光が遠ざかる ---
+    if (lightFade) UpdateSurfaceLight(pp, underwater);
+
+    // 並びを整える（着水で水中エフェクトが後ろに積まれても、滲み→血→墨を最後に保つ）
+    if (!curtain) EnsureTailOrder(pp);
   }
 
   /// @brief 瞼を描く（OnOverlayRender から呼ぶ）
@@ -177,6 +227,14 @@ struct DeathScreenFx {
       }
       if (rt_.saturationTouched) pp->SetGradeSaturation(1.0f);
       if (rt_.ownsGrade) pp->RemoveEffect(PostEffectType::ColorGrade);
+      if (rt_.visionTouched) pp->SetVisionBleed(0.0f, 0.0f, 0.0f);
+      if (rt_.ownsVision) pp->RemoveEffect(PostEffectType::VisionBleed);
+      if (rt_.lightCaptured) {
+        pp->SetLightShaftIntensity(rt_.baseShaftIntensity);
+        pp->SetLightShaftDensity(rt_.baseShaftDensity);
+        pp->SetLightShaftContrast(rt_.baseShaftContrast);
+        pp->SetCausticsIntensity(rt_.baseCaustics);
+      }
     }
     rt_ = Runtime{};
   }
@@ -194,7 +252,21 @@ struct DeathScreenFx {
             {"desaturateTime", desaturateTime},
             {"blink", blink},
             {"blinkDuration", blinkDuration},
-            {"blinkMin", blinkMin}};
+            {"blinkMin", blinkMin},
+            {"bleed", bleed},
+            {"bleedOnHit", bleedOnHit},
+            {"bleedEnd", bleedEnd},
+            {"bleedLidGain", bleedLidGain},
+            {"bleedPigment", bleedPigment},
+            {"doubleVision", doubleVision},
+            {"ghostMax", ghostMax},
+            {"ghostGain", ghostGain},
+            {"ghostSettle", ghostSettle},
+            {"lightFade", lightFade},
+            {"shaftIntensityTo", shaftIntensityTo},
+            {"shaftDensityMul", shaftDensityMul},
+            {"shaftContrastMul", shaftContrastMul},
+            {"causticsTo", causticsTo}};
   }
 
   /// @brief JSON から調整値を読み込む
@@ -213,12 +285,28 @@ struct DeathScreenFx {
     b("blink", blink);
     f("blinkDuration", blinkDuration);
     f("blinkMin", blinkMin);
+    b("bleed", bleed);
+    f("bleedOnHit", bleedOnHit);
+    f("bleedEnd", bleedEnd);
+    f("bleedLidGain", bleedLidGain);
+    f("bleedPigment", bleedPigment);
+    b("doubleVision", doubleVision);
+    f("ghostMax", ghostMax);
+    f("ghostGain", ghostGain);
+    f("ghostSettle", ghostSettle);
+    b("lightFade", lightFade);
+    f("shaftIntensityTo", shaftIntensityTo);
+    f("shaftDensityMul", shaftDensityMul);
+    f("shaftContrastMul", shaftContrastMul);
+    f("causticsTo", causticsTo);
   }
 
 #if RC_ENABLE_IMGUI
   /// @brief 調整値の編集 UI を ImGui に描画する
   void DrawImGui() {
     ImGui::Text("t=%.2f  blink=%.2f/%.2f  lid=%.2f", rt_.t, rt_.blinkT, rt_.blinkLen, LidClosure());
+    ImGui::Text("bleed=%.2f  ghost=%.2f  light=%s", BleedAmount(), rt_.ghost,
+                rt_.lightCaptured ? "captured" : "-");
     ImGui::Checkbox("Blood", &blood);
     ImGui::SliderFloat("Blood Level", &bloodLevel, 0.0f, 1.0f);
     ImGui::DragFloat("Blood Flash (s)", &bloodFlashTime, 0.05f, 0.05f, 3.0f);
@@ -230,6 +318,22 @@ struct DeathScreenFx {
     ImGui::Checkbox("Blink", &blink);
     ImGui::DragFloat("Blink (s, 0=auto)", &blinkDuration, 0.05f, 0.0f, 10.0f);
     ImGui::DragFloat("Blink Min (s)", &blinkMin, 0.05f, 0.3f, 5.0f);
+    ImGui::SeparatorText("Vision Bleed (視界の滲み・二重像)");
+    ImGui::Checkbox("Bleed", &bleed);
+    ImGui::SliderFloat("Bleed On Hit", &bleedOnHit, 0.0f, 1.0f);
+    ImGui::SliderFloat("Bleed End", &bleedEnd, 0.0f, 1.0f);
+    ImGui::SliderFloat("Bleed Lid Gain", &bleedLidGain, 0.0f, 1.0f);
+    ImGui::SliderFloat("Pigment", &bleedPigment, 0.0f, 1.0f);
+    ImGui::Checkbox("Double Vision", &doubleVision);
+    ImGui::SliderFloat("Ghost Max (UV)", &ghostMax, 0.0f, 0.05f, "%.4f");
+    ImGui::DragFloat("Ghost Gain", &ghostGain, 0.05f, 0.0f, 10.0f);
+    ImGui::DragFloat("Ghost Settle (s)", &ghostSettle, 0.01f, 0.05f, 3.0f);
+    ImGui::SeparatorText("Surface Light (水面の光が遠ざかる)");
+    ImGui::Checkbox("Light Fade", &lightFade);
+    ImGui::SliderFloat("Shaft Intensity To", &shaftIntensityTo, 0.0f, 1.0f);
+    ImGui::DragFloat("Shaft Density x", &shaftDensityMul, 0.05f, 1.0f, 10.0f);
+    ImGui::DragFloat("Shaft Contrast x", &shaftContrastMul, 0.05f, 0.5f, 5.0f);
+    ImGui::SliderFloat("Caustics To", &causticsTo, 0.0f, 1.0f);
   }
 #endif
 
@@ -246,6 +350,16 @@ private:
     bool bloodTouched = false;   ///< BloodOverlay の値を書いた（Clear で戻す）
     bool saturationTouched = false; ///< 彩度を書いた（Clear で 1 に戻す）
     bool ownsGrade = false;      ///< ColorGrade を自分で積んだ（Clear で外す）
+    bool visionTouched = false;  ///< VisionBleed の値を書いた（Clear で 0 に戻す）
+    bool ownsVision = false;     ///< VisionBleed を自分で積んだ（Clear で外す）
+    float prevLid = 0.0f;        ///< 前フレームの瞼の閉じ具合（開き直した量を測る）
+    float ghost = 0.0f;          ///< 二重像の強さ（0〜1）
+    int underwaterFrames = 0;    ///< 連続で水中にいるフレーム数（光の基準を取るタイミング）
+    bool lightCaptured = false;  ///< 水面の光の基準値を覚えた（Clear で戻す）
+    float baseShaftIntensity = 1.0f; ///< 基準：光柱の強さ
+    float baseShaftDensity = 0.08f;  ///< 基準：深さ減衰
+    float baseShaftContrast = 3.0f;  ///< 基準：断面のコントラスト
+    float baseCaustics = 1.0f;       ///< 基準：床の網目の強さ
   };
 
   /// @brief 瞼のキー（時刻は長さ kKeyEnd 秒のときの値。実際の長さに比例して伸び縮みする）
@@ -278,17 +392,77 @@ private:
     return 1.0f;
   }
 
-  /// @brief 血をスタックの最後（墨があればその手前）に置く
-  /// @details 墨（InkScreenFx）も自分を最後へ移すので、[…, 血, 墨] の並びは崩さない。
+  /// @brief 今の滲みの強さ
+  /// @details 力尽きた直後は bleedOnHit までふわっと出て、沈み始めると bleedEnd へ向かって進む。
+  ///          そこへ瞼の閉じ具合ぶんを上乗せする（閉じかけるほど滲み、開き直すと少し引く）。
+  /// @return 0〜1（bleed が無効なら 0）
+  float BleedAmount() const {
+    if (!bleed || !rt_.active) return 0.0f;
+    float base = bleedOnHit * Smooth01(rt_.t / 0.4f);
+    if (rt_.blinking) base = (std::max)(base, bleedOnHit + (bleedEnd - bleedOnHit) * Smooth01(SinkProgress()));
+    return std::clamp(base + bleedLidGain * LidClosure(), 0.0f, 1.0f);
+  }
+
+  /// @brief 瞼の動きから二重像の強さを進める
+  /// @details 開き直した量（閉じ具合が減った量）に比例して跳ね上げ、それ以外のフレームは
+  ///          指数で 0 へ戻す。閉じかけ → 開き直す → しばらく二重 → 1 枚に戻る、を繰り返す。
+  /// @param dt 経過時間（秒）
+  void UpdateGhost(float dt) {
+    const float c = LidClosure();
+    const float dc = c - rt_.prevLid;
+    rt_.prevLid = c;
+    if (dc < 0.0f) {
+      rt_.ghost = (std::min)(1.0f, rt_.ghost + (-dc) * ghostGain);
+    } else if (dt > 0.0f) {
+      rt_.ghost *= std::exp(-dt / (std::max)(ghostSettle, 0.01f));
+    }
+  }
+
+  /// @brief 沈むにつれて水面の光（光柱・床の網目）を遠ざける
+  /// @details 基準値は「水中に入って数フレーム後」の値を取る。着水した瞬間は
+  ///          RailShooterController が水中の光の設定（SetupLight）を流し込むので、
+  ///          その後でないと水上の古い値を基準にしてしまう。
+  /// @param pp         反映先の PostProcess（nullptr 不可）
+  /// @param underwater カメラが水中にいるか
+  void UpdateSurfaceLight(PostProcess *pp, bool underwater) {
+    rt_.underwaterFrames = underwater ? rt_.underwaterFrames + 1 : 0;
+    if (!rt_.lightCaptured) {
+      if (rt_.underwaterFrames < 3) return;
+      rt_.baseShaftIntensity = pp->GetLightShaftIntensity();
+      rt_.baseShaftDensity = pp->GetLightShaftDensity();
+      rt_.baseShaftContrast = pp->GetLightShaftContrast();
+      rt_.baseCaustics = pp->GetCausticsIntensity();
+      rt_.lightCaptured = true;
+    }
+    // ease-out：沈み始めにぐっと遠ざかり、あとは暗いところでゆっくり消えていく
+    const float p = SinkProgress();
+    const float k = 1.0f - (1.0f - p) * (1.0f - p);
+    auto mix = [k](float base, float mul) { return base * (1.0f + (mul - 1.0f) * k); };
+    pp->SetLightShaftIntensity(mix(rt_.baseShaftIntensity, shaftIntensityTo));
+    pp->SetLightShaftDensity(mix(rt_.baseShaftDensity, shaftDensityMul));
+    pp->SetLightShaftContrast(mix(rt_.baseShaftContrast, shaftContrastMul));
+    pp->SetCausticsIntensity(mix(rt_.baseCaustics, causticsTo));
+  }
+
+  /// @brief スタックの最後を [滲み, 血, 墨]（あるものだけ）の並びに保つ
+  /// @details 滲みは眼の側、血と墨はレンズの表面なので、景色の後ろに並べる。
+  ///          墨（InkScreenFx）も自分を最後へ移すので、墨は常に最後にしておく。
   ///          並びが正しいときは何もしない（Add/Remove はログが出るので毎フレームは呼ばない）。
   /// @param pp 対象の PostProcess（nullptr 不可）
-  static void EnsureBloodOnTop(PostProcess *pp) {
+  static void EnsureTailOrder(PostProcess *pp) {
+    PostEffectType want[3];
+    size_t k = 0;
+    for (PostEffectType t : {PostEffectType::VisionBleed, PostEffectType::BloodOverlay,
+                             PostEffectType::InkOverlay}) {
+      if (pp->HasEffect(t)) want[k++] = t;
+    }
     const auto &e = pp->GetEffects();
     const size_t n = e.size();
-    if (n >= 1 && e[n - 1] == PostEffectType::BloodOverlay) return;
-    if (n >= 2 && e[n - 1] == PostEffectType::InkOverlay && e[n - 2] == PostEffectType::BloodOverlay) return;
-    pp->RemoveEffect(PostEffectType::BloodOverlay);
-    pp->AddEffect(PostEffectType::BloodOverlay);
+    bool ok = (n >= k);
+    for (size_t i = 0; ok && i < k; ++i) ok = (e[n - k + i] == want[i]);
+    if (ok) return;
+    for (size_t i = 0; i < k; ++i) pp->RemoveEffect(want[i]);
+    for (size_t i = 0; i < k; ++i) pp->AddEffect(want[i]);
   }
 
   /// @brief smoothstep（0〜1 に丸めてから 3t^2 - 2t^3）
