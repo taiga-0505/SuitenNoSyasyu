@@ -1,5 +1,6 @@
 #pragma once
 #include "AppConfig.h"
+#include "AutoTest.h"
 #include "Dx12Core.h"
 #include "Game.h"
 #include "Graphics/PostProcess/PostProcess.h"
@@ -96,6 +97,9 @@ private:
   // === Game（シーン切替などゲーム側の責務） ===
   Game game_;             ///< ゲームロジック・シーン遷移管理
   SceneContext sceneCtx_; ///< シーン間で共有されるコンテキストデータ
+
+  // 起動引数 --autotest によるシーン自動巡回
+  AutoTest autoTest_; ///< 自動テスト（無効なら何もしない）
 
   // Win32 メッセージ
   MSG msg_{}; ///< Win32 メッセージ構造体

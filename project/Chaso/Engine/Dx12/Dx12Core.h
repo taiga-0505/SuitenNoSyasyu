@@ -159,6 +159,16 @@ public:
   /// @brief スクリーンショットのパスをクリアする
   void ClearLatestScreenshotPath() { latestScreenshotPath_.clear(); }
 
+  /// @brief 指定テクスチャを指定パスへ PNG 保存する撮影をリクエストする
+  /// @param path     保存先のパス（親フォルダが無ければ作る）
+  /// @param resource 撮影対象（nullptr なら表示中のバックバッファ）
+  /// @param state    フレーム終了時点での resource の状態（バックバッファなら PRESENT）
+  /// @note 次の EndFrame（Present の直前）で撮影する。クリップボードへはコピーしない。
+  void RequestCapture(const std::string &path, ID3D12Resource *resource = nullptr,
+                      D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_PRESENT) {
+    captureRequest_ = {path, resource, state};
+  }
+
   /// @brief ビデオ録画を開始する（録画中なら何もしない）
   void StartRecording();
   /// @brief ビデオ録画を停止する（録画中でなければ何もしない）
@@ -235,6 +245,12 @@ private:
   DeferredReleaseQueue deferredRelease_; ///< GPU リソース遅延解放キュー
   bool requestScreenshot_ = false; ///< スクリーンショット撮影要求フラグ
   std::string latestScreenshotPath_; ///< 最新のスクリーンショットパス
+  /// @brief RequestCapture で受けた撮影要求（path が空なら要求なし）
+  struct CaptureRequest {
+    std::string path;                  ///< 保存先
+    ID3D12Resource *resource = nullptr; ///< 撮影対象（nullptr ならバックバッファ）
+    D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_PRESENT; ///< 撮影時点の状態
+  } captureRequest_;
   VideoRecorder videoRecorder_;    ///< ビデオ録画管理
   float targetFps_ = 60.0f;        ///< 目標 FPS
 

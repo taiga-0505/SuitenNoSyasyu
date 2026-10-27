@@ -16,6 +16,19 @@ public:
     /// @note コピー完了まで GPU を待つため、呼び出し元はその分だけ止まる。
     static std::string SaveScreenshot(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resource* backBuffer);
 
+    /// @brief テクスチャを読み戻して指定パスに PNG で保存する
+    /// @param device          D3D12 デバイス
+    /// @param queue           コマンドキュー（GPU との同期用）
+    /// @param resource        キャプチャ対象の 2D テクスチャ
+    /// @param stateBefore     resource の現在の状態（コピー後もこの状態へ戻す）
+    /// @param path            保存先（親フォルダが無ければ作る）
+    /// @param copyToClipboard 同じ画像をクリップボードにも DIB でコピーするか
+    /// @return 保存できたら true
+    /// @note コピー完了まで GPU を待つため、呼び出し元はその分だけ止まる。
+    static bool CaptureToFile(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resource* resource,
+                              D3D12_RESOURCE_STATES stateBefore, const std::string& path,
+                              bool copyToClipboard = false);
+
     /// @brief 通知 UI の表示時間（秒）
     static constexpr float kNotifyDisplayTime = 3.0f;
 

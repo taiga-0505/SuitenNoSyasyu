@@ -180,6 +180,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClCompile Include="..\main.cpp" />
     <!-- Framework -->
     <ClCompile Include="..\Chaso\Framework\App.cpp" />
+    <ClCompile Include="..\Chaso\Framework\AutoTest.cpp" />
     <ClCompile Include="..\Chaso\Editor\EditorManager.cpp" />
     <ClCompile Include="..\Chaso\Editor\CaptureMode.cpp" />
     <ClCompile Include="..\Chaso\Editor\KeyBindingsHelp.cpp" />
@@ -231,6 +232,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
   <ItemGroup>
     <!-- Framework -->
     <ClInclude Include="..\Chaso\Framework\App.h" />
+    <ClInclude Include="..\Chaso\Framework\AutoTest.h" />
     <ClInclude Include="..\Chaso\Framework\AppConfig.h" />
     <ClInclude Include="..\Chaso\Editor\EditorManager.h" />
     <ClInclude Include="..\Chaso\Editor\CaptureMode.h" />

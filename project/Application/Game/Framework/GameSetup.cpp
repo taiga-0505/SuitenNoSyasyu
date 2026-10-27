@@ -8,6 +8,7 @@
 // エンジン側の登録口はすべて関数内 static に保存しているので、初期化順の問題は起きない。
 // ============================================================================
 
+#include "AutoTest.h"
 #include "Game/Framework/GameModeBase.h"
 #include "Game/Framework/RailShooterGameMode.h"
 #include "Game/Framework/StageProgress.h"
@@ -42,6 +43,9 @@ struct GameSetup {
     flow.RegisterVariable("$nextStage", "次のステージ（最終面・ステージ外なら行き先なし）", []() {
       return StageProgress::Get().NextSceneName();
     });
+
+    // 起動引数 --autotest で巡る順路（タイトル → ゲーム → リザルト → タイトル）
+    AutoTest::SetDefaultRoute({"Title", "Stage1", "Result", "Title"});
   }
 };
 

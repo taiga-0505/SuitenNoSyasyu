@@ -19,10 +19,19 @@ using namespace Microsoft::WRL;
 ScreenCapture::NotifyData ScreenCapture::notify_;
 
 std::string ScreenCapture::SaveScreenshot(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resource* backBuffer) {
-    if (!device || !queue || !backBuffer) return "";
+    CreateScreenshotDirectory();
+    std::string fileName = "../media/screenshots/" + GenerateTimestampFileName() + ".png";
+    if (!CaptureToFile(device, queue, backBuffer, D3D12_RESOURCE_STATE_PRESENT, fileName, true)) return "";
+    return fileName;
+}
+
+bool ScreenCapture::CaptureToFile(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resource* resource,
+                                  D3D12_RESOURCE_STATES stateBefore, const std::string& path,
+                                  bool copyToClipboard) {
+    if (!device || !queue || !resource) return false;
 
     // 1. リソース情報の取得
-    D3D12_RESOURCE_DESC desc = backBuffer->GetDesc();
+    D3D12_RESOURCE_DESC desc = resource->GetDesc();
     
     // 2. 読み戻し（Readback）用リソースの作成に必要なサイズ計算
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
@@ -55,7 +64,7 @@ std::string ScreenCapture::SaveScreenshot(ID3D12Device* device, ID3D12CommandQue
 
     if (FAILED(hr)) {
         Log::Print("[ScreenCapture] Failed to create readback resource.");
-        return "";
+        return false;
     }
 
     // 3. コピー用コマンドの作成と実行
@@ -64,11 +73,11 @@ std::string ScreenCapture::SaveScreenshot(ID3D12Device* device, ID3D12CommandQue
     ComPtr<ID3D12GraphicsCommandList> cl;
     device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr, IID_PPV_ARGS(&cl));
 
-    // バリア: PRESENT（または現在の状態）→ COPY_SOURCE
+    // バリア: 現在の状態 → COPY_SOURCE
     D3D12_RESOURCE_BARRIER barrier = {};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    barrier.Transition.pResource = backBuffer;
-    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+    barrier.Transition.pResource = resource;
+    barrier.Transition.StateBefore = stateBefore;
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
     barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     cl->ResourceBarrier(1, &barrier);
@@ -80,15 +89,15 @@ std::string ScreenCapture::SaveScreenshot(ID3D12Device* device, ID3D12CommandQue
     dst.PlacedFootprint = footprint;
 
     D3D12_TEXTURE_COPY_LOCATION src = {};
-    src.pResource = backBuffer;
+    src.pResource = resource;
     src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
     src.SubresourceIndex = 0;
 
     cl->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
 
-    // バリア戻し: COPY_SOURCE → PRESENT
+    // バリア戻し: COPY_SOURCE → 元の状態
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
-    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+    barrier.Transition.StateAfter = stateBefore;
     cl->ResourceBarrier(1, &barrier);
 
     cl->Close();
@@ -111,7 +120,7 @@ std::string ScreenCapture::SaveScreenshot(ID3D12Device* device, ID3D12CommandQue
     hr = readbackResource->Map(0, nullptr, &mappedData);
     if (FAILED(hr)) {
         Log::Print("[ScreenCapture] Failed to map readback resource.");
-        return "";
+        return false;
     }
 
     DirectX::Image image;
@@ -122,8 +131,11 @@ std::string ScreenCapture::SaveScreenshot(ID3D12Device* device, ID3D12CommandQue
     image.slicePitch = static_cast<size_t>(totalBytes);
     image.pixels = reinterpret_cast<uint8_t*>(mappedData);
 
-    CreateScreenshotDirectory();
-    std::string fileName = "../media/screenshots/" + GenerateTimestampFileName() + ".png";
+    const std::filesystem::path parent = std::filesystem::path(path).parent_path();
+    if (!parent.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(parent, ec);
+    }
     
     // WIC 保存用にフォーマット調整
     if (image.format == DXGI_FORMAT_R8G8B8A8_UNORM) {
@@ -131,13 +143,15 @@ std::string ScreenCapture::SaveScreenshot(ID3D12Device* device, ID3D12CommandQue
     }
 
     Log logger;
-    std::wstring wFileName = logger.ConvertString(fileName);
+    std::wstring wFileName = logger.ConvertString(path);
 
     hr = DirectX::SaveToWICFile(image, DirectX::WIC_FLAGS_NONE, DirectX::GetWICCodec(DirectX::WIC_CODEC_PNG), wFileName.c_str());
     
     // クリップボードへコピー（DIB 形式）
     DirectX::Blob blob;
-    HRESULT hrBlob = DirectX::SaveToWICMemory(image, DirectX::WIC_FLAGS_NONE, DirectX::GetWICCodec(DirectX::WIC_CODEC_BMP), blob);
+    HRESULT hrBlob = copyToClipboard
+        ? DirectX::SaveToWICMemory(image, DirectX::WIC_FLAGS_NONE, DirectX::GetWICCodec(DirectX::WIC_CODEC_BMP), blob)
+        : E_ABORT;
     if (SUCCEEDED(hrBlob)) {
         if (OpenClipboard(nullptr)) {
             EmptyClipboard();
@@ -162,11 +176,11 @@ std::string ScreenCapture::SaveScreenshot(ID3D12Device* device, ID3D12CommandQue
 
     if (FAILED(hr)) {
         Log::Print(std::format("[ScreenCapture] Failed to save screenshot. HRESULT={:08X}", (uint32_t)hr));
-        return "";
+        return false;
     }
 
-    Log::Print(std::format("[ScreenCapture] Screenshot saved: {}", fileName));
-    return fileName;
+    Log::Print(std::format("[ScreenCapture] Screenshot saved: {}", path));
+    return true;
 }
 
 void ScreenCapture::DrawImGui(float deltaTime, Dx12Core* core) {

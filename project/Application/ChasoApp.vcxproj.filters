@@ -87,6 +87,9 @@
     <ClCompile Include="..\Chaso\Framework\App.cpp">
       <Filter>Framework</Filter>
     </ClCompile>
+    <ClCompile Include="..\Chaso\Framework\AutoTest.cpp">
+      <Filter>Framework</Filter>
+    </ClCompile>
     <ClCompile Include="..\Chaso\Editor\EditorManager.cpp">
       <Filter>Framework</Filter>
     </ClCompile>

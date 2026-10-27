@@ -131,6 +131,14 @@ bool App::Init() {
   DebugBridge::SetSceneRequest(
       [this](const std::string &name) { game_.RequestChange(name); });
 
+  // 起動引数 --autotest: シーンを自動で一周して撮影し、終了する
+  if (autoTest_.ParseCommandLine(appConfig_.bootScene)) {
+#if RC_ENABLE_IMGUI
+    // エディタは停止状態で起動するので、スクリプトが動くよう再生状態にしておく
+    editorManager_.SetPlayState(PlayState::Playing);
+#endif
+  }
+
   auto totalEnd = std::chrono::high_resolution_clock::now();
   Log::Print(std::format("[App] 初期化完了 (Total Time: {:.3f}s)", std::chrono::duration<float>(totalEnd - totalStart).count()));
 
@@ -211,6 +219,20 @@ int App::Run() {
       {
         CHASO_PROFILE_SCOPE("App: Update (input/scene/audio)");
         Update();
+      }
+
+      // 自動テスト（遷移の要求と、撮影の要求。撮影はこのフレームの EndFrame で行われる）
+      if (autoTest_.IsEnabled()) {
+        autoTest_.Update(game_);
+        if (const std::string path = autoTest_.TakeCaptureRequest(); !path.empty()) {
+#if RC_ENABLE_IMGUI
+          // エディタ UI を含まないゲーム画面（ポストプロセス + オーバーレイ後）を撮る
+          core_.RequestCapture(path, viewportTexture_.GetResource().Get(),
+                               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+#else
+          core_.RequestCapture(path);
+#endif
+        }
       }
 
       // ポストプロセスの時間更新

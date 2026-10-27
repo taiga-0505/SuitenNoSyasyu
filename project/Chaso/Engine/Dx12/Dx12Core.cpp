@@ -303,6 +303,13 @@ void Dx12Core::EndFrame() {
                                   swap_.BackBuffer(backIndex_));
     requestScreenshot_ = false;
   }
+  if (!captureRequest_.path.empty()) {
+    ID3D12Resource *src = captureRequest_.resource ? captureRequest_.resource
+                                                   : swap_.BackBuffer(backIndex_);
+    ScreenCapture::CaptureToFile(device_.GetDevice(), cmd_.Queue(), src, captureRequest_.state,
+                                 captureRequest_.path);
+    captureRequest_ = {};
+  }
 
   // ビデオ録画の更新（録画自体の負荷を切り分けられるよう時間を測る）
   const auto captureStart = std::chrono::steady_clock::now();
