@@ -216,6 +216,7 @@
     <ClCompile Include="Input\Mouse\Mouse.cpp" />
     <ClCompile Include="Graphics\Texture\RenderTexture\RenderTexture.cpp" />
     <ClCompile Include="Graphics\PostProcess\PostProcess.cpp" />
+    <ClCompile Include="Graphics\PostProcess\ScreenDropletSim.cpp" />
   </ItemGroup>
   <ItemGroup>
     <!-- Camera -->
@@ -310,6 +311,7 @@
     <ClInclude Include="Input\Mouse\Mouse.h" />
     <ClInclude Include="Graphics\Texture\RenderTexture\RenderTexture.h" />
     <ClInclude Include="Graphics\PostProcess\PostProcess.h" />
+    <ClInclude Include="Graphics\PostProcess\ScreenDropletSim.h" />
     <!-- ECS -->
     <ClInclude Include="..\Engine\ECS\IComponent.h" />
     <ClInclude Include="..\Engine\ECS\Entity.h" />

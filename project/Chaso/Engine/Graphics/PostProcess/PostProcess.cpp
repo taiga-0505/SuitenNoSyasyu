@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <algorithm>
 #include <cmath>
+#include <cstring> // std::memcpy（ScreenDroplets の水滴配列）
 #include <format>
 #include <set>
 #include <utility> // std::swap (MoveEffect)
@@ -507,8 +508,8 @@ void PostProcess::Initialize(Dx12Core *dxCore,
       mappedScreenDroplets_->scale = screenDropletsScale_;
       screenDropletsAspectRatio_ = (height_ > 0) ? (static_cast<float>(width_) / static_cast<float>(height_)) : 1.777f;
       mappedScreenDroplets_->aspectRatio = screenDropletsAspectRatio_;
-      mappedScreenDroplets_->padding[0] = 0.0f;
-      mappedScreenDroplets_->padding[1] = 0.0f;
+      mappedScreenDroplets_->invScreenHeight = (height_ > 0) ? 1.0f / static_cast<float>(height_) : 1.0f / 720.0f;
+      mappedScreenDroplets_->dropCount = 0.0f;
     }
   }
 
@@ -632,10 +633,7 @@ void PostProcess::UpdateTime(float deltaTime) {
     mappedLightShaft_->time = randomTime_;
     mappedLightShaft_->lerpFactor = lightShaftLerpFactor_;
   }
-  if (mappedScreenDroplets_) {
-    mappedScreenDroplets_->time = randomTime_;
-    mappedScreenDroplets_->intensity = screenDropletsIntensity_;
-  }
+  UpdateScreenDroplets(deltaTime);
   if (mappedBloodOverlay_) {
     // time は心拍の位相にしか使わない（飛沫パターンは seed 固定でチラつかせない）
     mappedBloodOverlay_->time = randomTime_;
@@ -1115,6 +1113,77 @@ void PostProcess::SetScreenDropletsScale(float scale) {
   if (mappedScreenDroplets_) {
     mappedScreenDroplets_->scale = scale;
   }
+}
+
+void PostProcess::SetScreenDropletsWind(float wind) {
+  screenDropletsWind_ = (std::max)(0.0f, wind);
+}
+
+ScreenDropletSim::Params PostProcess::MakeScreenDropletParams() const {
+  ScreenDropletSim::Params params;
+  // 既定値（Scale 1.5 / Speed ±1.3）のときに 1 倍になるよう正規化する
+  params.sizeScale = (std::max)(screenDropletsScale_ / 1.5f, 0.2f);
+  params.flowSpeed = std::fabs(screenDropletsSpeed_) / 1.3f;
+  params.wind = screenDropletsWind_;
+  params.aspect = screenDropletsAspectRatio_;
+  return params;
+}
+
+void PostProcess::TriggerScreenDroplets(ScreenDropletSim::Mode mode) {
+  AddEffect(PostEffectType::ScreenDroplets);
+  screenDropletSim_.Trigger(mode, MakeScreenDropletParams());
+}
+
+void PostProcess::DrainScreenDroplets(float seconds) {
+  screenDropletSim_.Drain(seconds);
+}
+
+void PostProcess::UpdateScreenDroplets(float deltaTime) {
+  if (!mappedScreenDroplets_) {
+    return;
+  }
+  ScreenDropletsData &cb = *mappedScreenDroplets_;
+  cb.time = randomTime_;
+  cb.intensity = screenDropletsIntensity_;
+  cb.invScreenHeight = (height_ > 0) ? 1.0f / static_cast<float>(height_) : 1.0f / 720.0f;
+
+  if (!HasEffect(PostEffectType::ScreenDroplets)) {
+    // スタックから外れたら水も捨てる（次に積んだときは最初から）
+    if (screenDropletSim_.Active()) {
+      screenDropletSim_.Clear();
+    }
+    cb.dropCount = 0.0f;
+    return;
+  }
+
+  const ScreenDropletSim::Params params = MakeScreenDropletParams();
+  if (!screenDropletSim_.Active()) {
+    // TriggerScreenDroplets を通さずに AddEffect だけされた場合（旧来の呼び方・ImGui）
+    screenDropletSim_.Trigger(screenDropletsSpeed_ < 0.0f ? ScreenDropletSim::Mode::Dive
+                                                          : ScreenDropletSim::Mode::Surface,
+                              params);
+  } else {
+    screenDropletSim_.Update(deltaTime, params);
+  }
+
+  const ScreenDropletSim::Sheet &sheet = screenDropletSim_.GetSheet();
+  cb.elapsed = screenDropletSim_.Elapsed();
+  cb.mode = (screenDropletSim_.GetMode() == ScreenDropletSim::Mode::Dive) ? 1.0f : 0.0f;
+  cb.sheetCenterX = sheet.centerX;
+  cb.sheetCenterY = sheet.centerY;
+  cb.sheetDuration = sheet.duration;
+  cb.sheetRadiusMax = sheet.radiusMax;
+  cb.sheetGravityBias = sheet.gravityBias;
+  cb.drainStart = screenDropletSim_.DrainStart();
+  cb.drainDuration = screenDropletSim_.DrainDuration();
+
+  ScreenDropletSim::GpuDrop drops[ScreenDropletSim::kMaxDrops];
+  const int count = screenDropletSim_.Export(drops, ScreenDropletSim::kMaxDrops, screenDropletsIntensity_);
+  for (int i = 0; i < count; ++i) {
+    std::memcpy(cb.dropA[i], drops[i].a, sizeof(cb.dropA[i]));
+    std::memcpy(cb.dropB[i], drops[i].b, sizeof(cb.dropB[i]));
+  }
+  cb.dropCount = static_cast<float>(count);
 }
 
 // ============================================================================
@@ -2180,9 +2249,21 @@ void PostProcess::DrawImGui([[maybe_unused]] const char *label) {
       if (ImGui::SliderFloat("Distortion (屈折の強さ)", &screenDropletsDistortion_, 0.0f, 0.2f)) {
         SetScreenDropletsDistortion(screenDropletsDistortion_);
       }
-      if (ImGui::SliderFloat("Scale (水滴の密度)", &screenDropletsScale_, 0.5f, 5.0f)) {
+      if (ImGui::SliderFloat("Scale (水滴の大きさ)", &screenDropletsScale_, 0.5f, 5.0f)) {
         SetScreenDropletsScale(screenDropletsScale_);
       }
+      if (ImGui::SliderFloat("Wind (外へ流れる強さ)", &screenDropletsWind_, 0.0f, 2.0f)) {
+        SetScreenDropletsWind(screenDropletsWind_);
+      }
+      if (ImGui::Button("浮上を再生")) {
+        TriggerScreenDroplets(ScreenDropletSim::Mode::Surface);
+      }
+      ImGui::SameLine();
+      if (ImGui::Button("潜水を再生")) {
+        TriggerScreenDroplets(ScreenDropletSim::Mode::Dive);
+      }
+      ImGui::Text("経過 %.2f 秒 / 水滴 %d 粒", screenDropletSim_.Elapsed(),
+                  static_cast<int>(mappedScreenDroplets_ ? mappedScreenDroplets_->dropCount : 0.0f));
       ImGui::Unindent();
     }
 

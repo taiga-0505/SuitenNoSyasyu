@@ -103,21 +103,24 @@ inline float FindWaterY(Scene *scene) {
 // 水面を出入りするときのレンズ演出（RailShooterController と同じ値）
 inline constexpr float kRadialBlurDuration = 0.45f; ///< ラジアルブラーの長さ（秒。radialScale 1 のとき）
 inline constexpr float kRadialBlurMaxWidth = 0.035f; ///< ラジアルブラーの最大幅（radialScale 1 のとき）
-inline constexpr float kDropletDuration = 2.2f;     ///< レンズ水滴が消えきるまで（秒）
+inline constexpr float kDropletDuration = 3.4f;     ///< レンズ水滴が消えきるまで（秒。水膜が引いて水滴が流れ出るまで）
+inline constexpr float kDropletFadeTail = 0.35f;    ///< 残り時間がこの割合を切ってから水を痩せさせて消す
 inline constexpr float kDropletDistortion = 0.06f;  ///< レンズ水滴の歪み量
 inline constexpr float kDropletScale = 1.5f;        ///< レンズ水滴の大きさ
+inline constexpr float kDropletDrainTime = 0.35f;   ///< 遷移の直前に残った水滴を消しきるまで（秒。粒ごとに時間差で消える）
 
 /// @brief ラジアルブラー・レンズ水滴・露出フラッシュの減衰を管理する
 struct LensFx {
   float radialTimer = 0.0f;              ///< ラジアルブラーの残り時間（秒）
   float radialMax = kRadialBlurMaxWidth; ///< 今回のラジアルブラーの最大幅
   float dropletTimer = 0.0f;             ///< レンズ水滴の残り時間（秒）
+  bool dropletDraining = false;          ///< Drain 中か（強度は 1 のまま、水滴側が時間差で消えていく）
   ExposureFlash flash;                   ///< 出入水の露出フラッシュ
 
   /// @brief 水面を出入りした瞬間のレンズ演出を一式開始する
   /// @param pp           対象の PostProcess（nullptr なら何もしない）
   /// @param radialScale  ラジアルブラーの強さと長さの倍率
-  /// @param dropletSpeed 負で上へ昇る（着水）、正で下へ垂れる（出水）
+  /// @param dropletSpeed 負で潜水（水面ライン＋気泡）、正で浮上（水膜＋水滴）。大きさは流れる速さ
   /// @param flashEv      露出フラッシュのピーク（EV。負で暗く、正で白く。0 で無し）
   /// @param flashDuration 露出フラッシュの長さ（秒）
   void Trigger(PostProcess *pp, float radialScale, float dropletSpeed,
@@ -131,11 +134,25 @@ struct LensFx {
     pp->SetRadialBlurWidth(radialMax);
 
     dropletTimer = kDropletDuration;
-    pp->AddEffect(PostEffectType::ScreenDroplets);
+    dropletDraining = false;
     pp->SetScreenDropletsIntensity(1.0f);
     pp->SetScreenDropletsSpeed(dropletSpeed);
     pp->SetScreenDropletsDistortion(kDropletDistortion);
     pp->SetScreenDropletsScale(kDropletScale);
+    pp->TriggerScreenDroplets(dropletSpeed < 0.0f ? ScreenDropletSim::Mode::Dive
+                                                  : ScreenDropletSim::Mode::Surface);
+  }
+
+  /// @brief 残っているレンズ水滴を seconds 秒以内に消しきる（遷移の直前に呼ぶ。毎フレーム呼んでもよい）
+  /// @details タイマーを縮めて強度を落とすと全粒が同時に消えて見えるので、
+  ///          強度は保ったまま水滴側に「粒ごとに時間差で痩せて消える」よう指示する。
+  /// @param pp      対象の PostProcess（nullptr なら何もしない）
+  /// @param seconds 消えきるまでの秒数
+  void DrainDroplets(PostProcess *pp, float seconds) {
+    if (!pp || dropletTimer <= 0.0f || dropletDraining) return;
+    pp->DrainScreenDroplets(seconds); // 強度は今の値のまま（戻すと消えた粒が復活する）
+    dropletDraining = true;
+    dropletTimer = (std::min)(dropletTimer, seconds + 0.05f);
   }
 
   /// @brief 各効果の残り時間を進めて減衰させ、終わったものはスタックから外す（毎フレーム呼ぶ）
@@ -156,15 +173,17 @@ struct LensFx {
         pp->SetRadialBlurWidth(radialMax * p * p);
       }
     }
-    // レンズ水滴：残り時間の割合の 2 乗で薄くする
+    // レンズ水滴：流れている間は保ち、最後の kDropletFadeTail で水を痩せさせて消す
     if (dropletTimer > 0.0f) {
       dropletTimer -= dt;
       if (dropletTimer <= 0.0f) {
         dropletTimer = 0.0f;
+        dropletDraining = false;
         pp->RemoveEffect(PostEffectType::ScreenDroplets);
-      } else {
-        const float p = dropletTimer / kDropletDuration;
-        pp->SetScreenDropletsIntensity(p * p);
+      } else if (!dropletDraining) {
+        // 強度は粒ごとの閾値で効くので、下げていくと残った粒が 1 粒ずつ消えていく
+        const float x = (std::min)(1.0f, dropletTimer / (kDropletDuration * kDropletFadeTail));
+        pp->SetScreenDropletsIntensity(x * x * (3.0f - 2.0f * x));
       }
     }
   }
@@ -182,6 +201,7 @@ struct LensFx {
       pp->RemoveEffect(PostEffectType::ScreenDroplets);
     }
     radialTimer = dropletTimer = 0.0f;
+    dropletDraining = false;
   }
 };
 
@@ -624,8 +644,13 @@ public:
       const float blend = (p.surfaceBlend > 0.0f) ? Smooth01(submerged_ / p.surfaceBlend) : 1.0f;
       UnderwaterLook::SetLerp(pp, blend);
       UnderwaterLook::ApplyFogByDepth(pp, *look_, depth_);
-      // 暗くなりきる前に水滴を消しきる（残ったまま Game へ切り替わると一瞬で消えて見える）
-      if (phase_ == Phase::Done) lens_.dropletTimer = (std::min)(lens_.dropletTimer, 0.2f);
+      // 暗くなりきる前に水滴を消しきる（残ったまま次のシーンへ切り替わると一瞬で消えて見える）。
+      // Done の直後に遷移が始まるので、深海色の 8 割まで沈んで画面がほぼ暗くなった時点で消し始める
+      // （早すぎると、突入直後の気泡がまだ見えているうちに消えてしまう）。
+      // タイマーを縮めると全粒が同時に消えるので、粒ごとに時間差で痩せさせる
+      const bool nearDark = (phase_ == Phase::Done) ||
+                            (phase_ == Phase::Sink && depth_ >= look_->deepDepth * 0.8f);
+      if (nearDark) lens_.DrainDroplets(pp, kDropletDrainTime);
       lens_.Update(pp, dt);
     }
     if (bubbles_) bubbles_->Follow(*tr, waterY_);

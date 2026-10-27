@@ -272,7 +272,7 @@ public:
 
     // 水滴演出（ Screen Droplets ）タイマーと設定
     float dropletTimer = 0.0f;
-    float dropletDuration = 2.2f; // 着水・出水時から水滴が残りつづける秒数
+    float dropletDuration = 3.4f; // 着水・出水時から水滴が残りつづける秒数（水膜が引いて水滴が流れ出るまで）
     float dropletMaxIntensity = 1.0f;
     float dropletSpeed = 1.2f;
     float dropletDistortion = 0.06f;
@@ -505,11 +505,14 @@ protected:
                         radialBlurTimer = radialBlurDuration;
                         postProcess->SetRadialBlurWidth(radialBlurMaxWidth);
 
-                        // 遷移時（Dive/水上→水中）に気泡・水滴が「上に向かって」昇って消えていく演出
-                        postProcess->AddEffect(PostEffectType::ScreenDroplets);
+                        // 遷移時（Dive/水上→水中）：水面のラインが下から上へ抜け、レンズに残った気泡が浮力と走行風で外へ抜けていく
                         dropletTimer = dropletDuration;
-                        dropletSpeed = -1.3f; // 負のスピード値で上方向に昇るようにスクロール
+                        dropletSpeed = -1.3f; // 負のスピード値で上方向（気泡）
+                        postProcess->SetScreenDropletsIntensity(dropletMaxIntensity);
                         postProcess->SetScreenDropletsSpeed(dropletSpeed);
+                        postProcess->SetScreenDropletsDistortion(dropletDistortion);
+                        postProcess->SetScreenDropletsScale(dropletScale);
+                        postProcess->TriggerScreenDroplets(ScreenDropletSim::Mode::Dive);
 
                         // 着水の衝撃：一瞬だけ暗く沈む
                         waterFlash_.Trigger(postProcess, diveFlashEv, diveFlashDuration);
@@ -522,11 +525,14 @@ protected:
                         radialBlurTimer = radialBlurDuration * 0.7f;
                         postProcess->SetRadialBlurWidth(radialBlurMaxWidth * 0.7f);
 
-                        // 出水時（Emerge/水中→水上）は水滴が重力に従って「下に向かって」したたり落ちて消える演出
-                        postProcess->AddEffect(PostEffectType::ScreenDroplets);
+                        // 出水時（Emerge/水中→水上）：レンズを覆った水膜が中央から割れて引き、残った水滴が重力と走行風で外へ流れ出る
                         dropletTimer = dropletDuration;
-                        dropletSpeed = 1.3f; // 正のスピード値で下方向に滴る
+                        dropletSpeed = 1.3f; // 正のスピード値で下方向（重力）
+                        postProcess->SetScreenDropletsIntensity(dropletMaxIntensity);
                         postProcess->SetScreenDropletsSpeed(dropletSpeed);
+                        postProcess->SetScreenDropletsDistortion(dropletDistortion);
+                        postProcess->SetScreenDropletsScale(dropletScale);
+                        postProcess->TriggerScreenDroplets(ScreenDropletSim::Mode::Surface);
 
                         // 水面を抜けた解放感：一瞬だけ白く飛ぶ
                         waterFlash_.Trigger(postProcess, emergeFlashEv, emergeFlashDuration);
@@ -590,9 +596,11 @@ protected:
                     dropletTimer = 0.0f;
                     postProcess->RemoveEffect(PostEffectType::ScreenDroplets);
                 } else {
-                    float progress = dropletTimer / dropletDuration;
-                    // イーズアウト（滑らかで自然な乾燥と減衰曲線）
-                    float currentIntensity = progress * progress * dropletMaxIntensity;
+                    // 水滴が流れ落ちる間は強度を保ち、最後の 35% で水を痩せさせて消す
+                    // （最初から薄めると、流れている最中の水滴まで透けてしまう）
+                    const float progress = dropletTimer / dropletDuration;
+                    const float x = (std::min)(1.0f, progress / 0.35f);
+                    float currentIntensity = x * x * (3.0f - 2.0f * x) * dropletMaxIntensity;
                     postProcess->SetScreenDropletsIntensity(currentIntensity);
                     postProcess->SetScreenDropletsSpeed(dropletSpeed);
                     postProcess->SetScreenDropletsDistortion(dropletDistortion);
@@ -1242,20 +1250,26 @@ public:
         ImGui::SliderFloat("Speed (正:下向き / 負:上向き)", &dropletSpeed, -5.0f, 5.0f);
         ImGui::SliderFloat("Distortion", &dropletDistortion, 0.0f, 0.2f);
         ImGui::SliderFloat("Scale", &dropletScale, 0.5f, 5.0f);
-        if (ImGui::Button("Test Emerge Splash (水中→水上: 下に向かって滴り消える)")) {
+        if (ImGui::Button("Test Emerge Splash (水中→水上: 水膜が引いて水滴が流れ出る)")) {
             if (auto* postProcess = RC::GetRenderContext().GetPostProcess()) {
-                postProcess->AddEffect(PostEffectType::ScreenDroplets);
                 dropletTimer = dropletDuration;
                 dropletSpeed = 1.3f;
+                postProcess->SetScreenDropletsIntensity(dropletMaxIntensity);
                 postProcess->SetScreenDropletsSpeed(dropletSpeed);
+                postProcess->SetScreenDropletsDistortion(dropletDistortion);
+                postProcess->SetScreenDropletsScale(dropletScale);
+                postProcess->TriggerScreenDroplets(ScreenDropletSim::Mode::Surface);
             }
         }
-        if (ImGui::Button("Test Dive Splash (水上→水中: 上に向かって気泡が昇り消える)")) {
+        if (ImGui::Button("Test Dive Splash (水上→水中: 水面ラインが抜けて気泡が昇る)")) {
             if (auto* postProcess = RC::GetRenderContext().GetPostProcess()) {
-                postProcess->AddEffect(PostEffectType::ScreenDroplets);
                 dropletTimer = dropletDuration;
                 dropletSpeed = -1.3f;
+                postProcess->SetScreenDropletsIntensity(dropletMaxIntensity);
                 postProcess->SetScreenDropletsSpeed(dropletSpeed);
+                postProcess->SetScreenDropletsDistortion(dropletDistortion);
+                postProcess->SetScreenDropletsScale(dropletScale);
+                postProcess->TriggerScreenDroplets(ScreenDropletSim::Mode::Dive);
             }
         }
 #endif

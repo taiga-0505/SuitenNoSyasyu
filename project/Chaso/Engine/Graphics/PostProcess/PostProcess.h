@@ -7,6 +7,7 @@
 #include <vector>
 #include <wrl/client.h>
 #include "Dx12/SRVManager/SRVManager.h"
+#include "ScreenDropletSim.h"
 
 class Dx12Core;
 class PipelineManager;
@@ -425,6 +426,22 @@ public:
   /// @brief 水滴のサイズ・密度（グリッドスケール）を設定する
   /// @param scale グリッドスケール
   void SetScreenDropletsScale(float scale);
+
+  /// @brief 走行風で水滴が画面の外側へ流される強さを設定する
+  /// @param wind 0 で重力 / 浮力だけ、大きいほど外へ流れる（既定 0.6）
+  void SetScreenDropletsWind(float wind);
+
+  /// @brief レンズ水滴の演出を最初から再生する（AddEffect も行う）
+  /// @details 浮上は水膜が中央から割れて引き、残った水滴が流れ出る。
+  ///          潜水は水面のラインが下から上へ抜け、レンズに付いた気泡が昇っていく。
+  ///          Trigger せずに AddEffect だけした場合は、Speed の符号（負で潜水）から自動で選ぶ。
+  /// @param mode 浮上か潜水か
+  void TriggerScreenDroplets(ScreenDropletSim::Mode mode);
+
+  /// @brief 残っているレンズ水滴を急いで消す（シーン遷移の直前などに呼ぶ）
+  /// @details 一斉には消さず、粒ごとに時間差を付けて seconds 秒以内に痩せて消えきるようにする。
+  /// @param seconds 消えきるまでの秒数
+  void DrainScreenDroplets(float seconds);
 
   // ===========================
   // InkOverlay パラメータ
@@ -901,7 +918,7 @@ private:
 
   // ScreenDroplets パラメータ
   // NOTE: HLSL 側 cbuffer ScreenDropletsParams（b1）と 1:1 で対応する。
-  //       全 8 float = 32 byte が 2 個の float4 行に収まる。
+  //       先頭 20 float（float4 × 5 行）＋ 水滴 96 粒 × float4 × 2 = 3152 byte。
   Microsoft::WRL::ComPtr<ID3D12Resource> cbufferScreenDroplets_; ///< 旧方式の定数バッファ（現在のバインドは dynScreenDroplets_ を使う）
   /// @struct ScreenDropletsData
   /// @brief ScreenDroplets 用の定数バッファ
@@ -910,10 +927,26 @@ private:
     float intensity = 1.0f;          ///< 強度
     float speed = 1.0f;              ///< 流れ落ちる速度
     float distortion = 0.05f;        ///< 屈折（歪み）の強さ
-    float scale = 1.5f;              ///< グリッドスケール
+    float scale = 1.5f;              ///< 水滴の大きさ（1.5 で既定）
     float aspectRatio = 1.777f;      ///< アスペクト比（幅 / 高さ）
-    float padding[2] = {0.0f, 0.0f}; ///< 16 バイト境界合わせ
+    float elapsed = 0.0f;            ///< 演出開始からの秒数
+    float mode = 0.0f;               ///< 0: 浮上 1: 潜水
+    float dropCount = 0.0f;          ///< dropA / dropB の有効数
+    float sheetCenterX = 0.888f;     ///< 水膜が割れ始める点 X
+    float sheetCenterY = 0.4f;       ///< 水膜が割れ始める点 Y
+    float sheetDuration = 1.1f;      ///< 水膜が引ききる / 水面ラインが抜けきる秒数
+    float sheetRadiusMax = 1.65f;    ///< 水膜の乾いた領域が届く距離
+    float sheetGravityBias = 0.45f;  ///< 上ほど早く乾く度合い
+    float invScreenHeight = 1.0f / 720.0f; ///< 1 / 画面の高さ（ピクセル）
+    float padding0 = 0.0f;           ///< 16 バイト境界合わせ
+    float drainStart = 1.0e3f;       ///< Drain を始めた時刻（elapsed と同じ基準。していなければ大きな値）
+    float drainDuration = 1.0f;      ///< Drain で消えきるまでの秒数
+    float padding1[2] = {0.0f, 0.0f}; ///< 16 バイト境界合わせ
+    float dropA[ScreenDropletSim::kMaxDrops][4] = {}; ///< xy: 中心, z: 半径, w: 後ろ側の伸び率
+    float dropB[ScreenDropletSim::kMaxDrops][4] = {}; ///< xy: 進行方向, z: 進行方向の伸び率, w: 直交方向の伸び率
   };
+  static_assert(sizeof(ScreenDropletsData) == 80 + ScreenDropletSim::kMaxDrops * 32,
+                "ScreenDropletsData は HLSL 側 cbuffer ScreenDropletsParams と同じ並びにすること");
   ScreenDropletsData *mappedScreenDroplets_ = nullptr; ///< 書き込み先（dynScreenDroplets_ の CPU 側）
   RC::DynamicCB<ScreenDropletsData> dynScreenDroplets_; ///< mappedScreenDroplets_ の実体（CPU/GPU 並行のため毎フレームの領域へ送る）
   float screenDropletsIntensity_ = 1.0f;     ///< 強度（UpdateTime で CB へ送る）
@@ -921,6 +954,14 @@ private:
   float screenDropletsDistortion_ = 0.05f;   ///< 屈折（歪み）の強さ
   float screenDropletsScale_ = 1.5f;         ///< グリッドスケール
   float screenDropletsAspectRatio_ = 1.777f; ///< 画面のアスペクト比（BloodOverlay / InkOverlay にも流す）
+  float screenDropletsWind_ = 0.6f;          ///< 走行風で外へ流される強さ
+  ScreenDropletSim screenDropletSim_;        ///< 水滴の付着・滑落・合体（UpdateTime で進める）
+
+  /// @brief 水滴の挙動を進め、結果を ScreenDroplets の CB へ書く（UpdateTime から呼ぶ）
+  /// @param deltaTime 経過時間（秒）
+  void UpdateScreenDroplets(float deltaTime);
+  /// @brief 今の設定値から水滴シミュレーションの調整値を作る
+  ScreenDropletSim::Params MakeScreenDropletParams() const;
 
   // BloodOverlay パラメータ
   // NOTE: HLSL 側 cbuffer BloodOverlayParams（b1）と 1:1 で対応する。

@@ -504,6 +504,9 @@
     <ClCompile Include="Graphics\PostProcess\PostProcess.cpp">
       <Filter>Graphics\PostProcess</Filter>
     </ClCompile>
+    <ClCompile Include="Graphics\PostProcess\ScreenDropletSim.cpp">
+      <Filter>Graphics\PostProcess</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\Engine\Camera\DebugCamera\DebugCamera.h">
@@ -784,6 +787,9 @@
       <Filter>Graphics\Texture\RenderTexture</Filter>
     </ClInclude>
     <ClInclude Include="Graphics\PostProcess\PostProcess.h">
+      <Filter>Graphics\PostProcess</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\PostProcess\ScreenDropletSim.h">
       <Filter>Graphics\PostProcess</Filter>
     </ClInclude>
     <ClInclude Include="..\Engine\ECS\IComponent.h">
