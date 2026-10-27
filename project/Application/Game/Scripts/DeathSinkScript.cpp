@@ -5,6 +5,7 @@
 #include "Scene.h"
 #include "Game/Framework/WaterCameraFx.h"
 #include "Game/Framework/TransitionDemo.h"
+#include "Game/Framework/SharkFrenzyDemo.h"
 #include "Game/Framework/DeathScreenFx.h"
 
 #if RC_ENABLE_IMGUI
@@ -49,6 +50,11 @@
 ///     瞼が閉じている間に吐くと見えない）で、口元から大きめの泡を吐き、しばらくゴボゴボと漏らす。
 ///     沈む速さが泡の上昇よりずっと速いので、泡はカメラの動きを引き継ぎ、カメラから見て
 ///     ゆっくり昇っていくようにしてある（WaterCameraFx::BreathBurst）。
+///
+///   見せ用デモ（TransitionDemo::kEnabled）:
+///     最初のウェーブが始まって少しすると、サメの群れ（SharkFrenzyDemo）が一斉に襲いかかり、
+///     1 匹目が噛みついた時点で致死ダメージ（pending_damage）を入れる。以降は通常の力尽きた流れと同じ
+///     （game_over → 沈む → "gameover" で Result へ）。サメはカメラに食らいついたまま一緒に沈む。
 ///
 ///   JSON (scriptDataList):
 ///     "enabled" / "delay" / "fallTime" / "sinkTime" / "depth" / "lookUpPitch" / "tiltTime" /
@@ -138,8 +144,9 @@ protected:
   /// @brief 状態を初期化し、前回のタグを消して沈む間に出す泡を生成しておく
   void OnCreate() override {
     phase_ = Phase::Idle;
-    demo_ = false;
     demoTimer_ = 0.0f;
+    demoFallbackT_ = 0.0f;
+    demoWaveSeen_ = false;
     requestT_ = 0.0f;
     breathed_ = false;
     screenFx.Clear(nullptr); // 状態だけ初期化（PostProcess はシーン切り替えで片付いている）
@@ -148,40 +155,39 @@ protected:
     if (enabled && breath) breath_.Spawn(GetScene(), "DeathBreath");
   }
 
-  /// @brief 力尽きたこと（またはデモ開始）を検知し、待機→落下→沈降→遷移要求の順にカメラを動かす
+  /// @brief 沈む演出を進め、見せ用デモのときはサメの群れも動かす
   /// @param dt 前フレームからの経過時間（秒）
   void OnUpdate(float dt) override {
+    UpdateSink(dt);
+    // 見せ用デモ：WAVE 1 の直後にサメの群れに食われる。カメラを動かしたあとに追従させる
+    if (TransitionDemo::kEnabled && dt > 0.0f && enabled) {
+      Entity *self = GetEntity();
+      auto *tr = GetComponent<TransformComponent>();
+      if (self && tr) UpdateDemo(*self, *tr, dt);
+    }
+  }
+
+  /// @brief 力尽きたことを検知し、待機→落下→沈降→遷移要求の順にカメラを動かす
+  /// @param dt 前フレームからの経過時間（秒）
+  void UpdateSink(float dt) {
     if (dt <= 0.0f || !enabled) return;
     Entity *self = GetEntity();
     auto *tr = GetComponent<TransformComponent>();
     if (!self || !tr) return;
 
-    // 待機中: game_over タグかデモ開始を検知したら遷移を引き受けて演出を始める
+    // 待機中: game_over タグを検知したら遷移を引き受けて演出を始める
     if (phase_ == Phase::Idle) {
       SceneContext *ctx = GetSceneContext();
-      // 遷移の見せ用デモ：開始演出が終わって一定時間たったら、力尽きていなくても沈む
-      bool demoStart = false;
-      if (TransitionDemo::kEnabled && ctx && ctx->isPlaying() &&
-          self->GetTagInt(kOwnerTag, 0) != 1) { // クリアの演出（ClearAscendScript）が先なら譲る
-        if (self->GetTagInt("intro_playing", 0) == 1) {
-          demoTimer_ = 0.0f;
-        } else {
-          demoTimer_ += dt;
-          demoStart = demoTimer_ >= TransitionDemo::kDelayAfterStart;
-        }
-      }
-      if (!demoStart && self->GetTagInt("game_over", 0) != 1) return;
+      if (self->GetTagInt("game_over", 0) != 1) return;
       if (!ctx || !ctx->isPlaying()) return;
-      demo_ = demoStart && self->GetTagInt("game_over", 0) != 1;
       self->SetTag(kOwnerTag, 1); // DataDrivenScene の自動遷移を止める（RailMovement / 視点操作も止まる）
       waterY_ = WaterCameraFx::FindWaterY(GetScene());
       phase_ = Phase::Wait;
       t_ = 0.0f;
       requestT_ = 0.0f;
       breathed_ = false;
-      // 血はデモ（力尽きていない）では出さない。色抜けと瞬きは同じ見え方にする
-      screenFx.Begin(RC::GetRenderContext().GetPostProcess(), !demo_);
-      Log::Print(demo_ ? "[DeathSinkScript] begin (transition demo)" : "[DeathSinkScript] begin");
+      screenFx.Begin(RC::GetRenderContext().GetPostProcess(), true);
+      Log::Print("[DeathSinkScript] begin");
     }
 
     // 段階ごとの進行（各段階の経過時間は t_ で測り、段階が変わるたびに 0 へ戻す）
@@ -236,16 +242,7 @@ protected:
         requestT_ += dt;
         // 行き先と演出は遷移表のきっかけ "gameover"（GameMode の決着と同じ行）で引く
         if (resultTarget_.empty()) {
-          if (demo_) {
-            // デモは Result ではなく遷移表の "demo_end"（Title へ dive）。行が無ければ Title へ dive
-            if (!LookupTransition(TransitionDemo::kTrigger, resultTarget_, resultTransition_) ||
-                resultTarget_.empty()) {
-              resultTarget_ = "Title";
-              resultTransition_ = SceneTransitions::kDive;
-            }
-          } else {
-            LookupTransition(kTriggerGameOver, resultTarget_, resultTransition_);
-          }
+          LookupTransition(kTriggerGameOver, resultTarget_, resultTransition_);
         }
         requested_ = !resultTarget_.empty() && RequestSceneChange(resultTarget_, resultTransition_);
         if (!requested_ && requestT_ > 1.5f) {
@@ -285,6 +282,7 @@ protected:
   /// @brief 遷移担当タグを外し、泡を破棄し、画面演出を元に戻す
   void OnDestroy() override {
     if (Entity *self = GetEntity()) self->ClearTag(kOwnerTag);
+    frenzy_.Destroy();
     bubbles_.Destroy();
     breath_.Destroy();
     screenFx.Clear(RC::GetRenderContext().GetPostProcess());
@@ -307,6 +305,46 @@ private:
     return sinkTime * (1.0f - std::sqrt(1.0f - frac));
   }
 
+  /// @brief 見せ用デモ：最初のウェーブが始まったらサメの群れを出し、噛みついたら致死ダメージを入れる
+  /// @param self 自エンティティ（Camera）
+  /// @param tr カメラの Transform
+  /// @param dt 前フレームからの経過時間（秒）
+  void UpdateDemo(Entity &self, const TransformComponent &tr, float dt) {
+    SceneContext *ctx = GetSceneContext();
+    Scene *scene = GetScene();
+    if (!ctx || !ctx->isPlaying() || !scene) return; // 編集モードではサメを作らない
+    frenzy_.Prepare(scene); // 出現の瞬間に止まらないよう先に作って隠しておく
+
+    if (!frenzy_.Started()) {
+      // クリアの演出（ClearAscendScript）や力尽きた演出が先に始まっていれば出さない
+      if (phase_ != Phase::Idle || self.GetTagInt(kOwnerTag, 0) == 1) return;
+      if (self.GetTagInt("intro_playing", 0) == 1) return; // 開始演出の間は待つ
+      if (!demoWaveSeen_) {
+        // WaveManager は Intro〜Cleared の間 wave_busy を 1 にする。最初に立ったものが WAVE 1
+        const Entity *wm = scene->FindEntityByName("WaveManager");
+        demoFallbackT_ += dt;
+        if ((wm && wm->GetTagInt("wave_busy", 0) == 1) ||
+            demoFallbackT_ >= TransitionDemo::kWaveFallbackTime) {
+          demoWaveSeen_ = true;
+          demoTimer_ = 0.0f;
+          Log::Print("[DeathSinkScript] demo: wave started, sharks incoming");
+        }
+        return;
+      }
+      demoTimer_ += dt;
+      if (demoTimer_ >= TransitionDemo::kFrenzyDelay) {
+        frenzy_.Begin(tr, WaterCameraFx::FindWaterY(scene));
+      }
+      return;
+    }
+
+    frenzy_.Update(tr, dt);
+    // 噛みつかれたら力尽きるまで致死ダメージを積む（無敵時間中に弾かれても次のフレームで通る）
+    if (frenzy_.Bitten() && phase_ == Phase::Idle && self.GetTagInt("game_over", 0) != 1) {
+      self.SetTag("pending_damage", TransitionDemo::kLethalDamage);
+    }
+  }
+
   /// @brief 水面を見上げる向きへ、少し横に傾きながらゆっくり回す
   /// @param tr 回転させるカメラの Transform
   /// @param dt 前フレームからの経過時間（秒）
@@ -327,8 +365,10 @@ private:
   RC::Vector3 startRot_{};
   bool requested_ = false;
   float requestT_ = 0.0f;    ///< 遷移の要求を出し始めてからの経過（要求が通らないときの保険用）
-  bool demo_ = false;        ///< 遷移の見せ用デモで沈んでいる（TransitionDemo）
-  float demoTimer_ = 0.0f;   ///< 開始演出が終わってからの経過（デモ用）
+  TransitionDemo::SharkFrenzy frenzy_; ///< 見せ用デモ：サメの群れ
+  float demoTimer_ = 0.0f;     ///< 最初のウェーブが始まってからの経過（デモ用）
+  float demoFallbackT_ = 0.0f; ///< 開始演出が終わってからの経過（ウェーブが来ないときの保険。デモ用）
+  bool demoWaveSeen_ = false;  ///< 最初のウェーブの開始を見たか（デモ用）
   std::string resultTarget_;    ///< 遷移表で引いた行き先（Done に入ってから 1 回だけ引く）
   std::string resultTransition_; ///< 遷移表で引いた演出
   static constexpr const char *kTriggerGameOver = "gameover"; ///< 遷移表のきっかけ名

@@ -7,6 +7,7 @@
 #include "Framework/App.h"
 #include "Game/Framework/GameSession.h"
 #include "Game/Framework/StageProgress.h"
+#include "Game/Framework/TransitionDemo.h"
 #include "Game/Framework/UnderwaterLook.h"
 #include "Game/Framework/WaterCameraFx.h"
 #include "Scene.h"
@@ -243,6 +244,7 @@ protected:
     BuildChoices();
     selected_ = 0;
     decided_ = false;
+    demoT_ = 0.0f;
 
     if (Input *in = Input::GetInstance()) {
       in->GetGameMousePosition(lastMouseX_, lastMouseY_);
@@ -300,6 +302,8 @@ protected:
       return;
     }
     if (!decided_) {
+      // 見せ用デモ：成績が出そろって操作できるようになってからの時間を測る（自動で「セレクトへ」）
+      if (TransitionDemo::kEnabled && InputReady()) demoT_ += deltaTime;
       HandleInput();
     }
   }
@@ -949,6 +953,23 @@ private:
       SetSelected((selected_ + move + ChoiceCount()) % ChoiceCount());
     }
 
+    // 見せ用デモ：kResultHold 秒たったら「セレクトへ」を選び、少し見せてから決定する
+    if (TransitionDemo::kEnabled && demoT_ >= TransitionDemo::kResultHold) {
+      int selectIndex = -1;
+      for (int i = 0; i < ChoiceCount(); ++i) {
+        if (std::string(choices_[static_cast<size_t>(i)].what) == "select") selectIndex = i;
+      }
+      if (selectIndex < 0) {
+        // 「セレクトへ」が無い（ステージ以外から来た）ときは「タイトルへ」、それも無ければ先頭
+        for (int i = 0; i < ChoiceCount(); ++i) {
+          if (std::string(choices_[static_cast<size_t>(i)].what) == "title") selectIndex = i;
+        }
+      }
+      if (selectIndex < 0 && ChoiceCount() > 0) selectIndex = 0;
+      if (selectIndex >= 0) SetSelected(selectIndex);
+      if (demoT_ >= TransitionDemo::kResultHold + TransitionDemo::kResultConfirmDelay) confirm = true;
+    }
+
     // 決定: 選んだボタンの行き先へ（演出が dive なら飛び込みを挟む）
     if (!confirm || choices_.empty()) return;
     const Choice &choice = choices_[static_cast<size_t>(std::clamp(selected_, 0, ChoiceCount() - 1))];
@@ -1089,6 +1110,7 @@ private:
   float pulse_ = 0.0f;
   float bump_ = 0.0f;
   bool decided_ = false;
+  float demoT_ = 0.0f; ///< 見せ用デモ：操作できるようになってからの経過（TransitionDemo）
   int selected_ = 0;
   int prevStickDir_ = 0;
   float lastMouseX_ = 0.0f;

@@ -254,6 +254,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClInclude Include="..\Application\Game\Framework\DeathScreenFx.h" />
     <ClInclude Include="..\Application\Game\Framework\WaterCameraFx.h" />
     <ClInclude Include="..\Application\Game\Framework\TransitionDemo.h" />
+    <ClInclude Include="..\Application\Game\Framework\SharkFrenzyDemo.h" />
     <ClInclude Include="..\Application\Game\Framework\ExposureFlash.h" />
     <ClInclude Include="..\Chaso\Game\Scene\Fade\Fade.h" />
     <ClInclude Include="..\Chaso\Game\Scene\Scene.h" />

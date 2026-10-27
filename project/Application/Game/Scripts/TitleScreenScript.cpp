@@ -17,6 +17,7 @@
 #include "Engine/Render/RenderContext.h"
 #include "Framework/App.h"
 #include "Game/Framework/TitleBlackboard.h"
+#include "Game/Framework/TransitionDemo.h"
 #include "Game/Framework/UnderwaterLook.h"
 #include "Game/Framework/WaterCameraFx.h"
 #include "Scene.h"
@@ -756,6 +757,8 @@ protected:
     }
 
     if (!decided_) {
+      // 見せ用デモ：メニューを操作できるようになってからの時間を測る（自動で「スタート」）
+      if (TransitionDemo::kEnabled && TransitionDemo::kTitleAutoStart) demoT_ += deltaTime;
       HandleInput();
     }
   }
@@ -2027,6 +2030,11 @@ private:
     // 決定
     bool confirm = mouseConfirm || in->IsKeyTrigger(DIK_SPACE) || in->IsKeyTrigger(DIK_RETURN);
     if (in->IsXInputConnected() && in->IsXInputButtonTrigger(XINPUT_GAMEPAD_A)) confirm = true;
+    // 見せ用デモ：kTitleHold 秒たったら「スタート」を選んで決定する
+    if (TransitionDemo::kEnabled && TransitionDemo::kTitleAutoStart && demoT_ >= TransitionDemo::kTitleHold) {
+      if (selected_ != kMenuStart) SetSelected(kMenuStart);
+      confirm = true;
+    }
     if (!confirm) return;
 
     // 選択中の項目に応じて、シーン遷移（スタート）かアプリ終了（ゲーム終了）を行う
@@ -2191,6 +2199,7 @@ private:
   float prevMouseX_ = 0.0f, prevMouseY_ = 0.0f;
   int hovered_ = -1;             ///< カーソル下のメニュー項目（無ければ -1）
   bool decided_ = false;
+  float demoT_ = 0.0f; ///< 見せ用デモ：メニューを操作できるようになってからの経過（TransitionDemo）
   bool readbackOwned_ = false; ///< 波紋の読み戻しを自分が有効にしたか（OnDestroy で戻す）
   std::string startTarget_; ///< 「スタート」の行き先（決定時に遷移表から引く）
   static constexpr const char *kTriggerStart = "start"; ///< 遷移表のきっかけ名

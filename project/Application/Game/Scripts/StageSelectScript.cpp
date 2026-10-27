@@ -6,6 +6,7 @@
 #include "Engine/Render/RenderContext.h"
 #include "Framework/App.h"
 #include "Game/Framework/StageProgress.h"
+#include "Game/Framework/TransitionDemo.h"
 #include "Game/Framework/UnderwaterLook.h"
 #include "Game/Framework/WaterCameraFx.h"
 #include "Scene.h"
@@ -172,6 +173,7 @@ protected:
     leaving_ = false;
     uiAlpha_ = 1.0f;
     uiFadeIn_ = -1.0f;
+    demoT_ = 0.0f;
     if ((dive.enabled && dive.bubbles) || (rise.enabled && rise.bubbles)) {
       bubbles_.Spawn(GetScene(), "SelectBubbles");
     }
@@ -209,7 +211,11 @@ protected:
       UpdateLeave(deltaTime);
       return;
     }
-    if (!decided_) HandleInput();
+    if (!decided_) {
+      // 見せ用デモ：UI が出てからの時間を測る（kSelectHold 秒で選択中の面へ自動出航）
+      if (TransitionDemo::kEnabled && uiFadeIn_ < 0.0f) demoT_ += deltaTime;
+      HandleInput();
+    }
   }
 
   /// @brief 飛び込み・浮上演出を終わらせ、泡とフォントを解放する
@@ -711,6 +717,12 @@ private:
       }
       return;
     }
+    // 見せ用デモ：選択中の面で自動出航（未解放なら解放済みの一番奥へ寄せる）
+    if (TransitionDemo::kEnabled && demoT_ >= TransitionDemo::kSelectHold) {
+      if (!prog.IsUnlocked(selected_)) SetSelected(prog.HighestUnlocked());
+      confirm = true;
+    }
+
     // 出航: 未解放なら揺らして止め、解放済みなら選択を記録して遷移する
     if (!confirm) return;
     if (!prog.IsUnlocked(selected_)) {
@@ -855,6 +867,7 @@ private:
   float bump_ = 0.0f;
   float shake_ = 0.0f;
   bool decided_ = false;
+  float demoT_ = 0.0f; ///< 見せ用デモ：UI が出てからの経過（TransitionDemo）
   int prevStickDir_ = 0;
   float lastMouseX_ = 0.0f;
   float lastMouseY_ = 0.0f;
