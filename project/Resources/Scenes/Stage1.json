@@ -7150,7 +7150,7 @@
                 "riseEase": 2.200000047683716,
                 "risePitchStart": -0.3499999940395355,
                 "sharkChase": {
-                    "enabled": true
+                  "enabled": true
                 },
                 "showStartText": false,
                 "startBandAlpha": 0.7200000286102295,
@@ -7465,7 +7465,7 @@
           "data": {
             "scriptDataList": [
               {
-                "colliderRadius": 0.6,
+                "colliderRadius": 0.5,
                 "count": 1,
                 "drawGizmo": true,
                 "enemyName": "WaveOctopus",
@@ -7478,12 +7478,12 @@
                   "windupDuration": 0.9
                 },
                 "enemyScale": [
-                  2.0,
-                  2.0,
-                  2.0
+                  2.4,
+                  2.4,
+                  2.4
                 ],
                 "enemyScript": "OctopusEnemyScript",
-                "modelPath": "",
+                "modelPath": "Resources/model/octopus/octopus_enemy.glb",
                 "primitiveColor": [
                   0.62,
                   0.28,
@@ -7631,7 +7631,7 @@
           "data": {
             "scriptDataList": [
               {
-                "colliderRadius": 0.6,
+                "colliderRadius": 0.5,
                 "count": 1,
                 "drawGizmo": true,
                 "enemyName": "WaveOctopus",
@@ -7644,12 +7644,12 @@
                   "windupDuration": 0.9
                 },
                 "enemyScale": [
-                  2.0,
-                  2.0,
-                  2.0
+                  2.4,
+                  2.4,
+                  2.4
                 ],
                 "enemyScript": "OctopusEnemyScript",
-                "modelPath": "",
+                "modelPath": "Resources/model/octopus/octopus_enemy.glb",
                 "primitiveColor": [
                   0.62,
                   0.28,
@@ -7712,17 +7712,17 @@
           "data": {
             "scriptDataList": [
               {
-                "colliderRadius": 0.4,
+                "colliderRadius": 3.6,
                 "count": 1,
                 "drawGizmo": true,
                 "enemyName": "WaveShip",
                 "enemyScale": [
-                  3.0,
-                  1.600000023841858,
-                  9.0
+                  1.0,
+                  1.0,
+                  1.0
                 ],
                 "enemyScript": "ShipEnemyScript",
-                "modelPath": "",
+                "modelPath": "Resources/model/ship/ship.glb",
                 "primitiveColor": [
                   0.34,
                   0.21,
@@ -7936,12 +7936,12 @@
                   "featherDamage": 1
                 },
                 "enemyScale": [
-                  0.45,
-                  0.4,
+                  0.95,
+                  0.95,
                   0.95
                 ],
                 "enemyScript": "BirdEnemyScript",
-                "modelPath": "",
+                "modelPath": "Resources/model/bird/bird.glb",
                 "primitiveColor": [
                   0.97,
                   0.97,
@@ -8025,12 +8025,12 @@
                   "featherDamage": 1
                 },
                 "enemyScale": [
-                  0.45,
-                  0.4,
+                  0.95,
+                  0.95,
                   0.95
                 ],
                 "enemyScript": "BirdEnemyScript",
-                "modelPath": "",
+                "modelPath": "Resources/model/bird/bird.glb",
                 "primitiveColor": [
                   0.97,
                   0.97,

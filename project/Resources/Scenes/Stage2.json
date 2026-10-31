@@ -12876,7 +12876,7 @@
           "data": {
             "scriptDataList": [
               {
-                "colliderRadius": 0.6,
+                "colliderRadius": 0.5,
                 "count": 1,
                 "drawGizmo": true,
                 "enemyName": "WaveOctopus",
@@ -12889,12 +12889,12 @@
                   "windupDuration": 0.9
                 },
                 "enemyScale": [
-                  2.0,
-                  2.0,
-                  2.0
+                  2.4,
+                  2.4,
+                  2.4
                 ],
                 "enemyScript": "OctopusEnemyScript",
-                "modelPath": "",
+                "modelPath": "Resources/model/octopus/octopus_enemy.glb",
                 "primitiveColor": [
                   0.62,
                   0.28,
@@ -13042,7 +13042,7 @@
           "data": {
             "scriptDataList": [
               {
-                "colliderRadius": 0.6,
+                "colliderRadius": 0.5,
                 "count": 2,
                 "drawGizmo": true,
                 "enemyName": "WaveOctopus",
@@ -13055,12 +13055,12 @@
                   "windupDuration": 0.9
                 },
                 "enemyScale": [
-                  2.0,
-                  2.0,
-                  2.0
+                  2.4,
+                  2.4,
+                  2.4
                 ],
                 "enemyScript": "OctopusEnemyScript",
-                "modelPath": "",
+                "modelPath": "Resources/model/octopus/octopus_enemy.glb",
                 "primitiveColor": [
                   0.62,
                   0.28,
@@ -13123,17 +13123,17 @@
           "data": {
             "scriptDataList": [
               {
-                "colliderRadius": 0.4,
+                "colliderRadius": 3.599,
                 "count": 1,
                 "drawGizmo": true,
                 "enemyName": "WaveShip",
                 "enemyScale": [
-                  2.4,
-                  1.3,
-                  7.0
+                  0.778,
+                  0.778,
+                  0.778
                 ],
                 "enemyScript": "ShipEnemyScript",
-                "modelPath": "",
+                "modelPath": "Resources/model/ship/ship.glb",
                 "primitiveColor": [
                   0.34,
                   0.21,
@@ -13348,12 +13348,12 @@
                   "ceilingY": 10.5
                 },
                 "enemyScale": [
-                  0.45,
-                  0.4,
+                  0.95,
+                  0.95,
                   0.95
                 ],
                 "enemyScript": "BirdEnemyScript",
-                "modelPath": "",
+                "modelPath": "Resources/model/bird/bird.glb",
                 "primitiveColor": [
                   0.97,
                   0.97,

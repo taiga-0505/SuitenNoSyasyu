@@ -2,6 +2,8 @@
 #include "ECS/ScriptRegistry.h"
 #include "ECS/TransformComponent.h"
 #include "ECS/PrimitiveMeshComponent.h"
+#include "ECS/ModelRendererComponent.h"
+#include "ECS/AnimationComponent.h"
 #include "Common/Log/Log.h"
 #include "RenderCommon.h"
 #include "Scene.h"
@@ -18,7 +20,15 @@
 #include <vector>
 
 // ============================================================================
-// 敵の船（ShipEnemyScript）の見た目：箱 1 個の船体に、船首・甲板・舷側・船室・マスト・帆・旗・大砲を付ける
+// 敵の船（ShipEnemyScript）の見た目
+//
+//   スポナーの modelPath で 2 通りに分かれる：
+//     モデル     … Resources/model/ship/ship.glb（スキン付き 1 体）。部位は作らず、旗のなびきと帆のふくらみは
+//                   モデルのクリップ "Sail" で動かす。被弾の赤点滅もモデルの乗算色だけで全体に効く。
+//                   モデルは m 単位（幅 3・高さ 1.6・長さ 9 の船体 + 船首）なので、enemyScale は (1, 1, 1)。
+//     プリミティブ … modelPath が空のとき。以下のとおり箱 1 個の船体に部位を付ける。
+//
+// 箱 1 個の船体に、船首・甲板・舷側・船室・マスト・帆・旗・大砲を付ける（プリミティブのとき）
 //
 //   - 本体（スポナーが作る Box）はそのまま船体として使う。当たり判定・被弾の赤点滅・撃沈で沈む動きは
 //     今までどおり本体が担当し、このスクリプトは「部位を本体の姿勢に合わせて置く」だけ。
@@ -176,6 +186,19 @@ private:
   void Build(Scene *scene, Entity &self, const TransformComponent &tr) {
     using namespace PartPose;
     built_ = true;
+    // モデルで描くときは部位を作らず、旗と帆はモデルのクリップで動かす
+    if (self.GetComponent<ModelRendererComponent>()) {
+      auto *anim = self.GetComponent<AnimationComponent>();
+      if (!anim) anim = &self.AddComponent<AnimationComponent>();
+      if (anim->clips.empty()) {
+        anim->clips = {{"Sail", "", 0, true, 1.0f}};
+        anim->defaultClip = "Sail";
+        anim->MarkDirty();
+      }
+      // 同じウェーブの船の旗がそろってなびかないよう、生成位置で速さを少しずらす
+      anim->speed = 0.9f + 0.2f * std::fmod(std::fabs(tr.position.x * 0.37f + tr.position.z * 0.11f), 1.0f);
+      return;
+    }
     // 本体の箱の寸法（幅 W・高さ H・長さ L）。箱は一辺 1 で生成されるので scale ＝ 寸法
     const float W = (std::max)(std::fabs(tr.scale.x), 0.5f);
     const float H = (std::max)(std::fabs(tr.scale.y), 0.3f);

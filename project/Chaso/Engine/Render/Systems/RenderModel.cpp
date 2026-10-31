@@ -638,6 +638,32 @@ std::vector<std::string> GetModelJointNames(int modelHandle) {
   return names;
 }
 
+void SetModelJointOverride(int modelHandle, const std::string &jointName, const Vector3 &translate,
+                           const Quaternion &rotate, const Vector3 &scale) {
+  auto &ctx = GetRenderContext();
+  auto *m = ctx.Models().Get(modelHandle);
+  if (!m) return;
+  QuaternionTransform local{};
+  local.translate = translate;
+  local.rotate = rotate;
+  local.scale = scale;
+  m->SetJointOverride(jointName, local);
+}
+
+void ClearModelJointOverride(int modelHandle, const std::string &jointName) {
+  auto &ctx = GetRenderContext();
+  auto *m = ctx.Models().Get(modelHandle);
+  if (!m) return;
+  m->ClearJointOverride(jointName);
+}
+
+void ClearModelJointOverrides(int modelHandle) {
+  auto &ctx = GetRenderContext();
+  auto *m = ctx.Models().Get(modelHandle);
+  if (!m) return;
+  m->ClearJointOverrides();
+}
+
 void SetModelWorldOverride(int modelHandle, const Matrix4x4 &world) {
   auto &ctx = GetRenderContext();
   auto *m = ctx.Models().Get(modelHandle);

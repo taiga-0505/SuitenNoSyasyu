@@ -604,6 +604,28 @@ bool GetModelJointMatrix(int modelHandle, const std::string &jointName,
 /// @return ジョイント名の一覧。スケルトンが無ければ空
 std::vector<std::string> GetModelJointNames(int modelHandle);
 
+/// @brief 指定ジョイントの姿勢（親ジョイント基準の SRT）をアニメーションより優先して使う
+/// @param modelHandle モデルハンドル
+/// @param jointName   ジョイント名
+/// @param translate   親基準の位置
+/// @param rotate      親基準の回転
+/// @param scale       親基準の拡縮
+/// @details 親がルート（単位行列）のジョイントなら、モデル空間の姿勢をそのまま渡せばよい。
+///          解除するまで毎フレーム効く。アニメーションを 1 本も再生していないモデルには効かない
+///          （姿勢の計算がアニメーションの更新の中で行われるため）。
+/// @note 上書きは次の UpdateModelAnimation で反映される。
+void SetModelJointOverride(int modelHandle, const std::string &jointName, const Vector3 &translate,
+                           const Quaternion &rotate, const Vector3 &scale);
+
+/// @brief 指定ジョイントの姿勢の上書きを解除する
+/// @param modelHandle モデルハンドル
+/// @param jointName   ジョイント名
+void ClearModelJointOverride(int modelHandle, const std::string &jointName);
+
+/// @brief モデルの全ジョイントの姿勢の上書きを解除する
+/// @param modelHandle モデルハンドル
+void ClearModelJointOverrides(int modelHandle);
+
 /// @brief 描画に使うワールド行列を直接指定する（Transform の TRS を無視する）
 /// @param modelHandle モデルハンドル
 /// @param world       ワールド行列

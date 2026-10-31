@@ -386,6 +386,31 @@ public:
     return true;
   }
 
+  // === Joint 姿勢の上書き（スクリプトから骨を直接動かす） ===
+
+  /// @brief 指定 Joint の親基準の姿勢（SRT）を、アニメーションの結果より優先して使う
+  /// @param jointName Joint 名
+  /// @param local     親 Joint 基準の姿勢。親がルート（単位行列）ならモデル空間の姿勢そのもの
+  /// @details UpdateAnimation の中で「アニメーション適用 → 上書き適用 → 階層計算」の順に反映する。
+  ///          足の先を地形に沿わせる・目でカーソルを追うなど、クリップでは作れない動きに使う。
+  ///          上書きは解除するまで毎フレーム効き続ける（毎フレーム呼び直してもよい）。
+  ///          アニメーションがアタッチされていないと UpdateAnimation が動かないので、
+  ///          何か 1 本（待機など）は再生しておくこと。
+  void SetJointOverride(const std::string &jointName, const QuaternionTransform &local) {
+    jointOverrides_[jointName] = local;
+  }
+
+  /// @brief 指定 Joint の姿勢の上書きを解除する（アニメーションの姿勢に戻る）
+  /// @param jointName Joint 名
+  void ClearJointOverride(const std::string &jointName) { jointOverrides_.erase(jointName); }
+
+  /// @brief すべての Joint の姿勢の上書きを解除する
+  void ClearJointOverrides() { jointOverrides_.clear(); }
+
+  /// @brief Joint の姿勢を上書き中か
+  /// @return 1 つでも上書きがあれば true
+  bool HasJointOverrides() const { return !jointOverrides_.empty(); }
+
   // === ワールド行列の上書き（ボーン追従などで使う） ===
 
   /// @brief 描画に使うワールド行列を直接指定する（Transform の TRS を無視する）
@@ -495,5 +520,8 @@ private:
 
   // === スキニング関連 ===
   std::vector<RC::Matrix4x4> skinMatrices_; ///< スキンクラスター行列パレット（T_i = IBP_i * SSM_i）
+
+  // === Joint 姿勢の上書き ===
+  std::map<std::string, QuaternionTransform> jointOverrides_; ///< Joint 名 → 親基準の姿勢（SetJointOverride）
 };
 

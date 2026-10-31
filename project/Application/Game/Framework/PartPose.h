@@ -99,6 +99,46 @@ inline RC::Vector3 ToEngineEuler(const Mat3 &M) {
   // ジンバルロック（真上・真下を向いた）：c = 0 に寄せる。m10 = sin a sin b, m11 = cos a
   return {std::atan2(M.m[1][0] * sb, M.m[1][1]), b, 0.0f};
 }
+/// @brief 回転行列をクォータニオンにする（RC::SetModelJointOverride に渡す用）
+/// @details エンジンの MakeRotateMatrix(Quaternion) は行ベクトル規約の行列を作るので、
+///          ここでも M を「v * M で回す行列」として扱う（M の転置が列ベクトル規約の回転）。
+/// @param M 回転行列（行ベクトル規約）
+/// @return 同じ回転を表す単位クォータニオン
+inline RC::Quaternion ToQuaternion(const Mat3 &M) {
+  // 列ベクトル規約の R[i][j] = M[j][i] で標準の式を使う
+  const float r00 = M.m[0][0], r11 = M.m[1][1], r22 = M.m[2][2];
+  const float r01 = M.m[1][0], r10 = M.m[0][1];
+  const float r02 = M.m[2][0], r20 = M.m[0][2];
+  const float r12 = M.m[2][1], r21 = M.m[1][2];
+  RC::Quaternion q{};
+  const float tr = r00 + r11 + r22;
+  if (tr > 0.0f) {
+    const float s = std::sqrt(tr + 1.0f) * 2.0f;
+    q = {(r21 - r12) / s, (r02 - r20) / s, (r10 - r01) / s, 0.25f * s};
+  } else if (r00 > r11 && r00 > r22) {
+    const float s = std::sqrt(1.0f + r00 - r11 - r22) * 2.0f;
+    q = {0.25f * s, (r01 + r10) / s, (r02 + r20) / s, (r21 - r12) / s};
+  } else if (r11 > r22) {
+    const float s = std::sqrt(1.0f + r11 - r00 - r22) * 2.0f;
+    q = {(r01 + r10) / s, 0.25f * s, (r12 + r21) / s, (r02 - r20) / s};
+  } else {
+    const float s = std::sqrt(1.0f + r22 - r00 - r11) * 2.0f;
+    q = {(r02 + r20) / s, (r12 + r21) / s, 0.25f * s, (r10 - r01) / s};
+  }
+  const float l = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+  if (l > 1e-8f) { q.x /= l; q.y /= l; q.z /= l; q.w /= l; }
+  return q;
+}
+/// @brief 行列の転置（回転行列なら逆回転）
+/// @param M 回転行列
+/// @return M の転置
+inline Mat3 Transpose(const Mat3 &M) {
+  Mat3 r{};
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j) r.m[i][j] = M.m[j][i];
+  return r;
+}
+
 /// @brief +Z が前、+X が右、+Y が上の本体を、ロール→ピッチ→ヨーの順に（本体の軸で）回した姿勢
 /// @param yaw     ヨー角（rad。+Y 軸まわり）
 /// @param pitchUp 正で機首上げ（Rx は正で機首下げなので符号を反転する）

@@ -669,6 +669,12 @@ void ModelObject::UpdateAnimation(float dt) {
             // 単一アニメーションの適用
             ApplyAnimation(skeleton_, animation_, animationTime_, rootMotionJointName_, &restTranslations_);
         }
+        // スクリプトからの Joint 姿勢の上書き（アニメーションより優先）
+        for (const auto &[jointName, local] : jointOverrides_) {
+            if (auto jit = skeleton_.jointMap.find(jointName); jit != skeleton_.jointMap.end()) {
+                skeleton_.joints[jit->second].transform = local;
+            }
+        }
         UpdateSkeleton(skeleton_);
 
         // スキニング行列パレット計算: T_i = InverseBindPose_i * SkeletonSpaceMatrix_i

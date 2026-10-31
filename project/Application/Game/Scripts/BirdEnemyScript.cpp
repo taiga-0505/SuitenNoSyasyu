@@ -30,10 +30,13 @@
 //   サメ（水面を突っ込む）・船（遠くから砲撃）・タコ（墨で視界）に対して、
 //   鳥は「上から」来る。照準を上へ振らせることで、水面ばかり見ていられなくする。
 //
-//   見た目はプリミティブの組み合わせ。本体（胴）はスポナーが作る球で、
-//   頭・くちばし・尾・翼（内側/外側 × 左右）を別エンティティとして生成し、毎フレーム姿勢を書き込む。
-//   ※ エンジンの描画は Transform の親子を解決しない（PrimitiveMesh へは local の値がそのまま渡る）ため、
-//     部位のワールド姿勢はこのスクリプトが自前で合成している。
+//   見た目は 2 通り（スポナーの modelPath で切り替わる）：
+//     モデル     … Resources/model/bird/bird.glb（スキン付き 1 体）。羽ばたき・ため・振り下ろし・落下は
+//                   モデルのクリップ（Flap / Cruise / Windup / Throw / Fall / Float）で動かす。
+//                   単位は「胴の半長 = 1」なので、enemyScale は (u, u, u)（既定 0.95）にする。
+//     プリミティブ … modelPath が空のとき。本体（胴）はスポナーが作る球で、頭・くちばし・尾・翼を
+//                   別エンティティとして生成し、毎フレーム姿勢を書き込む（エンジンの描画は Transform の
+//                   親子を解決しないため、部位のワールド姿勢はこのスクリプトが自前で合成している）。
 //
 //   スクリプト間の通信は他の敵と同じくタグのみ：
 //     羽根 → 自機 : pending_damage（同じフレームに複数当たっても 1 発ぶん）
@@ -644,6 +647,15 @@ protected:
     }
     if (!deathDurationFromData) deathDuration = 2.4f;
 
+    // モデルで描くときは部位を作らず、クリップで羽ばたかせる（並びは bird.glb のアニメーション順）
+    SetupModelClips({{"Flap", "", 0, true, 1.0f},
+                     {"Cruise", "", 1, true, 1.0f},
+                     {"Windup", "", 2, true, 1.0f},
+                     {"Throw", "", 3, false, 1.0f},
+                     {"Fall", "", 4, true, 1.0f},
+                     {"Float", "", 5, true, 1.0f}},
+                    "Flap");
+
     state_ = BirdState::Wait;
     if (auto *tr = GetComponent<TransformComponent>()) {
       baseScale_ = tr->scale;
@@ -699,6 +711,7 @@ protected:
     if (isDead) {
       UpdateDeath(tr, dt);
       UpdateParts(tr->position);
+      UpdateModelClip(tr);
       return;
     }
 
@@ -819,6 +832,7 @@ protected:
     UpdateAttitude(toCam, dt);
     UpdateFlap(dt);
     UpdateParts(tr->position);
+    UpdateModelClip(tr);
   }
 
   /// @brief 基底の被ダメージ処理に加え、羽毛を散らし、撃破なら錐もみ落下、ため中ならひるませる
@@ -914,6 +928,8 @@ private:
     partsBuilt_ = true;
     Entity *self = GetEntity();
     if (!scene || !self) return;
+    // モデルで描くときは部位は要らない（翼はモデルの骨で動く）
+    if (IsModelVisual()) return;
 
     /// @brief 部位 1 つぶんの生成仕様（種類・左右・形状・大きさ・位置・色）
     struct Spec { PartKind kind; float side; PrimitiveType type; RC::Vector3 size; RC::Vector3 offset; RC::Vector4 color; };
@@ -1144,6 +1160,9 @@ private:
     flapPhase_ += 2.0f * BirdDetail::kPi * freq * dt;
     if (flapPhase_ > 2.0f * BirdDetail::kPi) flapPhase_ -= 2.0f * BirdDetail::kPi;
 
+    flapEffort_ = effort;
+    flapFreq_ = freq;
+
     float inner = dihedral + amp * effort * std::sin(flapPhase_);
     float outer = amp * 0.6f * effort * std::sin(flapPhase_ - 0.7f);
 
@@ -1162,6 +1181,38 @@ private:
     }
     innerAngle_ = inner;
     outerAngle_ = outer;
+  }
+
+  /// @brief モデルで描くとき、状態に合ったクリップを再生する（プリミティブのときは何もしない）
+  /// @details 羽ばたきの強さ（UpdateFlap の effort）で Flap / Cruise を選び、
+  ///          羽ばたきの速さ（freq）は再生速度で合わせる。クリップは kModelFlapHz で作ってある。
+  /// @param tr 自身の Transform（着水の判定に使う）
+  void UpdateModelClip(const TransformComponent *tr) {
+    AnimationComponent *anim = ModelAnimation();
+    if (!anim) return;
+    if (isDead) {
+      const bool inWater = hasWater_ && tr && tr->position.y <= waterY_;
+      anim->speed = 1.0f;
+      anim->PlayClip(inWater ? "Float" : "Fall", 0.25f);
+      return;
+    }
+    switch (state_) {
+    case BirdState::Windup:
+      anim->speed = 1.0f;
+      anim->PlayClip("Windup", 0.12f);
+      return;
+    case BirdState::Throw:
+      // 0.18 秒の振り下ろし。ためから間を空けずに切り替える
+      anim->speed = 0.18f / (std::max)(throwDuration, 0.01f);
+      anim->PlayClip("Throw", 0.03f);
+      return;
+    default:
+      break;
+    }
+    // 強く羽ばたくか（ばたつかないよう少し幅を持たせて切り替える）
+    strongFlap_ = strongFlap_ ? (flapEffort_ > 0.5f) : (flapEffort_ > 0.62f);
+    anim->speed = flapFreq_ / kModelFlapHz;
+    anim->PlayClip(strongFlap_ ? "Flap" : "Cruise", 0.3f);
   }
 
   /// @brief 撃破後：翼が止まって錐もみしながら落ち、水面に落ちたらゆっくり沈む
@@ -1292,6 +1343,11 @@ private:
   float flapPhase_ = 0.0f;
   float innerAngle_ = 0.0f;
   float outerAngle_ = 0.0f;
+  float flapEffort_ = 0.35f;   ///< 羽ばたきの強さ（UpdateFlap が書く。モデルのクリップ選びに使う）
+  float flapFreq_ = 2.6f;      ///< 羽ばたきの速さ Hz（UpdateFlap が書く。モデルの再生速度に使う）
+  bool strongFlap_ = false;    ///< モデル：Flap（強）を再生中か。false なら Cruise（弱）
+  /// @brief bird.glb の Flap / Cruise は 1 周 1/2.6 秒で作ってある（scripts/modelgen/models.py の BIRD_FLAP_HZ）
+  static constexpr float kModelFlapHz = 2.6f;
   float windupAmount_ = 0.0f;  ///< ためで翼を振り上げている度合い 0..1
   float throwAmount_ = 0.0f;   ///< 振り下ろしの進み 0..1
   float deathSpin_ = 0.0f;

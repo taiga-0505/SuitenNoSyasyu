@@ -2,6 +2,7 @@
 #include "ECS/TransformComponent.h"
 #include "ECS/PrimitiveMeshComponent.h"
 #include "ECS/ModelRendererComponent.h"
+#include "ECS/AnimationComponent.h"
 #include "ECS/GPUParticleComponent.h"
 #include "ECS/NativeScriptComponent.h"
 #include "Particle/GPUParticle.h"
@@ -18,6 +19,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <memory>
 #include <string>
@@ -27,7 +29,8 @@
 // ステージ開始の「サメに追われる → 振り向いて水の弾で倒す」三人称カットシーン
 //
 //   DeepRiseIntroScript が浮上の前に再生する（"sharkChase": { "enabled": true } のとき）。
-//   深海から斜め上へ逃げるタコ（タイトルと同じくプリミティブの組み合わせ）を、
+//   深海から斜め上へ逃げるタコ（タイトルと同じ octopus.glb。足・目は骨を毎フレーム上書きして動かす。
+//   octopusModel を空にすると以前のプリミティブの組み合わせに戻る）を、
 //   後ろからサメ（shark_game.glb）が追う。2 秒ほど追われたら振り向き、水の弾（プレイヤーの弾と
 //   同じ水の質感）を撃って倒し、
 //   カメラがタコの頭へ寄って一人称に戻る。その位置から DeepRiseIntroScript の浮上が続く。
@@ -77,7 +80,9 @@ struct SharkChaseParams {
 
   // ---- タコ ----
   float octopusScale = 0.9f;
-  RC::Vector4 bodyColor = {0.93f, 0.40f, 0.33f, 1.0f};
+  /// @brief タコのモデル（空ならプリミティブの組み合わせ）。骨の名前は TitleOctopusScript と同じ
+  std::string octopusModel = "Resources/model/octopus/octopus.glb";
+  RC::Vector4 bodyColor = {0.93f, 0.40f, 0.33f, 1.0f}; ///< プリミティブのときだけ使う
   RC::Vector4 shotColor = {0.2f, 0.6f, 1.0f, 0.85f}; ///< 水の弾の色（RailShooterController の自機弾と同じ）
   float shotSize = 0.3f;                             ///< 水の弾の半径（通常弾と同じ）
 
@@ -117,6 +122,7 @@ struct SharkChaseParams {
         {"sharkLungeGap", sharkLungeGap},
         {"sharkAimForward", sharkAimForward},
         {"octopusScale", octopusScale},
+        {"octopusModel", octopusModel},
         {"bodyColor", v4(bodyColor)},
         {"shotColor", v4(shotColor)},
         {"shotSize", shotSize},
@@ -177,6 +183,7 @@ struct SharkChaseParams {
     readF("sharkLungeGap", sharkLungeGap);
     readF("sharkAimForward", sharkAimForward);
     readF("octopusScale", octopusScale);
+    readS("octopusModel", octopusModel);
     readV4("bodyColor", bodyColor);
     readV4("shotColor", shotColor);
     readF("shotSize", shotSize);
@@ -216,7 +223,8 @@ struct SharkChaseParams {
     ImGui::DragFloat("Aim Forward", &sharkAimForward, 0.05f, -5.0f, 5.0f);
     ImGui::SeparatorText("Octopus");
     ImGui::DragFloat("Octopus Scale", &octopusScale, 0.01f, 0.2f, 4.0f);
-    ImGui::ColorEdit4("Body", &bodyColor.x);
+    ImGui::TextDisabled("Model: %s", octopusModel.empty() ? "(primitives)" : octopusModel.c_str());
+    ImGui::ColorEdit4("Body (primitives)", &bodyColor.x);
     ImGui::ColorEdit4("Shot Color", &shotColor.x);
     ImGui::DragFloat("Shot Size", &shotSize, 0.01f, 0.05f, 2.0f);
     ImGui::SeparatorText("Camera");
@@ -386,6 +394,7 @@ public:
     };
     for (auto &w : octParts_) kill(w);
     octParts_.clear();
+    kill(octModel_);
     for (auto &s : shots_) kill(s.e);
     shots_.clear();
     kill(sharkEntity_);
@@ -515,6 +524,15 @@ private:
     const RC::Vector4 skinDark = {body.x * 0.85f, body.y * 0.8f, body.z * 0.8f, body.w};
     const RC::Vector4 eye = {0.98f, 0.98f, 0.96f, 1.0f};
     const RC::Vector4 pupil = {0.05f, 0.05f, 0.07f, 1.0f};
+    const bool useModel = !p_.octopusModel.empty();
+    if (useModel) {
+      // モデルで描くときは部位のエンティティは作らない（添字だけそろえて、あとは水の弾を作る）
+      if (octModel_.expired()) octModel_ = MakeOctopusModel();
+      while (built_ < kOctParts) {
+        octParts_.emplace_back();
+        ++built_;
+      }
+    }
     for (int n = 0; n < kBuildPerFrame && built_ < total; ++n, ++built_) {
       const int i = built_;
       if (i < kOctParts) {
@@ -534,6 +552,43 @@ private:
         shots_.push_back(s);
       }
     }
+  }
+
+  /// @brief タコのモデルを作る（非表示・画面外で作る）
+  /// @details 骨の姿勢は PoseOctopus が毎フレーム上書きする。上書きはアニメーションの更新の中で反映されるので、
+  ///          待機のクリップを 1 本再生しておく（全部の骨を上書きするので見た目には出ない）。
+  std::shared_ptr<Entity> MakeOctopusModel() {
+    if (!scene_) return nullptr;
+    auto e = scene_->CreateEntity("SharkChase_Octopus");
+    if (!e) return nullptr;
+    if (auto f = folder_.lock()) e->SetParentGuid(f->Guid());
+    e->SetTag("transient", 1);
+    auto &tr = e->AddComponent<TransformComponent>();
+    tr.position = {0.0f, -500.0f, 0.0f};
+    tr.scale = {p_.octopusScale, p_.octopusScale, p_.octopusScale};
+    auto &mr = e->AddComponent<ModelRendererComponent>();
+    mr.modelPath = p_.octopusModel;
+    auto &anim = e->AddComponent<AnimationComponent>();
+    anim.clips = {{"Idle", "", 0, true, 1.0f}};
+    anim.defaultClip = "Idle";
+    scene_->InitDynamicEntityRuntime(*e);
+    e->SetActive(false);
+    return e;
+  }
+
+  /// @brief 単位ベクトル a を b へ回す最短の回転（クォータニオン）
+  static RC::Quaternion ShortestArc(const RC::Vector3 &a, const RC::Vector3 &b) {
+    const float d = a.x * b.x + a.y * b.y + a.z * b.z;
+    if (d < -0.9999f) {
+      // 真逆：a に直交する軸で 180°
+      RC::Vector3 ax = {0.0f, -a.z, a.y};
+      if (Len(ax) < 1e-3f) ax = {a.z, 0.0f, -a.x};
+      ax = Norm(ax, {0.0f, 1.0f, 0.0f});
+      return {ax.x, ax.y, ax.z, 0.0f};
+    }
+    RC::Quaternion q = {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x, 1.0f + d};
+    const float l = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+    return {q.x / l, q.y / l, q.z / l, q.w / l};
   }
 
   /// @brief 見た目だけのサメを作る（敵スクリプト・コライダーは付けない）
@@ -874,6 +929,11 @@ private:
     using namespace PartPose;
     const bool show = octVisible_ && phase_ != Phase::Done &&
                       !(phase_ == Phase::Merge && t_ / (std::max)(p_.mergeDuration, 1e-3f) > 0.72f);
+    if (auto m = octModel_.lock()) {
+      SetActive(octModel_, show);
+      if (show) PoseOctopusModel(*m);
+      return;
+    }
     for (auto &w : octParts_) SetActive(w, show);
     if (!show) return;
 
@@ -923,6 +983,98 @@ private:
         Place(part(kTentacleStart + t * kSegments + k), world, body, {r * s, r * s, r * s * 1.25f});
       }
     }
+  }
+
+  /// @brief モデルのタコの姿勢を書く（プリミティブ版の PoseOctopus と同じ形を骨で作る）
+  /// @details octopus.glb の骨はすべて root 直下なので、骨の姿勢＝モデル空間（scale 1）の姿勢。
+  ///          胴・顔・目は伸び縮み（stretch）を位置と scale に掛ける。足は 1 本 6 節（プリミティブは 5 節）。
+  ///          rest の足 m は水平に +Z から (m + 0.5) × 45° の向きへ伸びているので、ねじれが少ないよう
+  ///          「今の足の向き（水平成分）」に近い rest の足を割り当ててから、rest の向き → 今の向きへ回す。
+  void PoseOctopusModel(Entity &m) {
+    using namespace PartPose;
+    auto *tr = m.GetComponent<TransformComponent>();
+    auto *mr = m.GetComponent<ModelRendererComponent>();
+    if (!tr || !mr || !mr->HasModel()) return;
+    const float s = p_.octopusScale;
+    const float sq = std::clamp(recoil_ + 0.04f * std::sin(time_ * 9.0f), -0.6f, 0.8f);
+    const RC::Vector3 stretch = {1.0f - 0.35f * sq, 1.0f + 0.5f * sq, 1.0f - 0.35f * sq};
+    const Mat3 body = BodyMatrix(octYaw_, octPitchUp_, 0.0f);
+
+    // モデルの置き場所（描画側へも即座に写す）
+    tr->position = octPos_;
+    tr->rotation = ToEngineEuler(body);
+    tr->scale = {s, s, s};
+    const int h = mr->modelHandle;
+    if (auto *mt = RC::GetModelTransformPtr(h)) *mt = tr->ToTransform();
+
+    const RC::Quaternion qI = {0.0f, 0.0f, 0.0f, 1.0f};
+    auto put = [&](const char *joint, const RC::Vector3 &l, const RC::Vector3 &scl) {
+      RC::SetModelJointOverride(h, joint, {l.x * stretch.x, l.y * stretch.y, l.z * stretch.z}, qI, scl);
+    };
+    // 胴（モデルの外套膜は後ろを持ち上げた形で作ってあるので回さない）・顔
+    put("mantle", {0.0f, 0.32f, -0.22f}, stretch);
+    put("head", {0.0f, 0.14f, 0.12f}, stretch);
+    // 目と黒目（顔の前面。lookSide_ で横目になる）
+    const float px = 0.045f * lookSide_;
+    put("eye_L", {-0.17f, 0.36f, 0.27f}, stretch);
+    put("eye_R", {0.17f, 0.36f, 0.27f}, stretch);
+    put("pupil_L", {-0.17f - px, 0.37f, 0.37f - 0.03f * lookSide_}, stretch);
+    put("pupil_R", {0.17f + px, 0.37f, 0.37f - 0.03f * lookSide_}, stretch);
+
+    // 足：付け根の輪から後ろ下（A）へたなびく（PoseOctopus と同じ式。節の間隔はモデルに合わせる）
+    constexpr int kModelSegments = 6;
+    const RC::Vector3 A = {0.0f, -0.330f, -0.944f};
+    const RC::Vector3 U1 = {1.0f, 0.0f, 0.0f};
+    const RC::Vector3 U2 = {0.0f, 0.944f, -0.330f};
+    const RC::Vector3 center = {0.0f, 0.02f, -0.08f};
+    const float spacing = 0.17f;
+    const float legStep = kTwoPi / static_cast<float>(kTentacles);
+
+    // 足 t の付け根の向き（水平成分の角度）に近い rest の足を割り当てる（巡回の向き・ずらしを総当たり）
+    std::array<float, kTentacles> alpha{};
+    for (int t = 0; t < kTentacles; ++t) {
+      const float phi = (static_cast<float>(t) + 0.5f) * legStep;
+      const RC::Vector3 radial = AddV(ScaleV(U1, std::cos(phi)), ScaleV(U2, std::sin(phi)));
+      alpha[t] = std::atan2(radial.x, radial.z);
+    }
+    int bestDir = 1, bestOfs = 0;
+    float bestErr = 1e9f;
+    for (int dir : {1, -1}) {
+      for (int ofs = 0; ofs < kTentacles; ++ofs) {
+        float err = 0.0f;
+        for (int t = 0; t < kTentacles; ++t) {
+          const int mi = ((dir * t + ofs) % kTentacles + kTentacles) % kTentacles;
+          err += std::fabs(WrapAngle(alpha[t] - (static_cast<float>(mi) + 0.5f) * legStep));
+        }
+        if (err < bestErr) { bestErr = err; bestDir = dir; bestOfs = ofs; }
+      }
+    }
+
+    for (int t = 0; t < kTentacles; ++t) {
+      const int mi = ((bestDir * t + bestOfs) % kTentacles + kTentacles) % kTentacles;
+      const float restAng = (static_cast<float>(mi) + 0.5f) * legStep;
+      const RC::Vector3 restDir = {std::sin(restAng), 0.0f, std::cos(restAng)};
+      const float phi = (static_cast<float>(t) + 0.5f) * legStep;
+      const RC::Vector3 radial = AddV(ScaleV(U1, std::cos(phi)), ScaleV(U2, std::sin(phi)));
+      // 節の位置（最後の節の向きを決めるため 1 つ先まで求める）
+      std::array<RC::Vector3, kModelSegments + 1> P{};
+      RC::Vector3 p = AddV(center, ScaleV(radial, 0.2f));
+      for (int k = 0; k <= kModelSegments; ++k) {
+        const float kk = static_cast<float>(k) / static_cast<float>(kModelSegments - 1);
+        const float wave = 0.35f * std::sin(time_ * 7.0f + static_cast<float>(t) * 0.9f - static_cast<float>(k) * 0.8f);
+        const float th = splay_ + wave * (0.3f + kk);
+        const RC::Vector3 dir = AddV(ScaleV(A, std::cos(th)), ScaleV(radial, std::sin(th)));
+        if (k > 0) p = AddV(p, ScaleV(dir, spacing));
+        P[k] = p;
+      }
+      for (int k = 0; k < kModelSegments; ++k) {
+        const RC::Vector3 tang = Norm(Sub(P[k + 1], k > 0 ? P[k - 1] : P[k]), A);
+        const std::string joint = "leg" + std::to_string(mi) + "_" + std::to_string(k);
+        RC::SetModelJointOverride(h, joint, P[k], ShortestArc(restDir, tang), {1.0f, 1.0f, 1.0f});
+      }
+    }
+    // 書いた骨をこのフレームのうちに反映する（アニメーションの更新は次フレーム冒頭なので 1 フレーム遅れる）
+    if (RC::IsModelReady(h)) RC::UpdateModelAnimation(h, 0.0f);
   }
 
   // ------------------------------------------------------------------
@@ -1001,6 +1153,7 @@ private:
 
   // タコ
   std::vector<std::weak_ptr<Entity>> octParts_;
+  std::weak_ptr<Entity> octModel_; ///< タコのモデル（octopusModel が空なら作らない）
   std::weak_ptr<Entity> folder_;
   int built_ = 0;
   RC::Vector3 octPos_{};

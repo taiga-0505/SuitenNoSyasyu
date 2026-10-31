@@ -31,6 +31,10 @@
 //
 //   スクリプト間の通信は他の敵と同じくタグのみ：
 //     墨玉 → 自機  : pending_ink（強さ×100 の整数を加算）/ pending_damage
+//
+//   見た目：スポナーの modelPath が Resources/model/octopus/octopus_enemy.glb ならモデル（スキン付き 1 体）で、
+//   足の動きはクリップ（Idle / Jet / Windup / Spit）。胴の中心がモデルの原点（＝当たり判定の中心）。
+//   伸び縮み・ためで膨らむのは今までどおり Transform の scale で行う。modelPath が空なら球で代用する。
 // ============================================================================
 
 namespace OctopusDetail {
@@ -599,6 +603,13 @@ protected:
     }
     if (!deathDurationFromData) deathDuration = 1.6f;
 
+    // モデルで描くときの足のクリップ（並びは octopus_enemy.glb のアニメーション順）
+    SetupModelClips({{"Idle", "", 0, true, 1.0f},
+                     {"Jet", "", 1, false, 1.0f},
+                     {"Windup", "", 2, true, 1.0f},
+                     {"Spit", "", 3, false, 1.0f}},
+                    "Idle");
+
     state_ = OctopusState::Wait;
     if (auto *tr = GetComponent<TransformComponent>()) {
       baseScale_ = tr->scale;
@@ -625,6 +636,7 @@ protected:
       const float k = std::clamp(1.0f - deathTimer / (std::max)(deathDuration, 0.01f), 0.0f, 1.0f);
       tr->scale = {baseScale_.x * (0.4f + 0.6f * k), baseScale_.y * (0.2f + 0.8f * k), baseScale_.z * (0.4f + 0.6f * k)};
       tr->position.y -= 1.5f * dt;
+      PlayModelClip("Idle", 0.3f); // ため中に倒されたら足を戻す
       return;
     }
 
@@ -715,6 +727,7 @@ protected:
           velocity_.y += to.y / l * jetImpulse * k;
           velocity_.z += to.z / l * jetImpulse * k;
           jetPulse_ = 1.0f;
+          PlayModelClip("Jet", 0.05f, true); // 足を閉じて水を押し出す（終わると Idle に戻る）
         }
       }
       Drift(tr, dt);
@@ -725,6 +738,7 @@ protected:
         state_ = OctopusState::Windup;
         stateTimer_ = 0.0f;
         SaveOriginalColor();
+        PlayModelClip("Windup", 0.2f);
       }
       break;
     }
@@ -755,6 +769,7 @@ protected:
           velocity_.z -= toCam.z / dist * recoilSpeed;
         }
         jetPulse_ = 1.0f;
+        PlayModelClip("Spit", 0.05f, true); // 吐いた反動で足を閉じる（終わると Idle に戻る）
         state_ = OctopusState::Recover;
         stateTimer_ = 0.0f;
         fireCooldown_ = fireInterval;
@@ -797,7 +812,16 @@ protected:
       state_ = OctopusState::Recover;
       stateTimer_ = 0.0f;
       fireCooldown_ = fireInterval * 0.5f;
+      PlayModelClip("Jet", 0.08f, true); // ひるんで足をすぼめる
     }
+  }
+
+  /// @brief モデルで描いているときだけクリップを再生する（球で代用しているときは何もしない）
+  /// @param name クリップ名（Idle / Jet / Windup / Spit）
+  /// @param blend クロスフェード秒数
+  /// @param force 同じクリップでも頭から再生し直すか
+  void PlayModelClip(const char *name, float blend, bool force = false) {
+    if (AnimationComponent *anim = ModelAnimation()) anim->PlayClip(name, blend, force);
   }
 
 public:

@@ -3,6 +3,8 @@
 #include "ECS/TransformComponent.h"
 #include "ECS/CameraComponent.h"
 #include "ECS/PrimitiveMeshComponent.h"
+#include "ECS/ModelRendererComponent.h"
+#include "ECS/AnimationComponent.h"
 #include "ECS/WaterComponent.h"
 #include "Common/Water/WaterSurface.h"
 #include "Common/Log/Log.h"
@@ -33,7 +35,10 @@
 //     他のタイトル用スクリプトとは TitleBlackboard（値だけの掲示板）でつながる：
 //       文字・メニューの位置 … TitleScreenScript が書く（しがみつく先・よける先）
 //       カーソル          … TitleMouseRippleScript が書く（目で追う・驚く・寄ってくる）
-//   - 見た目はプリミティブの組み合わせ（モデルが無いため）：
+//   - 見た目は modelPath（既定 Resources/model/octopus/octopus.glb）のスキン付きモデル 1 体。
+//     胴・顔・目・黒目・足の節（8 本 × 6 節）はモデルの骨（head / mantle / eye_* / pupil_* / leg{t}_{k}）で、
+//     下のふるまいで求めた各部位の姿勢を RC::SetModelJointOverride で骨へ書き込む（足は文字の形に沿わせるため
+//     クリップではなくスクリプトで決める）。modelPath を空にすると以前のプリミティブの組み合わせに戻る：
 //       胴（後ろに伸びた楕円球）＋ 顔 ＋ 目 2 つ ＋ 黒目 2 つ ＋ 足 8 本（球を 6 つずつ連ねる）。
 //     墨はエンティティを作らず OnRender3D で水面より後に半透明で描く（水面の泡判定に巻き込まれないように）
 //     真上から見下ろすカメラなので、足は水面（または文字の上面）に放射状に広がる形で見せる。
@@ -122,6 +127,9 @@ public:
   /// 水面すぐ下の物は泡で白い塊に見えるので、潜るときはこの帯を一瞬で抜け、これより深い所を泳ぐ
   float foamDepth = 2.0f;
   float swimSpeed = 3.2f;          ///< 驚いて水中を逃げるときの速さ（m/s。ジェット推進の平均）
+  /// @brief タコのモデル（空ならプリミティブの組み合わせで代用）。色はモデルのテクスチャで決まる
+  std::string modelPath = "Resources/model/octopus/octopus.glb";
+  // 以下の色はプリミティブで代用するときだけ使う
   RC::Vector4 bodyColor = {0.93f, 0.40f, 0.33f, 1.0f};
   RC::Vector4 eyeColor = {0.98f, 0.98f, 0.96f, 1.0f};
   RC::Vector4 pupilColor = {0.05f, 0.05f, 0.07f, 1.0f};
@@ -155,6 +163,7 @@ public:
     j["tentacleWave"] = tentacleWave;
     j["foamDepth"] = foamDepth;
     j["swimSpeed"] = swimSpeed;
+    j["modelPath"] = modelPath;
     j["bodyColor"] = J4(bodyColor);
     j["eyeColor"] = J4(eyeColor);
     j["pupilColor"] = J4(pupilColor);
@@ -188,6 +197,7 @@ public:
     ReadF(j, "tentacleWave", tentacleWave);
     ReadF(j, "foamDepth", foamDepth);
     ReadF(j, "swimSpeed", swimSpeed);
+    if (j.contains("modelPath") && j["modelPath"].is_string()) modelPath = j["modelPath"].get<std::string>();
     ReadV4(j, "bodyColor", bodyColor);
     ReadV4(j, "eyeColor", eyeColor);
     ReadV4(j, "pupilColor", pupilColor);
@@ -203,6 +213,7 @@ public:
   void OnImGui() override {
     ImGui::Text("State: %s  (%.1fs)  parts %d / %d", StateName(state_), stateT_, static_cast<int>(parts_.size()),
                 kPartCount);
+    ImGui::TextDisabled("Model: %s", modelPath.empty() ? "(primitives)" : modelPath.c_str());
     ImGui::Text("Next in %.1fs", (std::max)(0.0f, timer_));
     ImGui::Checkbox("Enabled", &enabled);
     if (ImGui::Button("Peek Now")) debugRequest_ = 1;
@@ -237,7 +248,7 @@ public:
     ImGui::DragFloat("Ink Size", &inkSize, 0.05f, 0.2f, 10.0f);
     ImGui::DragFloat("Ink Life", &inkLife, 0.05f, 0.2f, 10.0f);
     ImGui::ColorEdit4("Ink Color", &inkColor.x);
-    ImGui::TextDisabled("colors are applied on scene reload");
+    ImGui::TextDisabled("colors are for primitives only / applied on scene reload");
   }
 #endif
 
@@ -332,6 +343,8 @@ protected:
       if (auto e = p.entity.lock()) e->Destroy();
     }
     parts_.clear();
+    if (auto m = model_.lock()) m->Destroy();
+    model_.reset();
     if (inkModel_ >= 0) RC::UnloadModel(inkModel_);
     inkModel_ = -1;
     inkActive_ = false;
@@ -346,9 +359,13 @@ private:
   enum class State { Hidden, Rising, Peeking, Climbing, Clinging, Leaving, Diving };
 
   /// @brief 部位 1 つ（エンティティと、胴に対する置き方）
+  /// @details モデルで描くときは entity を持たず、joint（モデルの骨）へ姿勢を書き込む。
   struct Part {
     std::weak_ptr<Entity> entity;
     RC::Vector3 size{1, 1, 1}; ///< scale 1 のときの Transform.scale
+    std::string joint;         ///< モデルの骨の名前（モデルで描くとき）
+    Mat3 restRot = PartPose::Identity(); ///< モデルの rest でこの部位が向いている向き（胴のローカル）
+    bool leg = false;          ///< 足の節か（足は伸び縮みの scale を骨に掛けない）
   };
 
   // 部位の並び（parts_ の添字）
@@ -496,6 +513,7 @@ private:
   // ------------------------------------------------------------------
 
   /// @brief 部位を kBuildPerFrame 個ずつ作る（フォルダは最初に 1 つ）
+  /// @details モデルで描くときはモデルのエンティティを 1 つ作り、部位は骨の名前などのデータだけなので一度に揃える。
   /// @param scene 対象のシーン
   void BuildSome(Scene *scene) {
     if (static_cast<int>(parts_.size()) >= kPartCount) return;
@@ -507,39 +525,54 @@ private:
         folder_ = folder;
       }
     }
+    const bool useModel = !modelPath.empty();
+    if (useModel && !model_.lock()) model_ = MakeModel(scene);
     const RC::Vector4 skinDark = {bodyColor.x * 0.85f, bodyColor.y * 0.8f, bodyColor.z * 0.8f, bodyColor.w};
-    for (int n = 0; n < kBuildPerFrame; ++n) {
+    const int perFrame = useModel ? kPartCount : kBuildPerFrame;
+    for (int n = 0; n < perFrame; ++n) {
       const int i = static_cast<int>(parts_.size());
       if (i >= kPartCount) return;
       Part p;
       std::shared_ptr<Entity> e;
       // 大きさは scale 1 のとき（球は半径、円柱は半径 × 高さ）。+Z が顔の前、+Y が上
+      // joint / restRot は octopus.glb の骨（scripts/modelgen/models.py の build_octopus と対応）
       switch (i) {
       case kMantle:
-        e = MakePrimitive(scene, "TitleOctopus_Mantle", PrimitiveType::Sphere, bodyColor);
+        if (!useModel) e = MakePrimitive(scene, "TitleOctopus_Mantle", PrimitiveType::Sphere, bodyColor);
         p.size = {0.46f, 0.40f, 0.58f};
+        p.joint = "mantle";
+        p.restRot = PartPose::RotX(0.55f); // モデルの外套膜は後ろを持ち上げた形で作ってある
         break;
       case kFace:
-        e = MakePrimitive(scene, "TitleOctopus_Face", PrimitiveType::Sphere, bodyColor);
+        if (!useModel) e = MakePrimitive(scene, "TitleOctopus_Face", PrimitiveType::Sphere, bodyColor);
         p.size = {0.42f, 0.36f, 0.40f};
+        p.joint = "head";
         break;
       case kEyeL:
       case kEyeR:
-        e = MakePrimitive(scene, "TitleOctopus_Eye", PrimitiveType::Sphere, eyeColor);
+        if (!useModel) e = MakePrimitive(scene, "TitleOctopus_Eye", PrimitiveType::Sphere, eyeColor);
         p.size = {0.12f, 0.11f, 0.12f};
+        p.joint = (i == kEyeL) ? "eye_L" : "eye_R";
         break;
       case kPupilL:
       case kPupilR:
-        e = MakePrimitive(scene, "TitleOctopus_Pupil", PrimitiveType::Sphere, pupilColor);
+        if (!useModel) e = MakePrimitive(scene, "TitleOctopus_Pupil", PrimitiveType::Sphere, pupilColor);
         p.size = {0.06f, 0.05f, 0.07f};
+        p.joint = (i == kPupilL) ? "pupil_L" : "pupil_R";
         break;
       default: {
         // 足：根元から先へ細くなる球。1 本おきに少し色を変えて足の区切りを見せる
         const int k = (i - kTentacleStart) % kSegments;
         const int t = (i - kTentacleStart) / kSegments;
         const float r = 0.15f - 0.018f * static_cast<float>(k);
-        e = MakePrimitive(scene, "TitleOctopus_Leg", PrimitiveType::Sphere, (t % 2 == 0) ? bodyColor : skinDark);
+        if (!useModel) {
+          e = MakePrimitive(scene, "TitleOctopus_Leg", PrimitiveType::Sphere, (t % 2 == 0) ? bodyColor : skinDark);
+        }
         p.size = {r, r * 0.75f, r};
+        p.joint = "leg" + std::to_string(t) + "_" + std::to_string(k);
+        // rest の足 t は +Z から (t + 0.5) × 45° 回した向きへ水平に伸びている
+        p.restRot = PartPose::RotY((static_cast<float>(t) + 0.5f) * (PartPose::kTwoPi / static_cast<float>(kTentacles)));
+        p.leg = true;
         break;
       }
       }
@@ -572,6 +605,29 @@ private:
     return e;
   }
 
+  /// @brief タコのモデルのエンティティを作る（非アクティブ・画面外で作る）
+  /// @details 骨の姿勢はスクリプトが毎フレーム上書きするが、上書きはアニメーションの更新の中で反映されるので
+  ///          待機のクリップを 1 本再生しておく（敵のタコと同じクリップ。上書きしない骨は無いので見た目には出ない）。
+  /// @param scene 対象のシーン
+  /// @return 作ったエンティティ（失敗したら nullptr）
+  std::shared_ptr<Entity> MakeModel(Scene *scene) {
+    auto e = scene->CreateEntity("TitleOctopus_Model");
+    if (!e) return nullptr;
+    if (auto f = folder_.lock()) e->SetParentGuid(f->Guid());
+    e->SetTag("transient", 1); // シーン保存に含めない
+    auto &tr = e->AddComponent<TransformComponent>();
+    tr.position = {0.0f, -500.0f, 0.0f};
+    tr.scale = {scale, scale, scale};
+    auto &mr = e->AddComponent<ModelRendererComponent>();
+    mr.modelPath = modelPath;
+    auto &anim = e->AddComponent<AnimationComponent>();
+    anim.clips = {{"Idle", "", 0, true, 1.0f}};
+    anim.defaultClip = "Idle";
+    scene->InitDynamicEntityRuntime(*e);
+    e->SetActive(false);
+    return e;
+  }
+
   /// @brief 部位の表示・非表示をまとめて切り替える
   /// @param visible 表示するなら true
   void SetVisible(bool visible) {
@@ -581,14 +637,60 @@ private:
     for (auto &p : parts_) {
       if (auto e = p.entity.lock()) e->SetActive(visible);
     }
+    if (auto m = model_.lock()) m->SetActive(visible);
+  }
+
+  /// @brief モデルの置き場所（胴の原点と向き）を決める。部位の姿勢はこれを基準に骨へ書く
+  /// @param origin 足の付け根の高さの胴の原点（ワールド）
+  /// @param body 胴の向き（ワールド）
+  void PlaceModel(const RC::Vector3 &origin, const Mat3 &body) {
+    modelOrigin_ = origin;
+    modelBody_ = body;
+    auto m = model_.lock();
+    if (!m) return;
+    auto *tr = m->GetComponent<TransformComponent>();
+    if (!tr) return;
+    tr->position = origin;
+    tr->rotation = PartPose::ToEngineEuler(body);
+    tr->scale = {scale, scale, scale};
+    // 描画側へ即座に写す（Transform の同期は次フレーム冒頭なので、そのままだと 1 フレーム遅れる）
+    if (auto *mr = m->GetComponent<ModelRendererComponent>()) {
+      if (mr->HasModel()) {
+        if (auto *mt = RC::GetModelTransformPtr(mr->modelHandle)) *mt = tr->ToTransform();
+      }
+    }
+  }
+
+  /// @brief 骨へ書いた姿勢を、このフレームのうちに描画へ反映させる（スケルトンを計算し直す）
+  void FlushModelPose() {
+    auto m = model_.lock();
+    if (!m) return;
+    if (auto *mr = m->GetComponent<ModelRendererComponent>()) {
+      if (mr->HasModel() && RC::IsModelReady(mr->modelHandle)) RC::UpdateModelAnimation(mr->modelHandle, 0.0f);
+    }
   }
 
   /// @brief 部位 1 つへワールド姿勢を書き込む
+  /// @details モデルで描くときは、PlaceModel で決めた胴の座標へ直して骨の姿勢として書く。
+  ///          骨はすべて root 直下（root は単位）なので、骨の姿勢＝モデル空間の姿勢。
   /// @param p 部位
   /// @param pos ワールド位置
   /// @param rot ワールド回転
   /// @param scl 大きさの倍率（size × scale にさらに掛ける。伸び縮み用）
   void PlacePart(const Part &p, const RC::Vector3 &pos, const Mat3 &rot, const RC::Vector3 &scl) {
+    if (auto m = model_.lock()) {
+      auto *mr = m->GetComponent<ModelRendererComponent>();
+      if (!mr || !mr->HasModel()) return;
+      const Mat3 inv = PartPose::Transpose(modelBody_);
+      const float s = (std::max)(scale, 1e-3f);
+      const RC::Vector3 d = {pos.x - modelOrigin_.x, pos.y - modelOrigin_.y, pos.z - modelOrigin_.z};
+      const RC::Vector3 local = PartPose::ScaleV(PartPose::Apply(d, inv), 1.0f / s);
+      // rest の向きを打ち消してから、胴の中での向きにする（行ベクトル規約なので左から順に効く）
+      const Mat3 jointRot = PartPose::MatMul(PartPose::Transpose(p.restRot), PartPose::MatMul(rot, inv));
+      const RC::Vector3 jointScale = p.leg ? RC::Vector3{1.0f, 1.0f, 1.0f} : scl;
+      RC::SetModelJointOverride(mr->modelHandle, p.joint, local, PartPose::ToQuaternion(jointRot), jointScale);
+      return;
+    }
     auto e = p.entity.lock();
     if (!e) return;
     auto *tr = e->GetComponent<TransformComponent>();
@@ -1259,6 +1361,7 @@ private:
     }
     // 深い所を泳ぐときは胴を水平に寝かせ（外套膜が先）、足を後ろへなびかせる
     const Mat3 body = MatMul(BodyMatrix(yaw_, -0.25f * jet_, 0.0f), tilt);
+    PlaceModel(origin, body); // モデルで描くときは、ここを基準に部位の姿勢を骨へ書く
 
     // ---- 胴（後ろへ持ち上がった楕円球）・顔・目・黒目 ----
     auto at = [&](const RC::Vector3 &local) {
@@ -1424,6 +1527,7 @@ private:
     }
     if (freezeNow) gripFrozen_ = true;
     legSnap_ = false;
+    FlushModelPose();
   }
 
   /// @brief 文字の縁から垂れ下がる足の節の高さ
@@ -1471,6 +1575,9 @@ private:
   // ------------------------------------------------------------------
 
   std::vector<Part> parts_;
+  std::weak_ptr<Entity> model_;             ///< タコのモデル（modelPath が空なら作らない）
+  RC::Vector3 modelOrigin_{};               ///< モデルを置いた胴の原点（PlaceModel）
+  Mat3 modelBody_ = PartPose::Identity();   ///< モデルを置いた胴の向き（PlaceModel）
   std::weak_ptr<Entity> folder_;
   bool visible_ = true; ///< SetVisible の現在値（最初の SetVisible(false) で全部を隠すため true から始める）
 

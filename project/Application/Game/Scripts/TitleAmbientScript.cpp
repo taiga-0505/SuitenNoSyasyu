@@ -3,6 +3,7 @@
 #include "ECS/TransformComponent.h"
 #include "ECS/CameraComponent.h"
 #include "ECS/ModelRendererComponent.h"
+#include "ECS/AnimationComponent.h"
 #include "ECS/PrimitiveMeshComponent.h"
 #include "ECS/WaterComponent.h"
 #include "Common/Water/WaterSurface.h"
@@ -42,8 +43,9 @@
 //       drift : 木箱・樽・流木。水面の波（WaterSurface）と波紋（RenderInteractiveWater の
 //               読み戻し。タイトルでは TitleScreenScript が有効化）に合わせて浮き沈み・傾く。
 //               サメと船は自分の航跡を拾って暴れるので波紋には乗せない（Gerstner のみ）
-//       gull  : カモメ。プリミティブの組み合わせ（BirdEnemyScript と同じ作り）で羽ばたく。群れで来ることがある
-//       ship  : 帆船。プリミティブの組み合わせ。波で揺れ、船首から航跡の波紋を出す
+//       gull  : カモメ。bird.glb（敵の鳥と同じモデル）のクリップ Flap / Glide で羽ばたき・滑空する。群れで来ることがある
+//       ship  : 帆船。ship.glb（敵の船と同じモデル。旗と帆はクリップ Sail）。波で揺れ、船首から航跡の波紋を出す
+//               どちらも modelPath を空にすると以前のプリミティブの組み合わせに戻る
 //       fish  : 小魚の群れ。背中だけ水面に出して泳ぎ、カーソルが近づくと散って逃げる（驚くと跳ねる）
 //   - ぶつかり：船・漂流物はタイトル文字（TitleBlackboard 経由で位置を知る）に当たると文字を押しのけ、
 //     漂流物どうしは弾き合う。当たった瞬間に水しぶきと波紋を出す。
@@ -206,6 +208,8 @@ public:
 
   // ---- カモメ ----
   KindParams gull = MakeGull();
+  /// @brief カモメのモデル（空ならプリミティブの組み合わせ）。胴の半長 = 1 の単位で作ってある
+  std::string gullModelPath = "Resources/model/bird/bird.glb";
   float gullHeightMin = 8.0f;   ///< 水面からの高さ（m）
   float gullHeightMax = 11.0f;
   float gullFlapFrequency = 2.4f;
@@ -217,6 +221,8 @@ public:
 
   // ---- 船 ----
   KindParams ship = MakeShip();
+  /// @brief 船のモデル（空ならプリミティブの組み合わせ）。m 単位・全長約 10.6m で作ってあるので kShipModelScale で縮める
+  std::string shipModelPath = "Resources/model/ship/ship.glb";
   float shipTiltScale = 0.8f;
   bool shipWake = true;                  ///< 船首から航跡波を出す
   float shipWakeLength = 10.0f;          ///< V の長さ（m）
@@ -328,6 +334,7 @@ public:
     jg["glideChance"] = gullGlideChance;
     jg["flockMax"] = gullFlockMax;
     jg["turnDeg"] = gullTurnDeg;
+    jg["modelPath"] = gullModelPath;
     j["gull"] = jg;
 
     nlohmann::json jp = WriteKind(ship);
@@ -337,6 +344,7 @@ public:
     jp["foam"] = shipFoam;
     jp["hullColor"] = {shipHullColor.x, shipHullColor.y, shipHullColor.z, shipHullColor.w};
     jp["sailColor"] = {shipSailColor.x, shipSailColor.y, shipSailColor.z, shipSailColor.w};
+    jp["modelPath"] = shipModelPath;
     j["ship"] = jp;
 
     nlohmann::json jf = WriteKind(fish);
@@ -436,6 +444,7 @@ public:
       ReadF(jg, "glideChance", gullGlideChance);
       ReadI(jg, "flockMax", gullFlockMax);
       ReadF(jg, "turnDeg", gullTurnDeg);
+      ReadS(jg, "modelPath", gullModelPath);
     }
     if (j.contains("ship") && j["ship"].is_object()) {
       const auto &jp = j["ship"];
@@ -446,6 +455,7 @@ public:
       ReadF(jp, "foam", shipFoam);
       ReadVec4(jp, "hullColor", shipHullColor);
       ReadVec4(jp, "sailColor", shipSailColor);
+      ReadS(jp, "modelPath", shipModelPath);
     }
     if (j.contains("fish") && j["fish"].is_object()) {
       const auto &jf = j["fish"];
@@ -572,12 +582,16 @@ public:
     ImGui::DragFloat("Flap Deg##Gull", &gullFlapDeg, 0.5f, 0.0f, 70.0f);
     ImGui::DragFloat("Glide Chance##Gull", &gullGlideChance, 0.01f, 0.0f, 1.0f);
     ImGui::DragInt("Flock Max##Gull", &gullFlockMax, 1, 1, 6);
+    ImGui::TextDisabled("Model: %s (Flap Deg is for primitives only)",
+                        gullModelPath.empty() ? "(primitives)" : gullModelPath.c_str());
     kindUi("Ship", Kind::Ship, ship);
     ImGui::DragFloat("Tilt##Ship", &shipTiltScale, 0.05f, 0.0f, 2.0f);
     ImGui::Checkbox("Wake##Ship", &shipWake);
     ImGui::SameLine();
     ImGui::DragFloat("Len (m)##ShipWake", &shipWakeLength, 0.1f, 0.5f, 30.0f);
     ImGui::DragFloat("Foam x##Ship", &shipFoam, 0.01f, 0.0f, 5.0f);
+    ImGui::TextDisabled("Model: %s (hull / sail colors are for primitives only)",
+                        shipModelPath.empty() ? "(primitives)" : shipModelPath.c_str());
     kindUi("Fish", Kind::Fish, fish);
     ImGui::DragFloat("Spread (m)##Fish", &fishSpread, 0.05f, 0.3f, 6.0f);
     ImGui::DragFloat("Flee Radius##Fish", &fishFleeRadius, 0.1f, 0.0f, 15.0f);
@@ -683,6 +697,13 @@ private:
   using Mat3 = TitleAmbientDetail::Mat3;
   static constexpr float kSharkJumpBoost = 1.6f; ///< 跳んでいるあいだの速さの倍率（勢いをつけて跳ぶ）
   static constexpr float kRockMax = 0.4f;        ///< 揺れの上限（rad）
+
+  /// @brief bird.glb（胴の半長 = 1）を、プリミティブのカモメの胴（半長 0.72）に合わせる倍率
+  static constexpr float kGullModelScale = 0.72f;
+  /// @brief ship.glb（幅 3m）を、プリミティブの船（幅 1.6m）に合わせる倍率
+  static constexpr float kShipModelScale = 0.53f;
+  /// @brief bird.glb の Flap は 1 周 1/2.6 秒で作ってある（scripts/modelgen/models.py の BIRD_FLAP_HZ）
+  static constexpr float kGullModelFlapHz = 2.6f;
 
   /// @brief 出てくるものの種類
   enum class Kind { Shark = 0, Drift, Gull, Ship, Fish, Count };
@@ -896,6 +917,13 @@ private:
   /// @param out 読み込み先
   static void ReadB(const nlohmann::json &j, const char *key, bool &out) {
     if (j.contains(key) && j[key].is_boolean()) out = j[key].get<bool>();
+  }
+  /// @brief j[key] が文字列なら読み込む（無い・型違いなら out はそのまま）
+  /// @param j 読み込み元の JSON
+  /// @param key キー名
+  /// @param out 読み込み先
+  static void ReadS(const nlohmann::json &j, const char *key, std::string &out) {
+    if (j.contains(key) && j[key].is_string()) out = j[key].get<std::string>();
   }
   /// @brief j[key] が要素 4 つ以上の配列なら Vector4 として読み込む（それ以外は out はそのまま）
   /// @param j 読み込み元の JSON
@@ -1218,6 +1246,43 @@ private:
     a.parts.push_back(p);
   }
 
+  /// @brief スキン付きモデルの部位を 1 つ作って a に加える（非アクティブで作る）
+  /// @param scene 対象のシーン
+  /// @param a 追加先の本体
+  /// @param name エンティティ名
+  /// @param path モデルのパス
+  /// @param clips 登録するクリップ（index は .glb 内のアニメーションの並び順）
+  /// @param defaultClip 最初に再生するクリップ名
+  /// @param offset 本体中心からの位置（本体ローカル、scale 1 のとき）
+  /// @param scale モデルの大きさ（scale 1 のとき。一様）
+  void AddModel(Scene *scene, Actor &a, const std::string &name, const std::string &path,
+                const std::vector<AnimationClip> &clips, const std::string &defaultClip, const RC::Vector3 &offset,
+                float scale) {
+    auto e = MakeEntity(scene, name);
+    if (!e) return;
+    auto &mr = e->AddComponent<ModelRendererComponent>();
+    mr.modelPath = path;
+    auto &anim = e->AddComponent<AnimationComponent>();
+    anim.clips = clips;
+    anim.defaultClip = defaultClip;
+    scene->InitDynamicEntityRuntime(*e);
+    e->SetActive(false);
+    Part p;
+    p.entity = e;
+    p.offset = offset;
+    p.scale = {scale, scale, scale};
+    a.parts.push_back(p);
+  }
+
+  /// @brief 本体がモデル 1 つで描かれていれば、そのアニメーションを返す
+  /// @param a 対象
+  /// @return AnimationComponent（プリミティブの組み合わせなら nullptr）
+  static AnimationComponent *ModelAnim(const Actor &a) {
+    if (a.parts.empty()) return nullptr;
+    auto e = a.parts[0].entity.lock();
+    return e ? e->GetComponent<AnimationComponent>() : nullptr;
+  }
+
   /// @brief サメ（shark モデル 1 つ）を作る
   /// @param scene 対象のシーン
   /// @return 作った本体（エンティティを作れなければ部位なし）
@@ -1278,6 +1343,13 @@ private:
   Actor BuildGull(Scene *scene) {
     Actor a;
     a.kind = Kind::Gull;
+    if (!gullModelPath.empty()) {
+      // bird.glb は胴の半長 = 1。プリミティブの胴（半長 0.72）に大きさを合わせる。
+      // クリップの index は bird.glb の並び（0 Flap / 6 Glide）
+      AddModel(scene, a, "AmbientGull", gullModelPath, {{"Flap", "", 0, true, 1.0f}, {"Glide", "", 6, true, 1.0f}},
+               "Flap", {0, 0, 0}, kGullModelScale);
+      return a;
+    }
     const RC::Vector4 white = {0.97f, 0.97f, 0.96f, 1.0f};
     const RC::Vector4 gray = {0.74f, 0.77f, 0.80f, 1.0f};
     const RC::Vector4 tip = {0.14f, 0.15f, 0.17f, 1.0f};
@@ -1304,6 +1376,13 @@ private:
   Actor BuildShip(Scene *scene) {
     Actor a;
     a.kind = Kind::Ship;
+    if (!shipModelPath.empty()) {
+      // ship.glb は幅 3m・船体中心が喫水。プリミティブの船（幅 1.6m・前後 -2.1〜2.7m）に合わせて縮め、
+      // 船首が前へ長いぶん少し後ろへずらす（当たり判定の円・航跡の船首位置はプリミティブのときと同じ）
+      AddModel(scene, a, "AmbientShip", shipModelPath, {{"Sail", "", 0, true, 1.0f}}, "Sail", {0, 0, -0.4f},
+               kShipModelScale);
+      return a;
+    }
     const RC::Vector4 deck = {0.66f, 0.49f, 0.30f, 1.0f};
     const RC::Vector4 cabin = {0.86f, 0.84f, 0.78f, 1.0f};
     const RC::Vector4 roof = {0.62f, 0.18f, 0.14f, 1.0f};
@@ -1371,15 +1450,15 @@ private:
 
   /// @brief 出してよい状態か（モデルは非同期ロードなので、読み終わるまで出さない）
   /// @param a 対象
-  /// @return 出してよければ true（サメ以外は常に true）
+  /// @return 出してよければ true（モデルで描くもの＝サメ・カモメ・船は読み終わってから。プリミティブは常に true）
   static bool IsReady(const Actor &a) {
     if (a.kind == Kind::Fish) return a.fishTarget > 0 && static_cast<int>(a.fish.size()) >= a.fishTarget;
-    if (a.kind != Kind::Shark) return true;
     if (a.parts.empty()) return false;
     auto e = a.parts[0].entity.lock();
     if (!e) return false;
     auto *ren = e->GetComponent<ModelRendererComponent>();
-    return ren && ren->modelHandle >= 0 && RC::IsModelReady(ren->modelHandle);
+    if (!ren) return true; // プリミティブの組み合わせ
+    return ren->modelHandle >= 0 && RC::IsModelReady(ren->modelHandle);
   }
 
   /// @brief 種類 k の使える空きを 1 つ選ぶ
@@ -1950,11 +2029,22 @@ private:
     const float amp = gullFlapDeg * kDeg * a.flapWeight;
     const float inner = gullDihedralDeg * kDeg + amp * std::sin(a.flapPhase);
     const float outer = 0.6f * amp * std::sin(a.flapPhase - 0.7f) - 0.05f * (1.0f - a.flapWeight);
+    const Mat3 body = BodyMatrix(a.heading, 0.0f, a.roll);
+
+    // モデル（bird.glb）：羽ばたき ⇔ 滑空はクリップの切り替え。胴の上下もクリップに入っている
+    if (AnimationComponent *anim = ModelAnim(a)) {
+      anim->PlayClip(a.flapWeight > 0.5f ? "Flap" : "Glide", 0.4f);
+      // 群れがそろって羽ばたかないよう、個体ごとに速さを少しずらす
+      const float jitter = 0.92f + 0.16f * std::fmod(std::fabs(a.phase), 1.0f);
+      anim->speed = gullFlapFrequency / kGullModelFlapHz * jitter;
+      PlaceRigid(a, {a.pos.x, a.pos.y + bob, a.pos.z}, body);
+      return;
+    }
+
     // 羽ばたきに合わせて胴がわずかに上下する（振り下ろしで持ち上がる）
     const float lift = 0.05f * a.scale * std::cos(a.flapPhase) * a.flapWeight;
 
     const RC::Vector3 bodyPos = {a.pos.x, a.pos.y + bob + lift, a.pos.z};
-    const Mat3 body = BodyMatrix(a.heading, 0.0f, a.roll);
     PlaceRigid(a, bodyPos, body);
 
     // 翼：内側は肩を軸に、外側は肘（内側の先端）を軸にさらに曲げる

@@ -4,6 +4,7 @@
 #include "ECS/TransformComponent.h"
 #include "Scene.h"
 #include "ECS/ModelRendererComponent.h"
+#include "ECS/AnimationComponent.h"
 #include "ECS/PrimitiveMeshComponent.h"
 #include "ECS/GPUParticleComponent.h"
 #include "ECS/NativeScriptComponent.h"
@@ -134,6 +135,39 @@ protected:
                 }
             }
         }
+    }
+
+    /// @brief モデル（ModelRendererComponent）で描かれているか
+    /// @return スポナーの modelPath が指定されていて、モデルで描画しているなら true
+    /// @details false ならプリミティブで代用している（modelPath が空）。
+    bool IsModelVisual() {
+        Entity* self = GetEntity();
+        return self && self->GetComponent<ModelRendererComponent>() != nullptr;
+    }
+
+    /// @brief モデルのアニメーションを用意する（AnimationComponent を付けてクリップを登録する）
+    /// @param clips 登録するクリップ（index は .glb 内のアニメーションの並び順）
+    /// @param defaultClip 最初に再生し、ワンショットのあとに戻るクリップ名
+    /// @return 用意した AnimationComponent。プリミティブで代用しているときは nullptr
+    /// @details 既にクリップが登録されていれば（シーンに保存されたものなど）そのまま使う。
+    AnimationComponent* SetupModelClips(const std::vector<AnimationClip>& clips, const std::string& defaultClip) {
+        Entity* self = GetEntity();
+        if (!self || !self->GetComponent<ModelRendererComponent>()) return nullptr;
+        auto* anim = self->GetComponent<AnimationComponent>();
+        if (!anim) anim = &self->AddComponent<AnimationComponent>();
+        if (anim->clips.empty()) {
+            anim->clips = clips;
+            anim->defaultClip = defaultClip;
+            anim->MarkDirty();
+        }
+        return anim;
+    }
+
+    /// @brief モデルのアニメーション（無ければ nullptr）
+    /// @return 自身の AnimationComponent
+    AnimationComponent* ModelAnimation() {
+        Entity* self = GetEntity();
+        return self ? self->GetComponent<AnimationComponent>() : nullptr;
     }
 
     /// @brief 保存しておいた元の色に戻す（未保存なら何もしない）

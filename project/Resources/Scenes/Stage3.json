@@ -15907,7 +15907,7 @@
           "data": {
             "scriptDataList": [
               {
-                "colliderRadius": 0.6,
+                "colliderRadius": 0.5,
                 "count": 1,
                 "drawGizmo": true,
                 "enemyName": "WaveOctopus",
@@ -15920,12 +15920,12 @@
                   "windupDuration": 0.9
                 },
                 "enemyScale": [
-                  2.0,
-                  2.0,
-                  2.0
+                  2.4,
+                  2.4,
+                  2.4
                 ],
                 "enemyScript": "OctopusEnemyScript",
-                "modelPath": "",
+                "modelPath": "Resources/model/octopus/octopus_enemy.glb",
                 "primitiveColor": [
                   0.62,
                   0.28,
@@ -16073,7 +16073,7 @@
           "data": {
             "scriptDataList": [
               {
-                "colliderRadius": 0.6,
+                "colliderRadius": 0.5,
                 "count": 2,
                 "drawGizmo": true,
                 "enemyName": "WaveOctopus",
@@ -16086,12 +16086,12 @@
                   "windupDuration": 0.9
                 },
                 "enemyScale": [
-                  2.0,
-                  2.0,
-                  2.0
+                  2.4,
+                  2.4,
+                  2.4
                 ],
                 "enemyScript": "OctopusEnemyScript",
-                "modelPath": "",
+                "modelPath": "Resources/model/octopus/octopus_enemy.glb",
                 "primitiveColor": [
                   0.62,
                   0.28,
@@ -16239,7 +16239,7 @@
           "data": {
             "scriptDataList": [
               {
-                "colliderRadius": 0.6,
+                "colliderRadius": 0.5,
                 "count": 1,
                 "drawGizmo": true,
                 "enemyName": "WaveOctopus",
@@ -16252,12 +16252,12 @@
                   "windupDuration": 0.9
                 },
                 "enemyScale": [
-                  2.0,
-                  2.0,
-                  2.0
+                  2.4,
+                  2.4,
+                  2.4
                 ],
                 "enemyScript": "OctopusEnemyScript",
-                "modelPath": "",
+                "modelPath": "Resources/model/octopus/octopus_enemy.glb",
                 "primitiveColor": [
                   0.62,
                   0.28,

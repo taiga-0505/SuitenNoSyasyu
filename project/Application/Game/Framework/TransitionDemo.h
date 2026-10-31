@@ -12,7 +12,7 @@
 ///          人が操作した場合はそちらが優先される（自動決定までの待ち時間中に通常どおり操作できる）。
 ///          見せ終わったら kEnabled を false に戻すだけで元の挙動になる。
 namespace TransitionDemo {
-inline constexpr bool kEnabled = true; ///< デモを有効にするか（見せ終わったら false に戻す）
+inline constexpr bool kEnabled = false; ///< デモを有効にするか（見せ終わったら false に戻す）
 
 // ---- ステージ：サメに一気に食われる ----
 inline constexpr float kFrenzyDelay = 0.9f;       ///< 最初のウェーブが始まってから群れが動き出すまで（秒。WAVE 表示がせり出しきる頃）
