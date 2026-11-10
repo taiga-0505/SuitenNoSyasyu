@@ -119,10 +119,13 @@ class Palette:
     def __init__(self) -> None:
         self.rows: Dict[str, Tuple[int, Tuple[float, ...], Tuple[float, ...]]] = {}
 
-    def add(self, name: str, a: Sequence[float], b: Optional[Sequence[float]] = None) -> None:
+    def add(self, name: str, a: Sequence[float], b: Optional[Sequence[float]] = None,
+            mid: Optional[Sequence[float]] = None) -> None:
+        """帯を 1 本足す。mid を渡すと a → mid → b の 3 色グラデーション（t = 0.5 が mid）"""
         if len(self.rows) >= self.ROWS:
             raise ValueError("palette is full")
-        self.rows[name] = (len(self.rows), tuple(a), tuple(b if b is not None else a))
+        bb = tuple(b if b is not None else a)
+        self.rows[name] = (len(self.rows), tuple(a), bb, tuple(mid) if mid is not None else None)
 
     def uv(self, name: str, t: float) -> Tuple[float, float]:
         row = self.rows[name][0]
@@ -135,11 +138,16 @@ class Palette:
     def image(self) -> Image.Image:
         h = self.SIZE // self.ROWS
         img = np.zeros((self.SIZE, self.SIZE, 3), dtype=np.float64)
-        for name, (row, a, b) in self.rows.items():
+        for name, (row, a, b, mid) in self.rows.items():
             for x in range(self.SIZE):
                 u = (x + 0.5) / self.SIZE
                 t = min(max((u - 0.06) / 0.88, 0.0), 1.0)
-                c = [a[i] + (b[i] - a[i]) * t for i in range(3)]
+                if mid is None:
+                    c = [a[i] + (b[i] - a[i]) * t for i in range(3)]
+                elif t < 0.5:
+                    c = [a[i] + (mid[i] - a[i]) * (t * 2.0) for i in range(3)]
+                else:
+                    c = [mid[i] + (b[i] - mid[i]) * (t * 2.0 - 1.0) for i in range(3)]
                 img[row * h:(row + 1) * h, x] = c
         # 色はリニアで指定しているので sRGB へ（テクスチャは srgb=true で読まれる）
         srgb = np.where(img <= 0.0031308, img * 12.92, 1.055 * np.power(np.clip(img, 0, 1), 1 / 2.4) - 0.055)

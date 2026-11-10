@@ -33,6 +33,16 @@ def shade(c, k):
     return tuple(min(1.0, x * k) for x in c)
 
 
+def ground(c):
+    """地の色（明るいアニメ調の色を、赤茶に沈めた本物寄りの色にする）"""
+    return (c[0] * 0.74, c[1] * 0.52, c[2] * 0.48)
+
+
+def mottle_dark(c):
+    """まだらの濃い斑の色（地の色を暗く、赤茶へ寄せる）"""
+    return (c[0] * 0.34, c[1] * 0.20, c[2] * 0.20)
+
+
 def pose_of(model: Model):
     """クリップの pose 関数で使う：rest のローカル姿勢をコピーした辞書"""
     return {j.name: (j.t.copy(), j.r.copy(), np.ones(3)) for j in model.joints}
@@ -78,13 +88,14 @@ def build_octopus(name: str, body, legs_dark, under, sucker, root_offset=(0.0, 0
     """root_offset: モデル全体をずらす量（敵は胴の中心を原点＝当たり判定の中心にしたいので下げる）"""
     m = Model(name)
     pal = m.palette
-    pal.add("skin", shade(body, 0.92), shade(body, 1.18))   # 上が濃く・下が明るい
-    pal.add("leg", shade(legs_dark, 0.95), shade(under, 1.0))
-    pal.add("sucker", sucker)
-    pal.add("eye", (0.98, 0.98, 0.96))
-    pal.add("pupil", (0.05, 0.05, 0.07))
+    # 濃い斑 → 地の色 → 淡い腹（skin_t で位置を決める）
+    pal.add("skin", mottle_dark(body), under, mid=ground(body))
+    pal.add("leg", mottle_dark(legs_dark), under, mid=ground(legs_dark))
+    pal.add("sucker", sucker, shade(sucker, 0.62))     # 縁は淡く、くぼみは濃い
+    pal.add("iris", (0.30, 0.20, 0.04), (0.86, 0.68, 0.30))  # 金色の虹彩（縁が暗い）
+    pal.add("pupil", (0.02, 0.02, 0.03))
     pal.add("shine", (1.0, 1.0, 1.0))
-    pal.add("dark", shade(body, 0.62))
+    pal.add("dark", shade(body, 0.3))
 
     # --- 骨 ---
     m.joint("root", None, root_offset)
@@ -99,64 +110,140 @@ def build_octopus(name: str, body, legs_dark, under, sucker, root_offset=(0.0, 0
         for k in range(OCTO_SEGMENTS):
             m.joint(f"leg{t}_{k}", "root", d * octo_leg_s(k))
 
-    grad_up = lambda p, n: 0.5 - 0.5 * float(n[1])  # noqa: E731
+    # --- 皮膚の模様・凹凸（セミリアル）---
+    # 本物のマダコ：背中側は赤褐色のまだら（濃い斑点）＋細かいいぼ（乳頭突起）、腹側・足の裏は淡い。
+    # パレットの帯は「濃い斑 → 地の色 → 淡い腹」の 3 色。頂点ごとに t を決めて塗り分ける
+    # （エンジンは頂点カラーを読まないので、模様はパレットの位置で出す）。
+    rng = np.random.default_rng(7)
 
-    # --- 外套膜（後ろへ持ち上がった卵形）---
-    mant = ellipsoid([0, 0, 0], [0.46, 0.40, 0.58], nu=22, nv=14)
+    def make_noise(n_waves, kmin, kmax):
+        dirs = rng.normal(size=(n_waves, 3))
+        dirs /= np.linalg.norm(dirs, axis=1, keepdims=True)
+        ks = dirs * rng.uniform(kmin, kmax, size=(n_waves, 1))
+        ph = rng.uniform(0, TAU, size=n_waves)
+
+        def f(p):
+            return float(np.sum(np.sin(ks @ np.asarray(p, float) + ph)) / math.sqrt(n_waves * 0.5))
+        return f
+
+    mottle = make_noise(12, 15.0, 24.0)   # 斑（10〜20 cm くらいの濃い模様）
+    fleck = make_noise(14, 28.0, 38.0)    # 細かい点々
+    bump = make_noise(16, 16.0, 24.0)     # いぼ（乳頭突起）の凹凸（頂点の間隔で潰れない細かさ）
+
+    def skin_t(p, n, under_bias=0.0):
+        """濃い斑 0 … 地の色 0.5 … 淡い腹 1"""
+        under = smoothstep(-0.15, -0.75, float(n[1]) - under_bias)  # 下を向くほど 1
+        m = smoothstep(0.0, 0.9, mottle(p))                          # 斑の濃さ
+        f = smoothstep(0.7, 1.3, fleck(p))
+        t = 0.56 - 0.46 * m - 0.14 * f
+        return min(1.0, max(0.0, lerp(t, 0.97, under)))
+
+    def displace(part, center, amount, axis_scale=(1.0, 1.0, 1.0)):
+        """中心から外向きに、いぼ・しわの凹凸を付ける"""
+        c = np.asarray(center, float)
+        for i, p in enumerate(part.pos):
+            d = p - c
+            ln = np.linalg.norm(d)
+            if ln < 1e-6:
+                continue
+            # いぼ：ノイズの山だけを丸く盛り上げる（値の上限を決めて、とげにならないように）
+            h = amount * smoothstep(0.7, 1.9, bump(p)) + amount * 0.3 * float(np.clip(mottle(p * 0.5), -1.5, 1.5))
+            part.pos[i] = p + d / ln * h * np.asarray(axis_scale)
+        return part
+
+    # --- 外套膜（頭の後ろの大きな袋。後ろほど膨らむ卵形。表面にいぼとしわ）---
+    mant = ellipsoid([0, 0, 0], [0.45, 0.40, 0.64], nu=36, nv=24)
     z = mant.pos[:, 2]
-    k = 1.0 + 0.10 * np.clip(-z / 0.58, 0, 1)        # 後ろほど少し膨らむ
+    k = (1.0 + 0.16 * np.clip(-z / 0.64, 0, 1)) * (1.0 - 0.10 * np.clip(z / 0.64, 0, 1))
     mant.pos[:, 0] *= k
     mant.pos[:, 1] *= k
+    # 背中にゆるい縦じわ（外套膜の筋肉の起伏）
+    ang = np.arctan2(mant.pos[:, 0], mant.pos[:, 1])
+    wr = 1.0 + 0.018 * np.sin(ang * 7.0) * np.clip(-z / 0.64 + 0.3, 0, 1)
+    mant.pos[:, 0] *= wr
+    mant.pos[:, 1] *= wr
     mant = mant.transformed(rot_x(0.55), OCTO_MANTLE)
+    displace(mant, OCTO_MANTLE, 0.02)
     mant.paint = lambda p, n: "skin"
-    mant.grad = grad_up
+    mant.grad = lambda p, n: skin_t(p, n)
     mant.skin = lambda p: [("mantle", 1.0)]
     m.add(mant)
 
-    # --- 顔 ---
-    face = ellipsoid(OCTO_HEAD, [0.42, 0.36, 0.40], nu=22, nv=14)
+    # --- 頭（目のある部分。外套膜より小さく、下は足の付け根へすぼまる）---
+    face = ellipsoid(OCTO_HEAD, [0.37, 0.31, 0.35], nu=32, nv=20)
+    yb = face.pos[:, 1] - OCTO_HEAD[1]
+    s_ = 1.0 - 0.10 * np.clip(-yb / 0.31, 0, 1)
+    face.pos[:, 0] = OCTO_HEAD[0] + (face.pos[:, 0] - OCTO_HEAD[0]) * s_
+    face.pos[:, 2] = OCTO_HEAD[2] + (face.pos[:, 2] - OCTO_HEAD[2]) * s_
+    displace(face, OCTO_HEAD, 0.012)
     face.paint = lambda p, n: "skin"
-    face.grad = grad_up
+    face.grad = lambda p, n: skin_t(p, n)
     face.skin = lambda p: [("head", 1.0)]
     m.add(face)
 
-    # 足の付け根の膜（下側）
-    web = ellipsoid([0, -0.03, 0.0], [0.40, 0.11, 0.40], nu=24, nv=8)
-    web.paint = lambda p, n: "leg"
-    web.grad = grad_up
-    web.skin = lambda p: [("head", 1.0)]
-    m.add(web)
+    # 首（頭と外套膜のあいだを埋める）
+    neck_c = (OCTO_HEAD + OCTO_MANTLE) * 0.5 + np.array([0.0, -0.02, 0.0])
+    neck = ellipsoid(neck_c, [0.34, 0.29, 0.26], R=rot_x(0.6), nu=28, nv=14)
+    displace(neck, neck_c, 0.008)
+    neck.paint = lambda p, n: "skin"
+    neck.grad = lambda p, n: skin_t(p, n)
+    neck.skin = lambda p: [("head", 0.5), ("mantle", 0.5)]
+    m.add(neck)
 
-    # 漏斗（横から突き出た噴射口）
-    fun = cylinder([0.30, 0.10, -0.02], [0.43, 0.06, -0.16], 0.055, 0.045, n=10)
-    fun.paint = lambda p, n: "dark"
+    # 漏斗（左の脇から後ろへ向いた噴射口。口の縁は少し開く）
+    fun = cylinder([0.22, 0.05, 0.02], [0.33, 0.02, -0.13], 0.055, 0.04, n=14)
+    fun.paint = lambda p, n: "skin"
+    fun.grad = lambda p, n: 0.62
     fun.skin = lambda p: [("head", 1.0)]
     m.add(fun)
+    fun_in = ellipsoid([0.33, 0.02, -0.13], [0.028, 0.028, 0.01], R=rot_y(-0.9), nu=10, nv=5)
+    fun_in.paint = lambda p, n: "dark"
+    fun_in.skin = lambda p: [("head", 1.0)]
+    m.add(fun_in)
 
-    # --- 目・黒目（まぶたの代わりに目の上へ皮膚の盛り上がり）---
+    # --- 目：皮膚の盛り上がりに半分埋まった目玉。虹彩は金色、瞳は横長のスリット ---
+    pdir = OCTO_PUPIL_OFS / np.linalg.norm(OCTO_PUPIL_OFS)
+    eye_r = float(np.linalg.norm(OCTO_PUPIL_OFS))  # 瞳の骨が目玉の表面に来る大きさ
     for side, ename, pname in ((0, "eye_L", "pupil_L"), (1, "eye_R", "pupil_R")):
         c = OCTO_EYE[side]
-        brow = ellipsoid(c + np.array([0, 0.035, -0.035]), [0.135, 0.10, 0.12], nu=14, nv=8)
-        brow.paint = lambda p, n: "skin"
-        brow.grad = grad_up
-        brow.skin = lambda p: [("head", 1.0)]
-        m.add(brow)
-        eye = ellipsoid(c, [0.12, 0.11, 0.12], nu=16, nv=10)
-        eye.paint = lambda p, n: "eye"
+        sx = -1.0 if side == 0 else 1.0
+        # まぶた（目のまわりの皮膚の盛り上がり。目玉の上半分を少し覆う）
+        lid = ellipsoid(c + np.array([0.01 * sx, 0.0, -0.05]), [0.118, 0.108, 0.11], nu=20, nv=12)
+        displace(lid, c, 0.006)
+        lid.paint = lambda p, n: "skin"
+        lid.grad = lambda p, n: skin_t(p, n)
+        lid.skin = lambda p: [("head", 1.0)]
+        m.add(lid)
+        # 目の上の小さな角（乳頭突起。マダコの特徴）
+        horn = ellipsoid(c + np.array([0.02 * sx, 0.098, -0.05]), [0.018, 0.032, 0.018],
+                         R=rot_z(-0.3 * sx), nu=10, nv=6)
+        horn.paint = lambda p, n: "skin"
+        horn.grad = lambda p, n: skin_t(p, n, under_bias=0.3)
+        horn.skin = lambda p: [("head", 1.0)]
+        m.add(horn)
+        # 目玉（虹彩の色。前上を向いた面だけがまぶたから出る）
+        eye = ellipsoid(c, [eye_r, eye_r * 0.94, eye_r], nu=20, nv=12)
+        eye.paint = lambda p, n: "iris"
+        eye.grad = (lambda cc: (lambda p, n: 0.15 + 0.7 * smoothstep(-0.2, 0.9, float(np.dot(n, pdir)))))(c)
         eye.skin = (lambda en: (lambda p: [(en, 1.0)]))(ename)
         m.add(eye)
+        # 瞳：横長のスリット（目玉の表面に貼る平たい楕円体）
         pc = c + OCTO_PUPIL_OFS
-        pup = ellipsoid(pc, [0.062, 0.052, 0.07], nu=12, nv=8)
+        ex = np.array([1.0, 0.0, 0.0])
+        ey = np.cross(pdir, ex)
+        Rp = np.stack([ex, ey, pdir], axis=1)
+        pup = ellipsoid(pc, [0.052, 0.017, 0.012], R=Rp, nu=14, nv=6)
         pup.paint = lambda p, n: "pupil"
         pup.skin = (lambda pn: (lambda p: [(pn, 1.0)]))(pname)
         m.add(pup)
-        sh = ellipsoid(pc + np.array([0.022, 0.03, 0.035]), [0.018, 0.016, 0.018], nu=8, nv=5)
+        sh = ellipsoid(pc + ey * 0.03 + ex * 0.02 * sx + pdir * 0.004, [0.012, 0.009, 0.006], R=Rp, nu=8, nv=4)
         sh.paint = lambda p, n: "shine"
         sh.skin = (lambda pn: (lambda p: [(pn, 1.0)]))(pname)
         m.add(sh)
 
     # --- 足 ---
     joint_s = [octo_leg_s(k) for k in range(OCTO_SEGMENTS)]
+    S_TIP = 1.42      # 先端（最後の骨 1.13 より先は最後の骨に付いて動く）
 
     def leg_weights(t: int, s: float):
         if s <= joint_s[0]:
@@ -168,25 +255,101 @@ def build_octopus(name: str, body, legs_dark, under, sucker, root_offset=(0.0, 0
                 return [(f"leg{t}_{k}", 1.0 - f), (f"leg{t}_{k + 1}", f)]
         return [(f"leg{t}_{OCTO_SEGMENTS - 1}", 1.0)]
 
-    s_samples = list(np.arange(0.04, 1.2, 0.0425)) + [1.2]
+    def leg_r(s: float) -> float:
+        """根元は太く、先へ向かってなめらかに細くなる（先端はほぼ点）"""
+        u = min(max(s / S_TIP, 0.0), 1.0)
+        return 0.006 + 0.122 * (1.0 - u) ** 1.3
+
+    def leg_point(d: np.ndarray, s: float) -> np.ndarray:
+        """足の中心線。先端だけ背中側へ少し巻く"""
+        p = d * s
+        if s > 1.1:
+            u = (s - 1.1) / (S_TIP - 1.1)
+            p = p + np.array([0.0, 0.10 * u * u, 0.0]) - d * 0.03 * u * u
+        return p
+
+    SQUASH = 0.8
+    s_samples = list(np.arange(0.04, S_TIP, 0.035)) + [S_TIP]
     for t in range(OCTO_TENTACLES):
         d = octo_leg_dir(t)
-        pts = np.array([d * s for s in s_samples])
-        radii = [octo_leg_radius(s) for s in s_samples]
-        leg = tube(pts, radii, n=10, squash=0.75, tip=True)
+        side = np.cross([0, 1, 0], d)
+        pts = np.array([leg_point(d, s) for s in s_samples])
+        radii = [leg_r(s) for s in s_samples]
+        leg = tube(pts, radii, n=12, squash=SQUASH, tip=True)
         leg.paint = lambda p, n: "leg"
-        leg.grad = grad_up
+        leg.grad = lambda p, n: skin_t(p, n, under_bias=0.1)
         leg.skin = (lambda tt: (lambda p: leg_weights(tt, float(np.hypot(p[0], p[2])))))(t)
         m.add(leg)
-        # 吸盤（下側に 2 列で互い違い）
-        side = np.cross([0, 1, 0], d)
-        for i, s in enumerate(np.arange(0.36, 1.08, 0.075)):
-            r = octo_leg_radius(s)
-            c = d * s + np.array([0, -r * 0.75 * 0.82, 0]) + side * (r * 0.32 * (1 if i % 2 else -1))
-            sk = ellipsoid(c, [r * 0.36, r * 0.16, r * 0.36], nu=8, nv=4)
-            sk.paint = lambda p, n: "sucker"
-            sk.skin = (lambda w: (lambda p: w))(leg_weights(t, float(s)))
-            m.add(sk)
+        # 吸盤：足の裏に 2 列で互い違い。根元は大きく先へ行くほど小さい（縁が淡く、中がくぼんで濃い）
+        s = 0.10
+        i = 0
+        while s < S_TIP - 0.05:
+            r = leg_r(s)
+            rs = r * 0.38
+            down = -r * SQUASH * 0.86
+            c = leg_point(d, s) + np.array([0, down, 0]) + side * (r * 0.36 * (1 if i % 2 else -1))
+            w = leg_weights(t, float(s))
+            rim = ellipsoid(c, [rs, rs * 0.42, rs], nu=8, nv=4)
+            rim.paint = lambda p, n: "sucker"
+            rim.grad = lambda p, n: 0.2
+            rim.skin = (lambda ww: (lambda p: ww))(w)
+            m.add(rim)
+            cup = ellipsoid(c + np.array([0, -rs * 0.18, 0]), [rs * 0.52, rs * 0.3, rs * 0.52], nu=6, nv=3)
+            cup.paint = lambda p, n: "sucker"
+            cup.grad = lambda p, n: 0.85
+            cup.skin = (lambda ww: (lambda p: ww))(w)
+            m.add(cup)
+            s += max(0.02, r * 0.62)
+            i += 1
+
+    # --- 足のあいだの膜（傘膜）：足の付け根どうしをつなぐ薄い膜。足のあいだで縁がくぼむ ---
+    N_A = 8 * 10
+    U_N = 5
+    leg_angle = lambda tt: (tt + 0.5) * TAU / OCTO_TENTACLES  # noqa: E731
+    half = math.pi / OCTO_TENTACLES
+
+    def web_edge(a: float) -> float:
+        dl = abs(((a - leg_angle(0)) + half) % (2 * half) - half)  # 一番近い足からの角度 0..half
+        return 0.66 - 0.26 * (dl / half) ** 1.4
+
+    profiles = []
+    for ia in range(N_A + 1):
+        a = TAU * (ia % N_A) / N_A
+        dv = np.array([math.sin(a), 0.0, math.cos(a)])
+        se = web_edge(a)
+        ring = []
+        # 下面（中心 → 縁）→ 上面（縁 → 中心）
+        for j in range(U_N + 1):
+            u = j / U_N
+            s = 0.10 + (se - 0.10) * u
+            th = 0.026 * (1.0 - u) + 0.004
+            ring.append(dv * s + np.array([0.0, -th - 0.01, 0.0]))
+        for j in range(U_N, -1, -1):
+            u = j / U_N
+            s = 0.10 + (se - 0.10) * u
+            th = 0.026 * (1.0 - u) + 0.004
+            ring.append(dv * s + np.array([0.0, th - 0.01, 0.0]))
+        profiles.append(np.array(ring))
+    web = loft(profiles, closed=False)
+    web.orient_outward(np.array([0.0, 0.0, 0.0]))  # 薄い板なので向きは下で個別に確かめる
+
+    def web_weights(p):
+        a = math.atan2(p[0], p[2]) % TAU
+        s = float(math.hypot(p[0], p[2]))
+        x = (a / (TAU / OCTO_TENTACLES)) - 0.5
+        t0 = int(math.floor(x)) % OCTO_TENTACLES
+        f = x - math.floor(x)
+        t1 = (t0 + 1) % OCTO_TENTACLES
+        out = {}
+        for tt, ww in ((t0, 1.0 - f), (t1, f)):
+            for jn, wj in leg_weights(tt, s):
+                out[jn] = out.get(jn, 0.0) + ww * wj
+        return list(out.items())
+
+    web.paint = lambda p, n: "leg"
+    web.grad = lambda p, n: skin_t(p, n, under_bias=0.1)
+    web.skin = web_weights
+    m.add(web)
 
     # --- クリップ（敵用。タイトルはスクリプトが骨を上書きする）---
     def legs_pose(pose, tm, theta0, kappa, amp, omega, root_shrink=1.0, fan=0.0, tremble=0.0):
@@ -856,17 +1019,23 @@ def _sheet(grid: np.ndarray, thickness: float, axis=None):
 
 
 def main():
+    """引数にモデル名（octopus / octopus_enemy / bird / ship）を並べると、それだけ書き出す（無ければ全部）"""
     jobs = [
-        ("octopus", "octopus", build_octopus("octopus", body=(0.93, 0.40, 0.33), legs_dark=(0.86, 0.36, 0.30),
-                                             under=(1.0, 0.70, 0.60), sucker=(1.0, 0.86, 0.78))),
-        ("octopus", "octopus_enemy", build_octopus("octopus_enemy", body=(0.62, 0.28, 0.72),
-                                                   legs_dark=(0.56, 0.25, 0.66), under=(0.86, 0.62, 0.90),
-                                                   sucker=(0.96, 0.84, 0.96), root_offset=(0.0, -0.3, 0.0))),
-        ("bird", "bird", build_bird()),
-        ("ship", "ship", build_ship()),
+        ("octopus", "octopus", lambda: build_octopus("octopus", body=(0.93, 0.40, 0.33), legs_dark=(0.86, 0.36, 0.30),
+                                                     under=(1.0, 0.70, 0.60), sucker=(1.0, 0.86, 0.78))),
+        ("octopus", "octopus_enemy", lambda: build_octopus("octopus_enemy", body=(0.62, 0.28, 0.72),
+                                                           legs_dark=(0.56, 0.25, 0.66), under=(0.86, 0.62, 0.90),
+                                                           sucker=(0.96, 0.84, 0.96), root_offset=(0.0, -0.3, 0.0))),
+        ("bird", "bird", build_bird),
+        ("ship", "ship", build_ship),
     ]
-    for folder, name, model in jobs:
-        d = os.path.join(OUT, folder)
+    only = set(sys.argv[1:])
+    out_root = os.environ.get("MODELGEN_OUT", OUT)  # 試しに書き出すときの出力先
+    for folder, name, make in jobs:
+        if only and name not in only:
+            continue
+        model = make()
+        d = os.path.join(out_root, folder)
         os.makedirs(d, exist_ok=True)
         tex = f"{name}_palette.png"
         model.palette.image().save(os.path.join(d, tex))

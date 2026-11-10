@@ -36,14 +36,20 @@
 //   カメラがタコの頭へ寄って一人称に戻る。その位置から DeepRiseIntroScript の浮上が続く。
 //
 //   流れ（秒は既定値）:
-//     Chase 2.0s : タコが startOffset → endOffset を逃げる。サメは後ろから距離を詰める。
+//     Chase 2.0s : タコが startOffset → endOffset をジェット推進で逃げる（本物のタコの泳ぎ方）。
+//                  外套膜を先に、目は後ろのサメを見て、足は後ろへ束ねる。jetRate 回/秒で水を噴き、
+//                  噴くたびに足を閉じて加速 → 惰性で減速しながら足をゆるく開く。サメは一定の速さで追う。
 //                  カメラは横から 2 匹を収める（深いうちはフォグでサメが影のように見える）。
-//     Turn  0.45s: タコが減速しながら振り向き、足を広げて威嚇。サメは噛みつきに来る。
-//                  カメラはタコの肩越しへ回り込む。
-//     Shoot      : shotCount 発の水の弾を shotInterval おきに撃つ。当たるたびにサメが赤く光って
-//                  のけぞり、水しぶきと泡が散る（WaterBullet の着弾と同じエフェクト粒）。
-//                  最後の 1 発で撃破（大きなしぶき・泡、腹を見せて沈む）。
-//     Merge 0.8s : タコが前へ向き直り、カメラがタコの頭の位置・浮上開始の向きへ寄って一人称へ。
+//     Turn  0.45s: タコが泳ぎを止めて体を起こし、サメへ向いて足を体の下へスカート状に開く（威嚇）。
+//                  サメは噛みつきに来る。
+//                  カメラはタコの肩越しと 2 匹の真横引きの中間（camShootBlend）へ回り込み、
+//                  タコを大きめに映しつつ間を弾が飛ぶのが見える構図にする。
+//     Shoot      : shotCount 発の水の弾を shotInterval おきに撃つ。サメは突進してくるが、
+//                  弾（泡の尾を引く）が当たるたびに赤く光ってのけぞり、水しぶきと泡が散る
+//                  （WaterBullet の着弾と同じエフェクト粒）。最後の 1 発で撃破（大きなしぶき・泡、腹を見せて沈む）。
+//                  2 匹の間を十分あけ（sharkLungeGap）、弾の飛ぶ時間も長め（shotTravel）にして、
+//                  「撃った弾が届いて倒した」と分かるようにしている。
+//     Merge 1.0s : タコが前へ向き直り、カメラがタコの頭の位置・浮上開始の向きへ寄って一人称へ。
 //     Done       : カメラは浮上側へ返す。沈むサメはしばらく残し、消えたら後片付け。
 //
 //   ・座標は「ゴール（レールの開始位置）」基準。x = 右、y = 上、z = 前（ゴールの向き）。
@@ -60,10 +66,10 @@ struct SharkChaseParams {
   float chaseDuration = 2.0f;  ///< 追われている時間
   float turnDuration = 0.45f;  ///< 振り向く時間
   int shotCount = 3;           ///< 水の弾を撃つ回数（最後の 1 発で倒す）
-  float shotInterval = 0.17f;  ///< 水の弾の発射間隔
-  float shotTravel = 0.2f;     ///< 水の弾がサメに届くまで
-  float killHold = 0.35f;      ///< 倒してから一人称へ寄り始めるまで
-  float mergeDuration = 0.8f;  ///< カメラがタコの頭へ寄る時間
+  float shotInterval = 0.3f;   ///< 水の弾の発射間隔（1 発ずつ見分けられる間隔）
+  float shotTravel = 0.4f;     ///< 水の弾がサメに届くまで（飛んでいく様子が見える長さ）
+  float killHold = 0.6f;       ///< 倒してから一人称へ寄り始めるまで（裏返って沈むのを見せる）
+  float mergeDuration = 1.0f;  ///< カメラがタコの頭へ寄る時間（引いた位置から戻るぶん長め）
 
   // ---- 経路（ゴール基準。x 右 / y 上 / z 前）----
   RC::Vector3 startOffset = {0.0f, -25.0f, -24.0f}; ///< 逃げ始める位置
@@ -74,23 +80,33 @@ struct SharkChaseParams {
   float sharkScale = 6.0f;         ///< WaveSpawner の enemyScale と同じ
   float sharkModelYawDeg = -90.0f; ///< モデルの頭は +X なので -90° で +Z に合わせる
   float sharkStartGap = 14.0f;     ///< 追い始めのタコとの距離（m）
-  float sharkEndGap = 8.0f;        ///< 追い終わりの距離
-  float sharkLungeGap = 6.0f;      ///< 振り向くあいだに噛みつきに来る距離
+  float sharkEndGap = 12.0f;       ///< 追い終わりの距離
+  float sharkLungeGap = 11.0f;     ///< 振り向き終わり（撃ち始め）の距離。弾の飛ぶ距離になる
+  float sharkChargeSpeed = 2.5f;   ///< 撃たれているあいだにサメが突進してくる速さ（m/s。当たるたび鈍る）
+  float sharkMinGap = 4.0f;        ///< 突進してもこれ以上は近づかない距離
   float sharkAimForward = 1.2f;    ///< 弾の狙い（モデル原点から頭側へ何 m）
 
   // ---- タコ ----
   float octopusScale = 0.9f;
+  float jetRate = 2.0f;     ///< 逃げるときに水を噴く回数（回/秒。追われている時間に収まる整数回へ丸める）
+  float jetSurge = 0.65f;   ///< 噴いたときの加速の強さ（0 = 等速、1 未満。速さは平均の 1±jetSurge 倍で揺れる）
+  float threatSplay = 0.85f; ///< 構えて撃つときの足の開き（rad。体の下へスカート状に開く。大きいと円盤になって横から潰れて見える）
   /// @brief タコのモデル（空ならプリミティブの組み合わせ）。骨の名前は TitleOctopusScript と同じ
   std::string octopusModel = "Resources/model/octopus/octopus.glb";
   RC::Vector4 bodyColor = {0.93f, 0.40f, 0.33f, 1.0f}; ///< プリミティブのときだけ使う
   RC::Vector4 shotColor = {0.2f, 0.6f, 1.0f, 0.85f}; ///< 水の弾の色（RailShooterController の自機弾と同じ）
-  float shotSize = 0.3f;                             ///< 水の弾の半径（通常弾と同じ）
+  float shotSize = 0.45f;  ///< 水の弾の半径（引いた構図でも見えるよう通常弾 0.3 より大きめ）
+  int shotTrailBubbles = 2; ///< 水の弾が 1 フレームに残す泡の数（弾の通り道を見せる。0 で無し）
 
   // ---- カメラ ----
-  float camSide = 8.5f;    ///< 追跡中：横へ離れる距離（2 匹の間が開いたぶん広めに引く）
+  float camSide = 10.0f;   ///< 追跡中：横へ離れる距離（2 匹の間が開いたぶん広めに引く）
   float camHeight = 1.4f;  ///< 追跡中：上へずらす量
   float camLead = 2.0f;    ///< 追跡中：前へずらす量
-  float camBack = 3.2f;    ///< 肩越し：タコの後ろへ離れる距離
+  float camBack = 3.2f;        ///< 振り向き〜撃破（肩越し）：タコの後ろへ離れる距離
+  float camShootDist = 20.0f;  ///< 振り向き〜撃破（真横引き）：2 匹の間の点から真横へ離れる距離
+  float camShootHeight = 1.5f; ///< 振り向き〜撃破（真横引き）：上へずらす量
+  float camShootFocus = 0.5f;  ///< 振り向き〜撃破（真横引き）：注視点（0 = タコ、1 = サメ）
+  float camShootBlend = 0.5f;  ///< 振り向き〜撃破の構図（0 = 肩越し、1 = 真横引き。間は位置と注視点を補間）
   float camFollow = 5.0f;  ///< カメラの追従の速さ（大きいほどきびきび）
 
   // ---- 効果音（空なら鳴らさない）----
@@ -120,16 +136,26 @@ struct SharkChaseParams {
         {"sharkStartGap", sharkStartGap},
         {"sharkEndGap", sharkEndGap},
         {"sharkLungeGap", sharkLungeGap},
+        {"sharkChargeSpeed", sharkChargeSpeed},
+        {"sharkMinGap", sharkMinGap},
         {"sharkAimForward", sharkAimForward},
         {"octopusScale", octopusScale},
+        {"jetRate", jetRate},
+        {"jetSurge", jetSurge},
+        {"threatSplay", threatSplay},
         {"octopusModel", octopusModel},
         {"bodyColor", v4(bodyColor)},
         {"shotColor", v4(shotColor)},
         {"shotSize", shotSize},
+        {"shotTrailBubbles", shotTrailBubbles},
         {"camSide", camSide},
         {"camHeight", camHeight},
         {"camLead", camLead},
         {"camBack", camBack},
+        {"camShootDist", camShootDist},
+        {"camShootHeight", camShootHeight},
+        {"camShootFocus", camShootFocus},
+        {"camShootBlend", camShootBlend},
         {"camFollow", camFollow},
         {"seShot", seShot},
         {"seHit", seHit},
@@ -181,16 +207,26 @@ struct SharkChaseParams {
     readF("sharkStartGap", sharkStartGap);
     readF("sharkEndGap", sharkEndGap);
     readF("sharkLungeGap", sharkLungeGap);
+    readF("sharkChargeSpeed", sharkChargeSpeed);
+    readF("sharkMinGap", sharkMinGap);
     readF("sharkAimForward", sharkAimForward);
     readF("octopusScale", octopusScale);
+    readF("jetRate", jetRate);
+    readF("jetSurge", jetSurge);
+    readF("threatSplay", threatSplay);
     readS("octopusModel", octopusModel);
     readV4("bodyColor", bodyColor);
     readV4("shotColor", shotColor);
     readF("shotSize", shotSize);
+    readI("shotTrailBubbles", shotTrailBubbles);
     readF("camSide", camSide);
     readF("camHeight", camHeight);
     readF("camLead", camLead);
     readF("camBack", camBack);
+    readF("camShootDist", camShootDist);
+    readF("camShootHeight", camShootHeight);
+    readF("camShootFocus", camShootFocus);
+    readF("camShootBlend", camShootBlend);
     readF("camFollow", camFollow);
     readS("seShot", seShot);
     readS("seHit", seHit);
@@ -220,18 +256,28 @@ struct SharkChaseParams {
     ImGui::DragFloat("Gap Start", &sharkStartGap, 0.1f, 0.5f, 40.0f);
     ImGui::DragFloat("Gap End", &sharkEndGap, 0.1f, 0.5f, 40.0f);
     ImGui::DragFloat("Gap Lunge", &sharkLungeGap, 0.1f, 0.5f, 40.0f);
+    ImGui::DragFloat("Charge Speed", &sharkChargeSpeed, 0.05f, 0.0f, 20.0f);
+    ImGui::DragFloat("Min Gap", &sharkMinGap, 0.1f, 0.5f, 40.0f);
     ImGui::DragFloat("Aim Forward", &sharkAimForward, 0.05f, -5.0f, 5.0f);
     ImGui::SeparatorText("Octopus");
     ImGui::DragFloat("Octopus Scale", &octopusScale, 0.01f, 0.2f, 4.0f);
+    ImGui::DragFloat("Jet Rate (/s)", &jetRate, 0.05f, 0.2f, 6.0f);
+    ImGui::SliderFloat("Jet Surge", &jetSurge, 0.0f, 0.95f);
+    ImGui::DragFloat("Threat Splay (rad)", &threatSplay, 0.01f, 0.1f, 1.6f);
     ImGui::TextDisabled("Model: %s", octopusModel.empty() ? "(primitives)" : octopusModel.c_str());
     ImGui::ColorEdit4("Body (primitives)", &bodyColor.x);
     ImGui::ColorEdit4("Shot Color", &shotColor.x);
     ImGui::DragFloat("Shot Size", &shotSize, 0.01f, 0.05f, 2.0f);
+    ImGui::SliderInt("Shot Trail Bubbles", &shotTrailBubbles, 0, 6);
     ImGui::SeparatorText("Camera");
     ImGui::DragFloat("Side", &camSide, 0.05f, 0.0f, 30.0f);
     ImGui::DragFloat("Height", &camHeight, 0.05f, -10.0f, 10.0f);
     ImGui::DragFloat("Lead", &camLead, 0.05f, -10.0f, 10.0f);
-    ImGui::DragFloat("Back (over shoulder)", &camBack, 0.05f, 0.5f, 20.0f);
+    ImGui::SliderFloat("Shoot Blend (0=shoulder 1=side)", &camShootBlend, 0.0f, 1.0f);
+    ImGui::DragFloat("Back (shoulder)", &camBack, 0.05f, 0.5f, 20.0f);
+    ImGui::DragFloat("Shoot Dist (side)", &camShootDist, 0.1f, 1.0f, 60.0f);
+    ImGui::DragFloat("Shoot Height (side)", &camShootHeight, 0.05f, -10.0f, 10.0f);
+    ImGui::SliderFloat("Shoot Focus (side)", &camShootFocus, 0.0f, 1.0f);
     ImGui::DragFloat("Follow", &camFollow, 0.1f, 0.5f, 30.0f);
     ImGui::TextDisabled("colors / model / SE are applied on Replay");
     ImGui::TreePop();
@@ -286,9 +332,15 @@ public:
     t_ = 0.0f;
     time_ = 0.0f;
     octPos_ = start_;
-    octYaw_ = yaw_;
-    octPitchUp_ = 0.0f;
-    splay_ = 0.3f;
+    octYaw_ = yaw_ + PartPose::kPi; // 外套膜を先に泳ぐ（顔は後ろ）
+    octPitchUp_ = kSwimPitch;
+    splay_ = 0.06f;
+    legAxisTarget_ = WorldToBody(Scale(travelDir_, -1.0f));
+    legAxis_ = legAxisTarget_;
+    waveAmt_ = 0.12f;
+    jetPulse_ = 0.0f;
+    squashJet_ = 0.0f;
+    lastJet_ = 0;
     recoil_ = 0.0f;
     recoilVel_ = 0.0f;
     lookSide_ = 0.0f;
@@ -341,6 +393,12 @@ public:
     case Phase::Shoot: UpdateShoot(dt); break;
     case Phase::Merge: UpdateMerge(); break;
     default: break;
+    }
+
+    // 足の向きの基準軸は段階の切り替わりでなめらかに追わせる
+    {
+      const float k = 1.0f - std::exp(-12.0f * dt);
+      legAxis_ = Norm(LerpV(legAxis_, legAxisTarget_, k), legAxisTarget_);
     }
 
     UpdateShark(dt);
@@ -653,44 +711,126 @@ private:
   /// @brief タコからサメへの向き
   RC::Vector3 ToShark() const { return Norm(Sub(sharkPos_, octPos_), Scale(travelDir_, -1.0f)); }
 
-  /// @brief 追われている：経路を逃げる。足は泳ぐたびに開いて閉じる
-  void UpdateChase() {
-    const float u = std::clamp(t_ / (std::max)(p_.chaseDuration, 1e-3f), 0.0f, 1.0f);
-    const float pulse = 0.5f + 0.5f * std::sin(time_ * PartPose::kTwoPi * 2.2f);
-    octPos_ = LerpV(start_, end_, u);
-    octPos_.y += 0.08f * std::sin(time_ * PartPose::kTwoPi * 2.2f);
-    octYaw_ = yaw_;
-    octPitchUp_ = std::asin(std::clamp(travelDir_.y, -1.0f, 1.0f)) * 0.7f;
-    splay_ = 0.25f + 0.3f * pulse;
-    // 終わりぎわに「後ろが気になる」：黒目を横へ
-    lookSide_ = Smooth01((u - 0.55f) / 0.25f);
+  /// @brief 足のなびく向きの既定（胴のローカル。後ろ下）。付け根の輪はこの軸に直交する輪に置く
+  static RC::Vector3 LegAxisRest() { return {0.0f, -0.330f, -0.944f}; }
 
-    const float gap = p_.sharkStartGap + (p_.sharkEndGap - p_.sharkStartGap) * Smooth01(u);
-    sharkPos_ = Sub(octPos_, Scale(travelDir_, gap));
-    sharkPos_ = Add(sharkPos_, Scale(R_, 0.5f * std::sin(time_ * PartPose::kTwoPi * 1.1f)));
-
-    if (u >= 1.0f) Enter(Phase::Turn);
+  /// @brief ワールドの向きを今のタコの胴のローカルへ写す（単位ベクトルにして返す）
+  RC::Vector3 WorldToBody(const RC::Vector3 &w) const {
+    const Mat3 body = PartPose::BodyMatrix(octYaw_, octPitchUp_, 0.0f);
+    return Norm(PartPose::Apply(w, PartPose::Transpose(body)), LegAxisRest());
   }
 
-  /// @brief 振り向く：減速しながら向きを変え、足を広げる。サメは噛みつきに来る
+  /// @brief 軸 axis に直交する輪の上で、角度 phi の向き
+  /// @details axis = LegAxisRest() のとき、元の式（U1 = +X, U2 = (0, 0.944, -0.330)）と一致する
+  static RC::Vector3 LegRadial(const RC::Vector3 &axis, float phi) {
+    const float ax = axis.x;
+    const RC::Vector3 u1 = Norm(Sub({1.0f, 0.0f, 0.0f}, Scale(axis, ax)), {1.0f, 0.0f, 0.0f});
+    const RC::Vector3 u2 = {u1.y * axis.z - u1.z * axis.y, u1.z * axis.x - u1.x * axis.z,
+                            u1.x * axis.y - u1.y * axis.x}; // u1 × axis
+    return Add(Scale(u1, std::cos(phi)), Scale(u2, std::sin(phi)));
+  }
+
+  /// @brief 足を開く向き：付け根の外向き（rootRadial）を軸 axis に直交する面へ落としたもの
+  /// @details 軸を大きく傾けても、上の付け根の足は上へ・下の付け根の足は下へ開く（足どうしが交差しない）。
+  ///          付け根の外向きが軸とほぼ平行なときだけ、輪の上の角度 phi の向きで代用する。
+  static RC::Vector3 LegSpreadDir(const RC::Vector3 &axis, const RC::Vector3 &rootRadial, float phi) {
+    const float d = rootRadial.x * axis.x + rootRadial.y * axis.y + rootRadial.z * axis.z;
+    const RC::Vector3 proj = Sub(rootRadial, Scale(axis, d));
+    const RC::Vector3 fallback = LegRadial(axis, phi);
+    const float l = Len(proj);
+    if (l < 0.1f) return fallback;
+    const RC::Vector3 n = Scale(proj, 1.0f / l);
+    if (l >= 0.25f) return n;
+    // 0.1〜0.25 は代用の向きとなめらかにつなぐ
+    return Norm(LerpV(fallback, n, (l - 0.1f) / 0.15f), n);
+  }
+
+  /// @brief 水を噴いた瞬間：漏斗のあたり（タコの後ろ）から泡を吐く
+  void SpawnJetBubbles() {
+    const RC::Vector3 back = Scale(travelDir_, -1.0f);
+    const RC::Vector3 at = Add(octPos_, Scale(back, 0.35f * p_.octopusScale));
+    for (int i = 0; i < 6; ++i) {
+      RC::EffectParticleSpawn bubble;
+      bubble.kind = RC::EffectParticleKind::Bubble;
+      bubble.position = Add(at, Scale(back, 0.12f * static_cast<float>(i)));
+      bubble.scale = (0.05f + 0.03f * static_cast<float>(i % 3)) * p_.octopusScale;
+      bubble.color = {0.8f, 0.9f, 1.0f, 0.6f};
+      RC::SpawnEffectParticle(bubble);
+    }
+  }
+
+  /// @brief 泳ぐときの体の傾き（顔を上へ。外套膜が進む向きの側へ倒れて先に立つ）
+  static constexpr float kSwimPitch = 0.45f;
+
+  /// @brief 追われている：ジェット推進で逃げる（本物のタコの泳ぎ方。TitleOctopusScript の潜行と同じ考え方）
+  /// @details ・外套膜を先に、顔（目）は後ろ＝追ってくるサメの方を向く。足は後ろへ束ねてなびかせる。
+  ///          ・漏斗から水を噴く瞬間に外套膜が縮んで足をぎゅっと閉じ、ぐんと加速する。
+  ///            そのあと惰性で減速しながら足をゆるく開き、外套膜をふくらませて水を吸う。これを繰り返す。
+  ///          ・進み方 s(u) = u - a·sin(2πNu)/(2πN)（N 回噴く）。速さは 1 - a·cos(2πNu) で、
+  ///            始まり・終わりは一番遅い（滑空）ところ、噴くのは u = (k + 0.5)/N。端点は直線のときと同じ。
+  void UpdateChase() {
+    using namespace PartPose;
+    const float u = std::clamp(t_ / (std::max)(p_.chaseDuration, 1e-3f), 0.0f, 1.0f);
+    const int N = (std::max)(1, static_cast<int>(std::lround(p_.chaseDuration * p_.jetRate)));
+    const float a = std::clamp(p_.jetSurge, 0.0f, 0.95f);
+    const float w = kTwoPi * static_cast<float>(N);
+    const float s = u - a * std::sin(w * u) / w;
+    jetPulse_ = 0.5f - 0.5f * std::cos(w * u); // 1 = 噴いている瞬間
+    // 噴く瞬間に漏斗のあたりから泡を吐く
+    const int jetIndex = static_cast<int>(std::floor(static_cast<float>(N) * u + 0.5f));
+    if (jetIndex != lastJet_ && u > 0.0f && u < 1.0f) {
+      lastJet_ = jetIndex;
+      SpawnJetBubbles();
+    }
+
+    octPos_ = LerpV(start_, end_, s);
+    // 外套膜を先に：顔は後ろ（サメの方）、体を少し起こして外套膜を進む向きへ
+    octYaw_ = yaw_ + kPi;
+    octPitchUp_ = kSwimPitch;
+    // 足：進む向きの反対へ束ねる。噴く瞬間に閉じ、惰性のあいだにゆるく開く。うねりは控えめ（流線形）
+    legAxisTarget_ = WorldToBody(Scale(travelDir_, -1.0f));
+    splay_ = 0.06f + 0.34f * (1.0f - jetPulse_);
+    waveAmt_ = 0.12f;
+    squashJet_ = 0.35f * (jetPulse_ - 0.4f); // 噴く瞬間に外套膜が縮んで細長くなる
+    lookSide_ = 0.0f;                        // 後ろのサメをまっすぐ見ている
+
+    // サメは一定の速さで追う（タコだけが噴くたびに引き離し、惰性のあいだに詰められる）
+    const float gap = p_.sharkStartGap + (p_.sharkEndGap - p_.sharkStartGap) * Smooth01(u);
+    sharkPos_ = Sub(LerpV(start_, end_, u), Scale(travelDir_, gap));
+    sharkPos_ = Add(sharkPos_, Scale(R_, 0.5f * std::sin(time_ * kTwoPi * 1.1f)));
+
+    if (u >= 1.0f) {
+      turnFromYaw_ = octYaw_;
+      turnFromPitch_ = octPitchUp_;
+      turnFromSplay_ = splay_;
+      Enter(Phase::Turn);
+    }
+  }
+
+  /// @brief 構える：泳ぎを止め、体を起こしてサメへ向け、足をスカートのように下へ広げる。サメは噛みつきに来る
   void UpdateTurn() {
     const float T = (std::max)(p_.turnDuration, 1e-3f);
     const float u = std::clamp(t_ / T, 0.0f, 1.0f);
     const float e = Smooth01(u);
-    // 速度を直線的に 0 まで落とす（移動距離 = v0·T·(u - u²/2)）
-    octPos_ = Add(end_, Scale(travelDir_, speed_ * T * (u - 0.5f * u * u)));
-    if (turnDiff_ == 0.0f) { // 入った最初のフレームで、サメの方への回り角を決める
+    // 滑空の速さから直線的に 0 まで落とす（移動距離 = v0·T·(u - u²/2)）
+    const float glide = speed_ * (1.0f - std::clamp(p_.jetSurge, 0.0f, 0.95f));
+    octPos_ = Add(end_, Scale(travelDir_, glide * T * (u - 0.5f * u * u)));
+    if (turnDiff_ == 0.0f) { // 入った最初のフレームで、サメの方の向きを決める（Merge の回る向きにも使う）
       const RC::Vector3 d = ToShark();
       turnDiff_ = PartPose::WrapAngle(std::atan2(d.x, d.z) - yaw_);
       if (std::fabs(turnDiff_) < 0.01f) turnDiff_ = PartPose::kPi;
     }
-    octYaw_ = yaw_ + turnDiff_ * e;
     const RC::Vector3 d = ToShark();
     const float pitchToShark = std::asin(std::clamp(d.y, -1.0f, 1.0f));
-    const float chasePitch = std::asin(std::clamp(travelDir_.y, -1.0f, 1.0f)) * 0.7f;
-    octPitchUp_ = chasePitch + (pitchToShark - chasePitch) * e;
-    splay_ = 0.4f + 0.85f * e; // 威嚇：傘のように足を広げる
-    lookSide_ = 1.0f - e;
+    octYaw_ = LerpAngle(turnFromYaw_, yaw_ + turnDiff_, e);
+    octPitchUp_ = turnFromPitch_ + (pitchToShark - turnFromPitch_) * e;
+    // 足：後ろへ束ねた形 → 体の下へスカートのように開く（威嚇）。円盤にすると横から見て潰れるので円錐にとどめる
+    legAxisTarget_ = {0.0f, -1.0f, 0.0f};
+    splay_ = turnFromSplay_ + (p_.threatSplay - turnFromSplay_) * e;
+    waveAmt_ = 0.12f + (0.3f - 0.12f) * e;
+    jetPulse_ *= (1.0f - e);
+    squashJet_ *= (1.0f - e);
+    lookSide_ = 0.0f;
 
     const float gap = p_.sharkEndGap + (p_.sharkLungeGap - p_.sharkEndGap) * Smooth01(u);
     sharkPos_ = Sub(octPos_, Scale(travelDir_, gap));
@@ -709,7 +849,12 @@ private:
     const RC::Vector3 d = ToShark();
     octYaw_ = yaw_ + turnDiff_;
     octPitchUp_ = std::asin(std::clamp(d.y, -1.0f, 1.0f));
-    splay_ = 1.25f;
+    // 足は下へ開いたまま。撃った反動（recoil_ < 0）で一瞬すぼめる
+    legAxisTarget_ = {0.0f, -1.0f, 0.0f};
+    splay_ = (std::max)(0.2f, p_.threatSplay + 0.5f * (std::min)(recoil_, 0.0f));
+    waveAmt_ = 0.3f;
+    jetPulse_ = 0.0f;
+    squashJet_ = 0.0f;
 
     if (shotsFired_ < p_.shotCount && t_ >= static_cast<float>(shotsFired_) * p_.shotInterval) {
       FireShot(shotsFired_);
@@ -721,6 +866,7 @@ private:
     if (!sharkAlive_ && killTime_ >= 0.0f && t_ >= killTime_ + p_.killHold) {
       mergeFromYaw_ = octYaw_;
       mergeFromPitch_ = octPitchUp_;
+      mergeFromSplay_ = splay_;
       mergeFromPos_ = octPos_;
       mergeCamFrom_ = camPos_;
       mergeRotFrom_ = camRot_;
@@ -738,7 +884,10 @@ private:
     const float target = yaw_ + sign * PartPose::kTwoPi;
     octYaw_ = mergeFromYaw_ + (target - mergeFromYaw_) * e;
     octPitchUp_ = mergeFromPitch_ + (-endRot_.x - mergeFromPitch_) * e;
-    splay_ = 1.25f + (0.35f - 1.25f) * e;
+    // 足は元の「後ろ下へなびく」形へ戻す（浮上の一人称へつなぐ）
+    legAxisTarget_ = LegAxisRest();
+    splay_ = mergeFromSplay_ + (0.35f - mergeFromSplay_) * e;
+    waveAmt_ = 0.3f;
     // Done へはカメラを最終位置へ書いたあと（Update の最後）で移る
     if (u >= 1.0f) mergeDone_ = true;
   }
@@ -793,6 +942,15 @@ private:
       pos.y += 0.35f * std::sin(kPi * k); // 少し山なり
       const float r = p_.shotSize;
       Place(s.e, pos, Identity(), {r, r, r});
+      // 通り道に泡を残す（引いた構図でも弾がどこからどこへ飛んだか分かるように）
+      for (int b = 0; b < p_.shotTrailBubbles; ++b) {
+        RC::EffectParticleSpawn bubble;
+        bubble.kind = RC::EffectParticleKind::Bubble;
+        bubble.position = pos;
+        bubble.scale = r * (0.25f + 0.1f * static_cast<float>(b % 3));
+        bubble.color = {0.8f, 0.92f, 1.0f, 0.7f};
+        RC::SpawnEffectParticle(bubble);
+      }
       if (k >= 1.0f) {
         s.active = false;
         SetActive(s.e, false);
@@ -868,6 +1026,14 @@ private:
       knockVel_ = Scale(knockVel_, std::exp(-9.0f * dt));
       knock_ = Add(knock_, Scale(knockVel_, dt));
       if (phase_ == Phase::Shoot) {
+        // 突進：タコへ向かって進む（当たるたびに鈍る。sharkMinGap より近づかない）
+        const RC::Vector3 toOct = Sub(octPos_, sharkHold_);
+        const float dist = Len(toOct);
+        if (dist > p_.sharkMinGap) {
+          const float hitRatio = static_cast<float>(hitsLanded_) / static_cast<float>((std::max)(p_.shotCount, 1));
+          const float step = (std::min)(p_.sharkChargeSpeed * (1.0f - 0.6f * hitRatio) * dt, dist - p_.sharkMinGap);
+          sharkHold_ = Add(sharkHold_, Scale(toOct, step / dist));
+        }
         sharkPos_ = Add(sharkHold_, knock_);
         sharkPos_.y += 0.06f * std::sin(time_ * 47.0f) * (flashTimer_ > 0.0f ? 1.0f : 0.0f);
       }
@@ -938,7 +1104,7 @@ private:
     if (!show) return;
 
     const float s = p_.octopusScale;
-    const float sq = std::clamp(recoil_ + 0.04f * std::sin(time_ * 9.0f), -0.6f, 0.8f);
+    const float sq = std::clamp(recoil_ + squashJet_ + 0.04f * std::sin(time_ * 9.0f), -0.6f, 0.8f);
     const RC::Vector3 stretch = {1.0f - 0.35f * sq, 1.0f + 0.5f * sq, 1.0f - 0.35f * sq};
     const Mat3 body = BodyMatrix(octYaw_, octPitchUp_, 0.0f);
     auto at = [&](const RC::Vector3 &l) {
@@ -962,19 +1128,19 @@ private:
             body, sz(0.065f, 0.065f, 0.05f));
     }
 
-    // 足：付け根の輪から後ろ下（A）へたなびく。splay_ で開き具合、先へ行くほどうねる
-    const RC::Vector3 A = {0.0f, -0.330f, -0.944f};
-    const RC::Vector3 U1 = {1.0f, 0.0f, 0.0f};
-    const RC::Vector3 U2 = {0.0f, 0.944f, -0.330f};
+    // 足：付け根の輪から legAxis_ の向きへたなびく。splay_ で開き具合、先へ行くほどうねる（waveAmt_）
+    //   付け根の輪は既定の軸（LegAxisRest）に直交する輪のまま。向きだけ legAxis_ 基準で決める
+    const RC::Vector3 A = legAxis_;
     const RC::Vector3 center = {0.0f, 0.02f, -0.08f};
     const float spacing = 0.21f;
     for (int t = 0; t < kTentacles; ++t) {
       const float phi = (static_cast<float>(t) + 0.5f) * (kTwoPi / static_cast<float>(kTentacles));
-      const RC::Vector3 radial = AddV(ScaleV(U1, std::cos(phi)), ScaleV(U2, std::sin(phi)));
-      RC::Vector3 p = AddV(center, ScaleV(radial, 0.2f));
+      const RC::Vector3 rootRadial = LegRadial(LegAxisRest(), phi);
+      const RC::Vector3 radial = LegSpreadDir(A, rootRadial, phi);
+      RC::Vector3 p = AddV(center, ScaleV(rootRadial, 0.2f));
       for (int k = 0; k < kSegments; ++k) {
         const float kk = static_cast<float>(k) / static_cast<float>(kSegments - 1);
-        const float wave = 0.35f * std::sin(time_ * 7.0f + static_cast<float>(t) * 0.9f - static_cast<float>(k) * 0.8f);
+        const float wave = waveAmt_ * std::sin(time_ * 7.0f + static_cast<float>(t) * 0.9f - static_cast<float>(k) * 0.8f);
         const float th = splay_ + wave * (0.3f + kk);
         const RC::Vector3 dir = AddV(ScaleV(A, std::cos(th)), ScaleV(radial, std::sin(th)));
         if (k > 0) p = AddV(p, ScaleV(dir, spacing));
@@ -996,7 +1162,7 @@ private:
     auto *mr = m.GetComponent<ModelRendererComponent>();
     if (!tr || !mr || !mr->HasModel()) return;
     const float s = p_.octopusScale;
-    const float sq = std::clamp(recoil_ + 0.04f * std::sin(time_ * 9.0f), -0.6f, 0.8f);
+    const float sq = std::clamp(recoil_ + squashJet_ + 0.04f * std::sin(time_ * 9.0f), -0.6f, 0.8f);
     const RC::Vector3 stretch = {1.0f - 0.35f * sq, 1.0f + 0.5f * sq, 1.0f - 0.35f * sq};
     const Mat3 body = BodyMatrix(octYaw_, octPitchUp_, 0.0f);
 
@@ -1021,11 +1187,9 @@ private:
     put("pupil_L", {-0.17f - px, 0.37f, 0.37f - 0.03f * lookSide_}, stretch);
     put("pupil_R", {0.17f + px, 0.37f, 0.37f - 0.03f * lookSide_}, stretch);
 
-    // 足：付け根の輪から後ろ下（A）へたなびく（PoseOctopus と同じ式。節の間隔はモデルに合わせる）
+    // 足：付け根の輪から legAxis_ の向きへたなびく（PoseOctopus と同じ式。節の間隔はモデルに合わせる）
     constexpr int kModelSegments = 6;
-    const RC::Vector3 A = {0.0f, -0.330f, -0.944f};
-    const RC::Vector3 U1 = {1.0f, 0.0f, 0.0f};
-    const RC::Vector3 U2 = {0.0f, 0.944f, -0.330f};
+    const RC::Vector3 A = legAxis_;
     const RC::Vector3 center = {0.0f, 0.02f, -0.08f};
     const float spacing = 0.17f;
     const float legStep = kTwoPi / static_cast<float>(kTentacles);
@@ -1034,7 +1198,7 @@ private:
     std::array<float, kTentacles> alpha{};
     for (int t = 0; t < kTentacles; ++t) {
       const float phi = (static_cast<float>(t) + 0.5f) * legStep;
-      const RC::Vector3 radial = AddV(ScaleV(U1, std::cos(phi)), ScaleV(U2, std::sin(phi)));
+      const RC::Vector3 radial = LegRadial(LegAxisRest(), phi); // 付け根の輪で割り当てる（毎フレーム変わらない）
       alpha[t] = std::atan2(radial.x, radial.z);
     }
     int bestDir = 1, bestOfs = 0;
@@ -1055,13 +1219,14 @@ private:
       const float restAng = (static_cast<float>(mi) + 0.5f) * legStep;
       const RC::Vector3 restDir = {std::sin(restAng), 0.0f, std::cos(restAng)};
       const float phi = (static_cast<float>(t) + 0.5f) * legStep;
-      const RC::Vector3 radial = AddV(ScaleV(U1, std::cos(phi)), ScaleV(U2, std::sin(phi)));
+      const RC::Vector3 rootRadial = LegRadial(LegAxisRest(), phi);
+      const RC::Vector3 radial = LegSpreadDir(A, rootRadial, phi);
       // 節の位置（最後の節の向きを決めるため 1 つ先まで求める）
       std::array<RC::Vector3, kModelSegments + 1> P{};
-      RC::Vector3 p = AddV(center, ScaleV(radial, 0.2f));
+      RC::Vector3 p = AddV(center, ScaleV(rootRadial, 0.2f));
       for (int k = 0; k <= kModelSegments; ++k) {
         const float kk = static_cast<float>(k) / static_cast<float>(kModelSegments - 1);
-        const float wave = 0.35f * std::sin(time_ * 7.0f + static_cast<float>(t) * 0.9f - static_cast<float>(k) * 0.8f);
+        const float wave = waveAmt_ * std::sin(time_ * 7.0f + static_cast<float>(t) * 0.9f - static_cast<float>(k) * 0.8f);
         const float th = splay_ + wave * (0.3f + kk);
         const RC::Vector3 dir = AddV(ScaleV(A, std::cos(th)), ScaleV(radial, std::sin(th)));
         if (k > 0) p = AddV(p, ScaleV(dir, spacing));
@@ -1090,12 +1255,27 @@ private:
       pos = Add(Add(Add(mid, Scale(R_, p_.camSide)), Scale(up, p_.camHeight)), Scale(F_, p_.camLead));
       look = mid;
     } else {
-      // 肩越し：タコの後ろ（サメと反対側）から、サメを見る。
-      // 下がる向きは水平だけにする（経路が斜め上なので、3D のまま下がると真上から見下ろす角度になる）
-      const RC::Vector3 d = ToShark();
-      const RC::Vector3 dH = Norm({d.x, 0.0f, d.z}, Scale(F_, -1.0f));
-      pos = Add(Add(Add(octPos_, Scale(dH, -p_.camBack)), Scale(up, 0.7f)), Scale(R_, 1.3f));
-      look = LerpV(octPos_, sharkAlive_ ? sharkPos_ : sharkHold_, 0.65f);
+      // 「肩越し」と「真横から引き」の 2 つの構図を camShootBlend で混ぜる。
+      //   肩越し    : タコの後ろ（サメと反対側）からサメを見る。タコが大きく映る
+      //   真横引き  : 2 匹の間の点から真横へ離れる。弾が画面を横切って見える
+      // 撃破後は沈むサメでなく最後に止まった位置を使う（向きが急に変わらないように）
+      const RC::Vector3 shark = sharkAlive_ ? sharkPos_ : sharkHold_;
+      const RC::Vector3 d = Sub(shark, octPos_);
+      const RC::Vector3 dH = Norm({d.x, 0.0f, d.z}, Scale(F_, -1.0f)); // タコ→サメ（水平）
+      RC::Vector3 side = {dH.z, 0.0f, -dH.x};                          // dH を水平に 90° 回した向き
+      if (side.x * R_.x + side.z * R_.z < 0.0f) side = Scale(side, -1.0f); // 追跡中と同じ側
+
+      // 肩越し（下がる向きは水平だけ。経路が斜め上なので 3D のまま下がると真上から見下ろす角度になる）
+      const RC::Vector3 shoulderPos =
+          Add(Add(Add(octPos_, Scale(dH, -p_.camBack)), Scale(up, 0.7f)), Scale(side, 1.3f));
+      const RC::Vector3 shoulderLook = LerpV(octPos_, shark, 0.65f);
+      // 真横引き
+      const RC::Vector3 focus = LerpV(octPos_, shark, p_.camShootFocus);
+      const RC::Vector3 sidePos = Add(Add(focus, Scale(side, p_.camShootDist)), Scale(up, p_.camShootHeight));
+
+      const float b = std::clamp(p_.camShootBlend, 0.0f, 1.0f);
+      pos = LerpV(shoulderPos, sidePos, b);
+      look = LerpV(shoulderLook, focus, b);
     }
   }
 
@@ -1166,6 +1346,15 @@ private:
   float lookSide_ = 0.0f;
   float turnDiff_ = 0.0f;
   bool octVisible_ = true;
+  RC::Vector3 legAxis_{0.0f, -0.330f, -0.944f};       ///< 足のなびく向き（胴のローカル。legAxisTarget_ を追う）
+  RC::Vector3 legAxisTarget_{0.0f, -0.330f, -0.944f}; ///< 今の段階で狙う足の向き
+  float waveAmt_ = 0.35f;   ///< 足のうねりの大きさ（rad）
+  float jetPulse_ = 0.0f;   ///< ジェット推進の拍（1 = 水を噴いている瞬間）
+  float squashJet_ = 0.0f;  ///< 噴くときの外套膜の縮み（stretch へ足す）
+  int lastJet_ = 0;         ///< 最後に泡を吐いた噴射の番号
+  float turnFromYaw_ = 0.0f;   ///< Turn の始まりの向き
+  float turnFromPitch_ = 0.0f; ///< Turn の始まりの傾き
+  float turnFromSplay_ = 0.0f; ///< Turn の始まりの足の開き
 
   // サメ
   std::weak_ptr<Entity> sharkEntity_;
@@ -1190,6 +1379,7 @@ private:
   bool mergeDone_ = false;
   float mergeFromYaw_ = 0.0f;
   float mergeFromPitch_ = 0.0f;
+  float mergeFromSplay_ = 0.35f;
   RC::Vector3 mergeFromPos_{};
   RC::Vector3 mergeCamFrom_{};
   RC::Vector3 mergeRotFrom_{};
