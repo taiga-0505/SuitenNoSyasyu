@@ -45,10 +45,20 @@
 // 想定する運用
 // ------------
 // A-03 のウェーブ戦闘で使う敵。ウェーブ中はレールが止まるのでプレイヤーは
-// その場に留まる。数値検証では、静止した相手に対しては 1.9 秒で初弾に入り、
-// 以後は 9 割の時間で横腹を向けていられる。
+// その場に留まる。
 // 逆に**レール移動中のプレイヤーには追随できない**（速力 4.5 に対して
 // レールは 5.0）。これは意図した挙動で、振り切られた砲艦は脅威でなくなる。
+//
+// 持ち場は自機の正面の扇形
+// ------------------------
+// 自機の視点は正面から ±80° までしか振れない（RailShooterController の maxYawDeg）。
+// 以前は自機の周りを一周していたため、周回のたびに背後へ回り込み、
+// その間は撃ち返せない・船も撃ってこない「何も起きない時間」ができていた。
+// いまは自機を中心に preferredDistance の円を回りつつ、正面から ±frontArcDeg を
+// 超えたら回る向きを反転する（＝正面の扇の中を往復する）。反転は外側へ大回りで切り返す。
+// 何かの拍子に扇の外（+20°）へ出たら、旋回と速力を上げて正面へ戻る（recover）。
+// 数値検証（静止した自機・既定値）では、定常時の最大方位 62〜68°（視点限界 80° 以内）、
+// 斉射可能な時間は 7〜8 割、背後から出現した場合も 2〜5 秒で視界へ戻る。
 
 /// @brief 船の行動段階
 enum class ShipState {
@@ -70,8 +80,11 @@ public:
     float cruiseSpeed = 6.0f;        ///< 巡航速度(m/s)
     float engageSpeed = 4.5f;        ///< 交戦中の速度(m/s)
     float turnRateDeg = 35.0f;       ///< 旋回速度(度/秒)。小さいほど「船らしい」
-    float preferredDistance = 28.0f; ///< 保ちたい交戦距離(m)
+    float preferredDistance = 28.0f; ///< 保ちたい交戦距離(m)。自機を中心にこの半径を回る（旋回半径の 3 倍が下限）
     float patrolRadius = 18.0f;      ///< 巡航で描く円の半径(m)
+    float frontArcDeg = 50.0f;       ///< 自機の正面から左右この角度までを持ち場にする(度)。超えたら折り返す
+    float recoverTurnMul = 2.5f;     ///< 持ち場の外へ出たときの旋回速度の倍率
+    float recoverSpeedMul = 1.8f;    ///< 持ち場の外へ出たときの速力の倍率（自機が止まっているときだけ）
 
     // --- 砲撃 ---
     float broadsideToleranceDeg = 35.0f; ///< 「横腹を向けた」とみなす角度の許容(度)
@@ -110,6 +123,9 @@ protected:
         j["turnRateDeg"] = turnRateDeg;
         j["preferredDistance"] = preferredDistance;
         j["patrolRadius"] = patrolRadius;
+        j["frontArcDeg"] = frontArcDeg;
+        j["recoverTurnMul"] = recoverTurnMul;
+        j["recoverSpeedMul"] = recoverSpeedMul;
         j["broadsideToleranceDeg"] = broadsideToleranceDeg;
         j["fireMinDistance"] = fireMinDistance;
         j["fireMaxDistance"] = fireMaxDistance;
@@ -140,6 +156,9 @@ protected:
         if (j.contains("turnRateDeg")) turnRateDeg = j["turnRateDeg"].get<float>();
         if (j.contains("preferredDistance")) preferredDistance = j["preferredDistance"].get<float>();
         if (j.contains("patrolRadius")) patrolRadius = j["patrolRadius"].get<float>();
+        if (j.contains("frontArcDeg")) frontArcDeg = j["frontArcDeg"].get<float>();
+        if (j.contains("recoverTurnMul")) recoverTurnMul = j["recoverTurnMul"].get<float>();
+        if (j.contains("recoverSpeedMul")) recoverSpeedMul = j["recoverSpeedMul"].get<float>();
         if (j.contains("broadsideToleranceDeg")) broadsideToleranceDeg = j["broadsideToleranceDeg"].get<float>();
         if (j.contains("fireMinDistance")) fireMinDistance = j["fireMinDistance"].get<float>();
         if (j.contains("fireMaxDistance")) fireMaxDistance = j["fireMaxDistance"].get<float>();
@@ -214,22 +233,35 @@ protected:
         const float dist = std::sqrt(dx * dx + dz * dz);
         lastDistance_ = dist;
 
-        // --- 状態遷移 ---
-        // 交戦時の旋回中心。自機の向きから前方へ preferredDistance の 7 割ずらした点にする
-        const float tCy = std::cos(targetTr->rotation.y);
-        const float tSy = std::sin(targetTr->rotation.y);
-        const float forwardOffset = preferredDistance * 0.7f;
-        const RC::Vector3 engageCenter = {
-            targetTr->position.x + tSy * forwardOffset,
-            targetTr->position.y,
-            targetTr->position.z + tCy * forwardOffset
-        };
+        // --- 自機の正面から見た自分の方位 ---
+        // 視点を振っても持ち場がぶれないよう、カメラの今の向きではなく
+        // 「視点の基準の向き」（RailShooterController が base_yaw_mrad タグで出す）を使う。
+        UpdateFrontYaw(target, targetTr);
+        const float frontX = std::sin(frontYaw_);
+        const float frontZ = std::cos(frontYaw_);
+        const float rightX = frontZ;
+        const float rightZ = -frontX;
+        const float localF = (-dx) * frontX + (-dz) * frontZ; // 自機から見て前方への距離
+        const float localR = (-dx) * rightX + (-dz) * rightZ; // 自機から見て右への距離
+        const float bearing = std::atan2(localR, localF);     // 正面からの方位(rad, 右が正)
+        lastBearing_ = bearing;
+
+        // 持ち場（正面の扇）の外へ出たら recover。境目でばたつかないよう出入りに差をつける
+        const float arc = std::clamp(frontArcDeg, 5.0f, 170.0f) * kDeg2Rad;
+        if (!recovering_ && std::fabs(bearing) > arc + kRecoverEnterMarginDeg * kDeg2Rad) {
+            recovering_ = true;
+        } else if (recovering_ && std::fabs(bearing) < arc) {
+            recovering_ = false;
+        }
+
+        // 交戦時に回る円の半径。旋回半径に比べて小さすぎると円に乗れず暴れるので下限を設ける
+        const float orbitRadius = EngageRadius();
 
         switch (state_) {
         case ShipState::Patrol:
             if (dist <= detectDistance && IsSeenBy(targetTr, dx, dz, dist)) {
                 // 回り込む向きは「今の船首から見て旋回量が少ないほう」を選ぶ。
-                circleSign_ = ChooseCircleSign(tr->position, engageCenter);
+                circleSign_ = ChooseCircleSign(tr->position, targetTr->position, orbitRadius);
                 state_ = ShipState::Engage;
                 Log::Print("[ShipEnemyScript] engaging");
             }
@@ -238,7 +270,8 @@ protected:
         case ShipState::Engage:
             if (dist > detectDistance * kDisengageMargin) {
                 state_ = ShipState::Patrol; // 振り切られた
-            } else if (CanFire(dx, dz, dist)) {
+            } else if (!recovering_ && CanFire(dx, dz, dist)) {
+                // 持ち場の外（自機が撃ち返せない位置）からは撃たない
                 shotsLeft_ = (std::max)(volleyCount, 1);
                 shotTimer_ = 0.0f;
                 state_ = ShipState::Firing;
@@ -266,27 +299,51 @@ protected:
 
         // --- 操船（どの状態でも動き続ける。止まる船は的でしかない） ---
         const bool engaged = (state_ != ShipState::Patrol);
-        // 交戦時は自機の真後ろへ回り込まないよう、旋回中心を自機前方（engageCenter）にする
-        const RC::Vector3 center = engaged ? engageCenter : spawnPos_;
-        const float radius = engaged ? preferredDistance : patrolRadius;
-        const float speed = engaged ? engageSpeed : cruiseSpeed;
+        const RC::Vector3 center = engaged ? targetTr->position : spawnPos_;
+        const float radius = engaged ? orbitRadius : patrolRadius;
+        float speed = engaged ? engageSpeed : cruiseSpeed;
+        float turnMul = 1.0f;
 
         RC::Vector3 desired = OrbitDirection(tr->position, center, radius, circleSign_);
 
-        // 自機の背後（または真横後方）に入った場合のリカバリ：自機前方（engageCenter）へ直接舵を切る
         if (engaged) {
-            const float forwardDist = (-dx) * tSy + (-dz) * tCy;
-            if (forwardDist < 3.0f) { // 自機の前方3m未満（真横〜背後）
-                float toCenterX = engageCenter.x - tr->position.x;
-                float toCenterZ = engageCenter.z - tr->position.z;
-                float lenCenter = std::sqrt(toCenterX * toCenterX + toCenterZ * toCenterZ);
-                if (lenCenter > 1e-3f) {
-                    desired = { toCenterX / lenCenter, 0.0f, toCenterZ / lenCenter };
+            // 正面の扇の端まで来たら回る向きを反転する（＝扇の中を往復する）。
+            // 「今の回り方で方位がさらに外へ開いていくか」で判定するので、
+            // 扇の外にいる場合も、正面へ戻る向きに自然と揃う。
+            flipCooldown_ -= deltaTime;
+            const float vF = desired.x * frontX + desired.z * frontZ;
+            const float vR = desired.x * rightX + desired.z * rightZ;
+            const float bearingRate = localF * vR - localR * vF; // 方位の増える向き（符号だけ使う）
+            const bool openingOut = (bearing > arc && bearingRate > 0.0f) ||
+                                    (bearing < -arc && bearingRate < 0.0f);
+            if (flipCooldown_ <= 0.0f && openingOut) {
+                circleSign_ = -circleSign_;
+                desired = OrbitDirection(tr->position, center, radius, circleSign_);
+                flipCooldown_ = kFlipCooldown;
+                // 円の上にいるなら外側へ大回りで切り返す（内側へ切ると自機へ突っ込んで射程を割る）。
+                // 円から大きく外れているときは、素直に近いほうへ回す。
+                if (std::fabs(dist - radius) < radius * kForcedTurnBand) {
+                    const float shipRX = std::cos(headingY_); // 船の右舷方向
+                    const float shipRZ = -std::sin(headingY_);
+                    const float side = shipRX * dx + shipRZ * dz; // 正なら自機は右舷側
+                    forcedTurn_ = (side > 0.0f) ? -1 : 1;           // 自機と反対側へ舵を切る
+                } else {
+                    forcedTurn_ = 0;
                 }
             }
+
+            // 持ち場の外では急いで戻る。レール移動中（自機が動いている）は追わない：
+            // 振り切られた砲艦が脅威でなくなるのは意図どおり。
+            if (recovering_) {
+                turnMul = (std::max)(recoverTurnMul, 1.0f);
+                const float targetSpeed = std::sqrt(targetVel_.x * targetVel_.x + targetVel_.z * targetVel_.z);
+                if (targetSpeed < kTargetStillSpeed) speed *= (std::max)(recoverSpeedMul, 1.0f);
+            }
+        } else {
+            forcedTurn_ = 0;
         }
 
-        SteerTowards(desired, deltaTime);
+        SteerTowards(desired, deltaTime, turnMul);
 
         // 船首方向にだけ進む（真横へは動けない）
         const float fx = std::sin(headingY_);
@@ -339,6 +396,21 @@ public:
         // 保とうとしている交戦距離
         RC::DrawWireSphere3D(tr->position, preferredDistance,
                              { col.x, col.y, col.z, 0.35f }, 24, 3, true);
+
+        // 持ち場（自機の正面の扇）の両端。recover 中は赤
+        if (hasLastTarget_ && hasFrontYaw_) {
+            const RC::Vector4 arcCol = recovering_ ? RC::Vector4{ 1.0f, 0.2f, 0.2f, 0.8f }
+                                                   : RC::Vector4{ 0.3f, 0.9f, 1.0f, 0.6f };
+            const float len = EngageRadius() * 1.5f;
+            const float arc = std::clamp(frontArcDeg, 5.0f, 170.0f) * kDeg2Rad;
+            for (float s : { 1.0f, -1.0f }) {
+                const float a = frontYaw_ + arc * s;
+                RC::DrawLine3D({ lastTargetPos_.x, tr->position.y, lastTargetPos_.z },
+                               { lastTargetPos_.x + std::sin(a) * len, tr->position.y,
+                                 lastTargetPos_.z + std::cos(a) * len },
+                               arcCol, true);
+            }
+        }
     }
 
 #if RC_ENABLE_IMGUI
@@ -351,6 +423,8 @@ public:
         if (state_ == ShipState::Firing) ImGui::Text("Shots left: %d", shotsLeft_);
         if (state_ == ShipState::Reload) ImGui::Text("Reload: %.2fs", reloadTimer_);
         ImGui::Text("Target vel: (%.1f, %.1f, %.1f)", targetVel_.x, targetVel_.y, targetVel_.z);
+        ImGui::Text("Bearing: %.0f deg  %s  (orbit r %.1fm)", lastBearing_ / kDeg2Rad,
+                    recovering_ ? "RECOVER" : "in arc", EngageRadius());
 
         ImGui::Separator();
         ImGui::TextUnformatted("探知");
@@ -363,6 +437,9 @@ public:
         ImGui::DragFloat("Turn Rate (deg/s)", &turnRateDeg, 1.0f, 1.0f, 360.0f);
         ImGui::DragFloat("Preferred Distance", &preferredDistance, 0.5f, 1.0f, 200.0f);
         ImGui::DragFloat("Patrol Radius", &patrolRadius, 0.5f, 1.0f, 200.0f);
+        ImGui::DragFloat("Front Arc (deg)", &frontArcDeg, 1.0f, 5.0f, 170.0f);
+        ImGui::DragFloat("Recover Turn Mul", &recoverTurnMul, 0.05f, 1.0f, 6.0f);
+        ImGui::DragFloat("Recover Speed Mul", &recoverSpeedMul, 0.05f, 1.0f, 4.0f);
 
         ImGui::TextUnformatted("砲撃");
         ImGui::DragFloat("Broadside Tolerance (deg)", &broadsideToleranceDeg, 1.0f, 1.0f, 89.0f);
@@ -407,6 +484,18 @@ private:
     static constexpr float kDeg2Rad = kPi / 180.0f;
     /// @brief 交戦をやめる距離の倍率（探知距離ちょうどで切ると境目でばたつく）
     static constexpr float kDisengageMargin = 1.35f;
+    /// @brief 持ち場の扇からこの角度(度)以上はみ出したら recover に入る（戻りは扇の内側に入ったとき）
+    static constexpr float kRecoverEnterMarginDeg = 20.0f;
+    /// @brief 回る向きを反転したあと、次の反転を受け付けるまでの秒数（切り返し中のばたつき防止）
+    static constexpr float kFlipCooldown = 3.0f;
+    /// @brief 「円の上にいる」とみなす幅（半径に対する比）。この中なら切り返しを外回りに固定する
+    static constexpr float kForcedTurnBand = 0.35f;
+    /// @brief 外回りの固定を解く角度差(度)。目標の向きとの差がこれ未満になったら通常の操舵へ戻す
+    static constexpr float kForcedTurnReleaseDeg = 60.0f;
+    /// @brief 交戦半径の下限＝旋回半径のこの倍数。小さい円では切り返しが間に合わず円から外れる
+    static constexpr float kMinOrbitTurnRadii = 3.0f;
+    /// @brief 自機が止まっているとみなす速さ(m/s)。これ未満のときだけ recover で増速する
+    static constexpr float kTargetStillSpeed = 1.0f;
 
     /// @brief 状態の表示名を返す（ImGui 表示用）
     /// @param s 状態
@@ -488,15 +577,40 @@ private:
         return dot > viewDot;
     }
 
+    /// @brief 「自機の正面」の向きを更新する
+    /// @details RailShooterController が出す視点の基準の向き（base_yaw_mrad タグ）を優先する。
+    ///          タグが無いとき（別の操作スクリプト等）は、最初に見たカメラの向きで固定する。
+    ///          毎フレームのカメラの向きを使うと、視点を振るたびに持ち場が動いてしまう。
+    /// @param target 自機のエンティティ
+    /// @param targetTr 自機の Transform
+    void UpdateFrontYaw(const Entity* target, const TransformComponent* targetTr) {
+        if (target && target->HasTag("base_yaw_mrad")) {
+            frontYaw_ = static_cast<float>(target->GetTagInt("base_yaw_mrad", 0)) / 1000.0f;
+            hasFrontYaw_ = true;
+        } else if (!hasFrontYaw_) {
+            frontYaw_ = targetTr->rotation.y;
+            hasFrontYaw_ = true;
+        }
+    }
+
+    /// @brief 交戦時に自機の周りを回る半径（preferredDistance。ただし旋回半径の kMinOrbitTurnRadii 倍が下限）
+    /// @return 半径(m)
+    float EngageRadius() const {
+        const float omega = (std::max)(turnRateDeg, 1.0f) * kDeg2Rad;
+        const float turnRadius = (std::max)(engageSpeed, 0.0f) / omega;
+        return (std::max)(preferredDistance, turnRadius * kMinOrbitTurnRadii);
+    }
+
     /// @brief 回り込む向きを「旋回量が少ないほう」で決める
     /// @param from 船の現在位置
     /// @param center 回り込む中心
+    /// @param radius 回る半径
     /// @return 回り込む向き（+1 / -1）
-    float ChooseCircleSign(const RC::Vector3& from, const RC::Vector3& center) const {
+    float ChooseCircleSign(const RC::Vector3& from, const RC::Vector3& center, float radius) const {
         float best = 1.0f;
         float bestTurn = 1e9f;
         for (float sign : { 1.0f, -1.0f }) {
-            const RC::Vector3 d = OrbitDirection(from, center, preferredDistance, sign);
+            const RC::Vector3 d = OrbitDirection(from, center, radius, sign);
             const float need = std::fabs(WrapPi(std::atan2(d.x, d.z) - headingY_));
             if (need < bestTurn) { bestTurn = need; best = sign; }
         }
@@ -536,12 +650,24 @@ private:
     }
 
     /// @brief 船首を desired へ向ける（旋回速度の上限つき）
+    /// @details forcedTurn_ が立っている間は、目標との角度差が大きくても決めた側へ回す
+    ///          （切り返しで逆を向くとき、近道が自機側になると内回りして突っ込むため）。
     /// @param desired 向けたい方向（XZ）
     /// @param deltaTime 前フレームからの経過秒数
-    void SteerTowards(const RC::Vector3& desired, float deltaTime) {
+    /// @param turnMul 旋回速度の倍率（recover 中に上げる）
+    void SteerTowards(const RC::Vector3& desired, float deltaTime, float turnMul) {
         const float target = std::atan2(desired.x, desired.z);
-        const float maxStep = (std::max)(turnRateDeg, 0.0f) * kDeg2Rad * deltaTime;
-        const float d = WrapPi(target - headingY_);
+        const float maxStep = (std::max)(turnRateDeg, 0.0f) * turnMul * kDeg2Rad * deltaTime;
+        float d = WrapPi(target - headingY_);
+        if (forcedTurn_ != 0) {
+            if (std::fabs(d) < kForcedTurnReleaseDeg * kDeg2Rad) {
+                forcedTurn_ = 0;
+            } else if (forcedTurn_ > 0 && d < 0.0f) {
+                d += kPi * 2.0f;
+            } else if (forcedTurn_ < 0 && d > 0.0f) {
+                d -= kPi * 2.0f;
+            }
+        }
         headingY_ = (std::fabs(d) <= maxStep)
                         ? WrapPi(target)
                         : WrapPi(headingY_ + (d > 0.0f ? maxStep : -maxStep));
@@ -742,6 +868,13 @@ private:
     float circleSign_ = 1.0f;     ///< 回り込む向き(+1 / -1)
     RC::Vector3 spawnPos_{ 0.0f, 0.0f, 0.0f }; ///< 出現地点（巡航の中心）
     float lastDistance_ = 0.0f;   ///< 直近の目標との距離（ImGui 表示用）
+    float lastBearing_ = 0.0f;    ///< 直近の自機正面から見た方位(rad)（ImGui 表示用）
+
+    float frontYaw_ = 0.0f;       ///< 自機の正面の向き(rad)。持ち場の扇の基準
+    bool  hasFrontYaw_ = false;   ///< frontYaw_ を一度でも決めたか
+    bool  recovering_ = false;    ///< 持ち場の外へ出て、急いで戻っている最中か
+    float flipCooldown_ = 0.0f;   ///< 次に回る向きを反転できるまでの残り秒数
+    int   forcedTurn_ = 0;        ///< 切り返し中に固定する舵の向き（+1=右 / -1=左 / 0=固定しない）
 
     int   shotsLeft_ = 0;
     float shotTimer_ = 0.0f;

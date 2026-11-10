@@ -705,6 +705,12 @@ protected:
             if (auto* tr = GetComponent<TransformComponent>()) {
                 baseRotation_ = tr->rotation;
                 lookInitialized_ = true;
+                // 「自機の正面」を敵 AI へ知らせる（視点は ±maxYawDeg までしか振れないので、
+                // この向きから大きく外れた敵は撃てない）。ShipEnemyScript が持ち場の基準に使う。
+                // タグは int なので 1000 倍（ミリラジアン）で渡す。
+                if (Entity* self = GetEntity()) {
+                    self->SetTag("base_yaw_mrad", static_cast<int>(baseRotation_.y * 1000.0f));
+                }
             }
         }
 

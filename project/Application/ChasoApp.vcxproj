@@ -217,6 +217,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClCompile Include="..\Application\Game\Scripts\ResultScreenScript.cpp" />
     <ClCompile Include="..\Application\Game\Scripts\StageSelectScript.cpp" />
     <ClCompile Include="..\Application\Game\Scripts\CaveLightZoneScript.cpp" />
+    <ClCompile Include="..\Application\Game\Scripts\CaveHeadlampScript.cpp" />
     <ClCompile Include="..\Application\Game\Scripts\PauseMenuScript.cpp" />
     <ClCompile Include="..\Application\Game\Scripts\ShipEnemyScript.cpp" />
     <ClCompile Include="..\Application\Game\Scripts\OctopusEnemyScript.cpp" />

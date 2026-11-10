@@ -8,6 +8,8 @@
   Stage4 水上 洞窟（地底湖） … 水没した通路（水中）から浮上して、天井の高い地底湖へ上がる
   Stage5 水上 外洋（黎明の海）… 洞窟の中から始まり、崖の口を抜けて外洋へ出る最終面
 屋外 ⇔ 洞窟を行き来する面（2・5）は CaveLightZoneScript で太陽光と環境光をカメラの位置に合わせて切り替える。
+洞窟の中は人工的な光源を置かず、入口・出口から差す外光と、カメラに追従するヘッドライト
+（CaveHeadlampScript のスポットライト）だけで照らす。
 
 Resources/Scenes/Game.json を雛形（カメラ・レール・ポーズ・ウェーブ管理・敵のパラメータ）として読み、
 地形・レール・ウェーブ・照明だけ差し替えて書き出す。エディタで調整したあとに再実行すると
@@ -122,9 +124,12 @@ class Stage:
 
     # --- 地形 ---
     def block(self, name, pos, scale, color, rot=(0.0, 0.0, 0.0), shape="box", terrain=False,
-              cave=False, solid=True, lighting=2):
+              cave=False, solid=True, lighting=None):
         if not self.in_window(pos[2] - abs(scale[2]) * 0.5, pos[2] + abs(scale[2]) * 0.5):
             return None
+        if lighting is None:
+            # 洞窟の岩は Lambert（光の当たらない面は暗いまま）。Half Lambert だと裏側まで明るく平板に見える
+            lighting = 1 if cave else 2
         comps = []
         if solid:
             comps.append(collider())
@@ -140,15 +145,22 @@ class Stage:
         parent = self.cave_folder["guid"] if self.cave_folder else self.field["guid"]
         self.add(entity(name, [tr(pos), point_light(color, intensity, radius, decay)], parent))
 
-    def crystal(self, pos, color, light_intensity=1.6, radius=14.0, size=0.9):
-        """発光する結晶（ライティング無しの小さな八面体風の球 ＋ 点光源）"""
-        if not self.in_window(pos[2], pos[2]):
-            return
-        parent = self.cave_folder["guid"] if self.cave_folder else self.field["guid"]
-        self.add(entity("Crystal", [tr(pos, (0.6, 0.3, 0.4), (size, size * 1.8, size)),
-                                    prim("sphere", color, lighting=0)], parent))
-        self.add(entity("CrystalLight", [tr((pos[0], pos[1], pos[2])),
-                                         point_light(color, light_intensity, radius)], parent))
+    def headlamp(self, from_z, to_z):
+        """カメラに追従するヘッドライト（CaveHeadlampScript ＋ 影ありスポットライト）。
+        カメラの z が from_z → to_z と進むあいだに 0 → 1 で点く（from_z > to_z なら消えていく）。"""
+        cam_pos = next(c for c in next(e for e in self.entities if e["name"] == "Camera")["components"]
+                       if c["type"] == "TransformComponent")["data"]["position"]
+        self.add(entity("Headlamp", [
+            tr(cam_pos),
+            {"type": "SpotLightComponent", "enabled": True,
+             "data": {"visible": True, "color": [1.0, 0.9, 0.75, 1.0], "direction": [0.0, 0.0, 1.0],
+                      "offset": [0.35, 0.25, 0.0], "intensity": 0.0, "distance": 55.0, "decay": 1.1,
+                      "cosAngle": 0.72, "castShadow": True, "shadowNear": 0.3, "shadowExcludeSelf": True,
+                      "shadowPriority": -1}},
+            {"type": "NativeScriptComponent", "enabled": True,
+             "data": {"scriptDataList": [{"fromZ": from_z, "toZ": to_z, "intensity": 2.0, "flicker": 0.03,
+                                          "followRate": 12.0}],
+                      "scriptTypeName": "CaveHeadlampScript", "scriptTypeNames": ["CaveHeadlampScript"]}}]))
 
     # --- 敵 ---
     def spawner(self, kind, wave, pos, count=None, **over):
@@ -304,10 +316,6 @@ CAVE_ROCK = (0.30, 0.27, 0.25, 1.0)
 CAVE_ROCK_DARK = (0.20, 0.18, 0.17, 1.0)
 SAND = (0.80, 0.70, 0.50, 1.0)
 CAVE_SAND = (0.42, 0.38, 0.32, 1.0)
-CYAN = (0.35, 0.95, 1.0, 1.0)
-TEAL = (0.30, 1.0, 0.75, 1.0)
-AMBER = (1.0, 0.70, 0.35, 1.0)
-VIOLET = (0.75, 0.45, 1.0, 1.0)
 
 # 洞窟の水中の見た目（外洋より暗く、光の筋は弱い）
 CAVE_WATER_LOOK = {
@@ -457,8 +465,9 @@ OUTSIDE_LIGHT = dict({"intensity": 1.0, "color": [1.0, 1.0, 1.0, 1.0], "ambientC
                       "ambientIntensity": 0.0, "waterEnvironment": 0.6}, **SEA_WATER)
 DAWN_LIGHT = dict({"intensity": 1.0, "color": [1.0, 0.78, 0.55, 1.0], "ambientColor": [1.0, 0.8, 0.7],
                    "ambientIntensity": 0.08, "waterEnvironment": 0.6}, **DAWN_WATER)
-CAVE_LIGHT = dict({"intensity": 0.3, "color": [0.7, 0.72, 0.8, 1.0], "ambientColor": [0.5, 0.5, 0.58],
-                   "ambientIntensity": 0.25, "waterEnvironment": 0.12}, **CAVE_WATER)
+# 洞窟の中は外光がほぼ届かない。視界はヘッドライト（Stage.headlamp）で確保する
+CAVE_LIGHT = dict({"intensity": 0.05, "color": [0.55, 0.6, 0.7, 1.0], "ambientColor": [0.35, 0.4, 0.5],
+                   "ambientIntensity": 0.06, "waterEnvironment": 0.12}, **CAVE_WATER)
 
 # --- 各面のレール（ワールド座標）---
 RAIL = {
@@ -523,9 +532,8 @@ def build_world(st):
     stalactites(st, 16.0, 190.0, 325.0, 12.0, 20, 5.0, seed=22, min_tip_y=5.0)
     pillars(st, 16.0, 195.0, 325.0, CAVE_FLOOR_Y, 7, 3.0, seed=23, terrain=True, avoid=avoid,
             name="ChannelRock")
-    st.light("EntranceLight", (0, 6, 190), (1.0, 0.95, 0.85, 1.0), 2.5, 35.0)
-    for k, (x, y, z) in enumerate([(-14, 6, 215), (14, 5, 240), (-14, 7, 262), (14, 4, 285), (-13, 6, 310)]):
-        st.crystal((x, y, z), CYAN if k % 2 == 0 else AMBER, light_intensity=2.0, radius=18.0, size=1.0)
+    # 洞窟の口から差し込む昼の外光（少し青みのある白）
+    st.light("EntranceLight", (0, 6, 190), (0.85, 0.92, 1.0, 1.0), 2.0, 40.0, decay=1.4)
 
     # --- 広間 → 水没した通路（Stage3）---
     cave_shell(st, x_half=18.0, z0=330.0, z1=530.0, ceil_y=14.0, floor_y=CAVE_FLOOR_Y, ceil_fn=hall_ceiling,
@@ -534,9 +542,6 @@ def build_world(st):
     stalactites(st, 18.0, 422.0, 528.0, 2.5, 12, 1.8, seed=33, min_tip_y=0.6)
     pillars(st, 18.0, 335.0, 395.0, CAVE_FLOOR_Y, 5, 3.0, seed=34, terrain=True, avoid=avoid, name="HallRock")
     pillars(st, 18.0, 430.0, 528.0, CAVE_FLOOR_Y, 7, -9.0, seed=35, avoid=avoid, name="HallPillar")
-    for k, (x, y, z) in enumerate([(-16, 8, 340), (16, 6, 362), (-16, 7, 385), (15, 4, 405),
-                                   (-14, -12, 435), (14, -16, 460), (-13, -18, 485), (13, -10, 510)]):
-        st.crystal((x, y, z), (AMBER, CYAN, TEAL)[k % 3], light_intensity=2.0, radius=18.0)
 
     # --- 水没した通路 → 地底湖（Stage4）---
     cave_shell(st, x_half=20.0, z0=530.0, z1=730.0, ceil_y=15.0, floor_y=CAVE_FLOOR_Y, ceil_fn=lake_ceiling,
@@ -545,17 +550,13 @@ def build_world(st):
     stalactites(st, 20.0, 592.0, 728.0, 15.0, 26, 7.0, seed=43, ceil_fn=lake_ceiling, min_tip_y=5.0)
     pillars(st, 20.0, 535.0, 600.0, CAVE_FLOOR_Y, 6, -9.0, seed=44, avoid=avoid, name="LakePillar")
     pillars(st, 20.0, 650.0, 725.0, CAVE_FLOOR_Y, 6, 3.5, seed=45, terrain=True, avoid=avoid, name="LakeRock")
-    for k, (x, y, z) in enumerate([(-18, -12, 545), (18, -15, 570), (-17, -10, 595), (18, -8, 615),
-                                   (-18, 6, 640), (18, 10, 665), (-18, 8, 690), (18, 11, 715)]):
-        st.crystal((x, y, z), (TEAL, VIOLET, AMBER)[k % 3], light_intensity=2.2, radius=20.0, size=1.1)
 
     # --- 出口の水路（Stage5 の冒頭）---
     cave_shell(st, x_half=16.0, z0=730.0, z1=790.0, ceil_y=12.0, floor_y=CAVE_FLOOR_Y,
                back_wall=False, front_wall=False, name_prefix="Exit")
     stalactites(st, 16.0, 732.0, 788.0, 12.0, 8, 5.0, seed=52, min_tip_y=5.0)
-    for k, (x, y, z) in enumerate([(-14, 6, 740), (14, 5, 760), (-13, 7, 780)]):
-        st.crystal((x, y, z), (AMBER, CYAN)[k % 2], light_intensity=2.0, radius=18.0)
-    st.light("ExitGlow", (0, 6, 786), (1.0, 0.8, 0.6, 1.0), 2.5, 35.0)
+    # 出口から差し込む夜明けの外光
+    st.light("ExitGlow", (0, 6, 786), (1.0, 0.82, 0.62, 1.0), 2.2, 40.0, decay=1.4)
     cliff_with_arch(st, CLIFF_B_Z, "CliffB")
 
     # --- 外洋 B（Stage5）---
@@ -608,6 +609,7 @@ def stage2():
     sun = st.sun(SUN_DIR, (1.0, 1.0, 1.0, 1.0), 1.0)
     st.light_zone(sun, from_z=CLIFF_A_Z - 8.0, to_z=CLIFF_A_Z + 25.0, a=OUTSIDE_LIGHT, b=CAVE_LIGHT)
     st.camera(wps, rise_depth=26.0, start_text="第2面　岩窟水道", far_z=240.0)
+    st.headlamp(from_z=CLIFF_A_Z - 8.0, to_z=CLIFF_A_Z + 25.0)  # 洞窟へ入るにつれて点ける
     small_ship = {"maxHp": 20, "patrolRadius": 7.0, "detectDistance": 40.0, "preferredDistance": 18.0}
     # 外のウェーブは崖の裏（洞窟の中）に湧かないよう、前方の距離を縮める
     st.spawner("shark", 1, (4, 0.5, 158), count=3, aheadDistance=20.0)
@@ -635,6 +637,7 @@ def stage3():
            ambient_color=tuple(CAVE_LIGHT["ambientColor"]), ambient=CAVE_LIGHT["ambientIntensity"])
     st.camera(wps, rise_depth=13.0, start_text="第3面　沈み洞", underwater_look=CAVE_WATER_LOOK,
               far_z=240.0)  # 前半は水上（フォグが無い）なので遠くまで描く。水中に入ればフォグで隠れる
+    st.headlamp(from_z=0.0, to_z=1.0)  # 面全体が洞窟の中なので常に点灯
     st.spawner("shark", 1, (3, 0.5, 368), count=3, aheadDistance=30.0)
     st.spawner("octopus", 1, (-6, -1.5, 372), count=1)
     st.spawner("shark", 2, (0, -11, 470), count=4, spawnInterval=1.6)
@@ -659,6 +662,7 @@ def stage4():
            ambient_color=tuple(CAVE_LIGHT["ambientColor"]), ambient=CAVE_LIGHT["ambientIntensity"])
     st.camera(wps, rise_depth=10.0, start_text="第4面　地底湖", underwater_look=CAVE_WATER_LOOK,
               far_z=240.0)
+    st.headlamp(from_z=0.0, to_z=1.0)  # 面全体が洞窟の中なので常に点灯
     small_ship = {"maxHp": 25, "patrolRadius": 9.0, "detectDistance": 45.0, "preferredDistance": 22.0}
     st.spawner("shark", 1, (3, -9, 580), count=3)
     st.spawner("octopus", 1, (-6, -10, 585), count=1)
@@ -687,6 +691,7 @@ def stage5():
     st.light_zone(sun, from_z=CLIFF_B_Z - 25.0, to_z=CLIFF_B_Z + 10.0, a=CAVE_LIGHT, b=DAWN_LIGHT)
     st.camera(wps, rise_depth=14.0, start_text="第5面　黎明の海", underwater_look=CAVE_WATER_LOOK,
               far_z=240.0)
+    st.headlamp(from_z=CLIFF_B_Z + 10.0, to_z=CLIFF_B_Z - 25.0)  # 洞窟を抜けるにつれて消す
     st.spawner("shark", 1, (5, 0.5, 850), count=4, spawnInterval=1.6)
     st.spawner("octopus", 1, (-8, -1.5, 855), count=2)
     st.spawner("ship", 2, (14, 0.5, 925), count=1)

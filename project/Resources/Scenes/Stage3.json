@@ -78,7 +78,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -159,7 +159,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -240,7 +240,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -321,7 +321,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -402,7 +402,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -483,7 +483,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -564,7 +564,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -645,7 +645,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -706,7 +706,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -767,7 +767,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -828,7 +828,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -889,7 +889,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -950,7 +950,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -1031,7 +1031,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -1057,228 +1057,6 @@
       "tags": {
         "is_terrain": 1
       },
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              14,
-              4,
-              285
-            ],
-            "rotation": [
-              0.6,
-              0.3,
-              0.4
-            ],
-            "scale": [
-              1.0,
-              1.8,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              1.0,
-              0.7,
-              0.35,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 0,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 0,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
-        }
-      ],
-      "guid": 993617662095371317,
-      "isFolder": false,
-      "locked": false,
-      "name": "Crystal",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              14,
-              4,
-              285
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PointLightComponent",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "color": [
-              1.0,
-              0.7,
-              0.35,
-              1.0
-            ],
-            "intensity": 2.0,
-            "radius": 18.0,
-            "decay": 1.5,
-            "castShadow": false
-          }
-        }
-      ],
-      "guid": 2263671567798012985,
-      "isFolder": false,
-      "locked": false,
-      "name": "CrystalLight",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -13,
-              6,
-              310
-            ],
-            "rotation": [
-              0.6,
-              0.3,
-              0.4
-            ],
-            "scale": [
-              1.0,
-              1.8,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              0.35,
-              0.95,
-              1.0,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 0,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 0,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
-        }
-      ],
-      "guid": 2046313261813073188,
-      "isFolder": false,
-      "locked": false,
-      "name": "Crystal",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -13,
-              6,
-              310
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PointLightComponent",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "color": [
-              0.35,
-              0.95,
-              1.0,
-              1.0
-            ],
-            "intensity": 2.0,
-            "radius": 18.0,
-            "decay": 1.5,
-            "castShadow": false
-          }
-        }
-      ],
-      "guid": 1156350779959063169,
-      "isFolder": false,
-      "locked": false,
-      "name": "CrystalLight",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
       "visible": true
     },
     {
@@ -1336,7 +1114,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -1417,7 +1195,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -1498,7 +1276,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -1579,7 +1357,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -1660,7 +1438,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -1741,7 +1519,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -1822,7 +1600,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -1903,7 +1681,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -1984,7 +1762,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -2065,7 +1843,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -2146,7 +1924,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -2227,7 +2005,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -2308,7 +2086,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -2389,7 +2167,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -2470,7 +2248,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -2551,7 +2329,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -2632,7 +2410,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -2713,7 +2491,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -2794,7 +2572,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -2875,7 +2653,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -2956,7 +2734,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -3037,7 +2815,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -3118,7 +2896,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -3199,7 +2977,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -3280,7 +3058,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -3361,7 +3139,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -3442,7 +3220,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -3523,7 +3301,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -3584,7 +3362,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -3645,7 +3423,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -3706,7 +3484,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -3767,7 +3545,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -3828,7 +3606,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -3889,7 +3667,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -3950,7 +3728,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -4011,7 +3789,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -4072,7 +3850,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -4133,7 +3911,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -4194,7 +3972,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -4255,7 +4033,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -4316,7 +4094,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -4377,7 +4155,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -4438,7 +4216,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -4499,7 +4277,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -4560,7 +4338,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -4621,7 +4399,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -4682,7 +4460,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -4743,7 +4521,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -4804,7 +4582,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -4865,7 +4643,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -4926,7 +4704,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -4987,7 +4765,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -5048,7 +4826,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -5109,7 +4887,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -5170,7 +4948,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -5231,7 +5009,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -5292,7 +5070,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -5373,7 +5151,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -5456,7 +5234,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -5539,7 +5317,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -5622,7 +5400,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -5705,7 +5483,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -5788,7 +5566,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -5869,7 +5647,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -5950,7 +5728,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -6031,7 +5809,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -6112,7 +5890,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -6193,7 +5971,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -6274,7 +6052,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -6296,894 +6074,6 @@
       "isFolder": false,
       "locked": false,
       "name": "HallPillar_6",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -16,
-              8,
-              340
-            ],
-            "rotation": [
-              0.6,
-              0.3,
-              0.4
-            ],
-            "scale": [
-              0.9,
-              1.62,
-              0.9
-            ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              1.0,
-              0.7,
-              0.35,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 0,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 0,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
-        }
-      ],
-      "guid": 6666342880558534342,
-      "isFolder": false,
-      "locked": false,
-      "name": "Crystal",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -16,
-              8,
-              340
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PointLightComponent",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "color": [
-              1.0,
-              0.7,
-              0.35,
-              1.0
-            ],
-            "intensity": 2.0,
-            "radius": 18.0,
-            "decay": 1.5,
-            "castShadow": false
-          }
-        }
-      ],
-      "guid": 2942694005995854895,
-      "isFolder": false,
-      "locked": false,
-      "name": "CrystalLight",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              16,
-              6,
-              362
-            ],
-            "rotation": [
-              0.6,
-              0.3,
-              0.4
-            ],
-            "scale": [
-              0.9,
-              1.62,
-              0.9
-            ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              0.35,
-              0.95,
-              1.0,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 0,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 0,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
-        }
-      ],
-      "guid": 9157344867492108385,
-      "isFolder": false,
-      "locked": false,
-      "name": "Crystal",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              16,
-              6,
-              362
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PointLightComponent",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "color": [
-              0.35,
-              0.95,
-              1.0,
-              1.0
-            ],
-            "intensity": 2.0,
-            "radius": 18.0,
-            "decay": 1.5,
-            "castShadow": false
-          }
-        }
-      ],
-      "guid": 6199254967743041292,
-      "isFolder": false,
-      "locked": false,
-      "name": "CrystalLight",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -16,
-              7,
-              385
-            ],
-            "rotation": [
-              0.6,
-              0.3,
-              0.4
-            ],
-            "scale": [
-              0.9,
-              1.62,
-              0.9
-            ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              0.3,
-              1.0,
-              0.75,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 0,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 0,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
-        }
-      ],
-      "guid": 9149787973530373162,
-      "isFolder": false,
-      "locked": false,
-      "name": "Crystal",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -16,
-              7,
-              385
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PointLightComponent",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "color": [
-              0.3,
-              1.0,
-              0.75,
-              1.0
-            ],
-            "intensity": 2.0,
-            "radius": 18.0,
-            "decay": 1.5,
-            "castShadow": false
-          }
-        }
-      ],
-      "guid": 4380869136854659609,
-      "isFolder": false,
-      "locked": false,
-      "name": "CrystalLight",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              15,
-              4,
-              405
-            ],
-            "rotation": [
-              0.6,
-              0.3,
-              0.4
-            ],
-            "scale": [
-              0.9,
-              1.62,
-              0.9
-            ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              1.0,
-              0.7,
-              0.35,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 0,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 0,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
-        }
-      ],
-      "guid": 3796919019601963761,
-      "isFolder": false,
-      "locked": false,
-      "name": "Crystal",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              15,
-              4,
-              405
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PointLightComponent",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "color": [
-              1.0,
-              0.7,
-              0.35,
-              1.0
-            ],
-            "intensity": 2.0,
-            "radius": 18.0,
-            "decay": 1.5,
-            "castShadow": false
-          }
-        }
-      ],
-      "guid": 4045548593225890966,
-      "isFolder": false,
-      "locked": false,
-      "name": "CrystalLight",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -14,
-              -12,
-              435
-            ],
-            "rotation": [
-              0.6,
-              0.3,
-              0.4
-            ],
-            "scale": [
-              0.9,
-              1.62,
-              0.9
-            ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              0.35,
-              0.95,
-              1.0,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 0,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 0,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
-        }
-      ],
-      "guid": 5523560617350886032,
-      "isFolder": false,
-      "locked": false,
-      "name": "Crystal",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -14,
-              -12,
-              435
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PointLightComponent",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "color": [
-              0.35,
-              0.95,
-              1.0,
-              1.0
-            ],
-            "intensity": 2.0,
-            "radius": 18.0,
-            "decay": 1.5,
-            "castShadow": false
-          }
-        }
-      ],
-      "guid": 5958550398052006882,
-      "isFolder": false,
-      "locked": false,
-      "name": "CrystalLight",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              14,
-              -16,
-              460
-            ],
-            "rotation": [
-              0.6,
-              0.3,
-              0.4
-            ],
-            "scale": [
-              0.9,
-              1.62,
-              0.9
-            ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              0.3,
-              1.0,
-              0.75,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 0,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 0,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
-        }
-      ],
-      "guid": 3955238718568911105,
-      "isFolder": false,
-      "locked": false,
-      "name": "Crystal",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              14,
-              -16,
-              460
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PointLightComponent",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "color": [
-              0.3,
-              1.0,
-              0.75,
-              1.0
-            ],
-            "intensity": 2.0,
-            "radius": 18.0,
-            "decay": 1.5,
-            "castShadow": false
-          }
-        }
-      ],
-      "guid": 4300072741538770189,
-      "isFolder": false,
-      "locked": false,
-      "name": "CrystalLight",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -13,
-              -18,
-              485
-            ],
-            "rotation": [
-              0.6,
-              0.3,
-              0.4
-            ],
-            "scale": [
-              0.9,
-              1.62,
-              0.9
-            ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              1.0,
-              0.7,
-              0.35,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 0,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 0,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
-        }
-      ],
-      "guid": 4678132390564921001,
-      "isFolder": false,
-      "locked": false,
-      "name": "Crystal",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -13,
-              -18,
-              485
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PointLightComponent",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "color": [
-              1.0,
-              0.7,
-              0.35,
-              1.0
-            ],
-            "intensity": 2.0,
-            "radius": 18.0,
-            "decay": 1.5,
-            "castShadow": false
-          }
-        }
-      ],
-      "guid": 967536590861163128,
-      "isFolder": false,
-      "locked": false,
-      "name": "CrystalLight",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              13,
-              -10,
-              510
-            ],
-            "rotation": [
-              0.6,
-              0.3,
-              0.4
-            ],
-            "scale": [
-              0.9,
-              1.62,
-              0.9
-            ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              0.35,
-              0.95,
-              1.0,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 0,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 0,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
-        }
-      ],
-      "guid": 4818328132291027764,
-      "isFolder": false,
-      "locked": false,
-      "name": "Crystal",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              13,
-              -10,
-              510
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PointLightComponent",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "color": [
-              0.35,
-              0.95,
-              1.0,
-              1.0
-            ],
-            "intensity": 2.0,
-            "radius": 18.0,
-            "decay": 1.5,
-            "castShadow": false
-          }
-        }
-      ],
-      "guid": 3039091674623827304,
-      "isFolder": false,
-      "locked": false,
-      "name": "CrystalLight",
       "parentGuid": 5574882955467875202,
       "tags": {},
       "visible": true
@@ -7243,7 +6133,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -7324,7 +6214,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -7405,7 +6295,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -7486,7 +6376,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -7567,7 +6457,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -7648,7 +6538,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -7729,7 +6619,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -7810,7 +6700,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -7891,7 +6781,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -7972,7 +6862,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -8053,7 +6943,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -8134,7 +7024,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -8215,7 +7105,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -8296,7 +7186,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -8377,7 +7267,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -8458,7 +7348,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -8539,7 +7429,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -8620,7 +7510,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -8701,7 +7591,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -8782,7 +7672,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -8863,7 +7753,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -8944,7 +7834,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -9025,7 +7915,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -9106,7 +7996,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -9187,7 +8077,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -9268,7 +8158,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -9349,7 +8239,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -9430,7 +8320,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -9491,7 +8381,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -9552,7 +8442,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -9613,7 +8503,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -9674,7 +8564,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -9735,7 +8625,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -9796,7 +8686,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -9857,7 +8747,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -9918,7 +8808,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -9979,7 +8869,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -10040,7 +8930,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -10101,7 +8991,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -10162,7 +9052,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -10223,7 +9113,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -10284,7 +9174,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -10345,7 +9235,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -10406,7 +9296,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -10467,7 +9357,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -10528,7 +9418,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -10589,7 +9479,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -10650,7 +9540,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -10711,7 +9601,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -10772,7 +9662,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -10833,7 +9723,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -10894,7 +9784,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -10955,7 +9845,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -11016,7 +9906,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -11077,7 +9967,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -11138,7 +10028,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -11199,7 +10089,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -11260,7 +10150,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -11321,7 +10211,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -11382,7 +10272,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -11443,7 +10333,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -11504,7 +10394,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -11565,7 +10455,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -11626,7 +10516,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -11707,7 +10597,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -11788,7 +10678,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -11869,7 +10759,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -11950,7 +10840,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -12031,7 +10921,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -12112,7 +11002,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -12193,7 +11083,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -12276,7 +11166,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -12359,7 +11249,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -12442,7 +11332,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -12525,7 +11415,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -12608,7 +11498,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -12634,894 +11524,6 @@
       "tags": {
         "is_terrain": 1
       },
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -18,
-              -12,
-              545
-            ],
-            "rotation": [
-              0.6,
-              0.3,
-              0.4
-            ],
-            "scale": [
-              1.1,
-              1.9800000000000002,
-              1.1
-            ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              0.3,
-              1.0,
-              0.75,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 0,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 0,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
-        }
-      ],
-      "guid": 4871431292608708106,
-      "isFolder": false,
-      "locked": false,
-      "name": "Crystal",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -18,
-              -12,
-              545
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PointLightComponent",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "color": [
-              0.3,
-              1.0,
-              0.75,
-              1.0
-            ],
-            "intensity": 2.2,
-            "radius": 20.0,
-            "decay": 1.5,
-            "castShadow": false
-          }
-        }
-      ],
-      "guid": 6076963853419479536,
-      "isFolder": false,
-      "locked": false,
-      "name": "CrystalLight",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              18,
-              -15,
-              570
-            ],
-            "rotation": [
-              0.6,
-              0.3,
-              0.4
-            ],
-            "scale": [
-              1.1,
-              1.9800000000000002,
-              1.1
-            ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              0.75,
-              0.45,
-              1.0,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 0,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 0,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
-        }
-      ],
-      "guid": 2482157203288126526,
-      "isFolder": false,
-      "locked": false,
-      "name": "Crystal",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              18,
-              -15,
-              570
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PointLightComponent",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "color": [
-              0.75,
-              0.45,
-              1.0,
-              1.0
-            ],
-            "intensity": 2.2,
-            "radius": 20.0,
-            "decay": 1.5,
-            "castShadow": false
-          }
-        }
-      ],
-      "guid": 3127479274070991466,
-      "isFolder": false,
-      "locked": false,
-      "name": "CrystalLight",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -17,
-              -10,
-              595
-            ],
-            "rotation": [
-              0.6,
-              0.3,
-              0.4
-            ],
-            "scale": [
-              1.1,
-              1.9800000000000002,
-              1.1
-            ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              1.0,
-              0.7,
-              0.35,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 0,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 0,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
-        }
-      ],
-      "guid": 3045715693478117990,
-      "isFolder": false,
-      "locked": false,
-      "name": "Crystal",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -17,
-              -10,
-              595
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PointLightComponent",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "color": [
-              1.0,
-              0.7,
-              0.35,
-              1.0
-            ],
-            "intensity": 2.2,
-            "radius": 20.0,
-            "decay": 1.5,
-            "castShadow": false
-          }
-        }
-      ],
-      "guid": 4248052830436269512,
-      "isFolder": false,
-      "locked": false,
-      "name": "CrystalLight",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              18,
-              -8,
-              615
-            ],
-            "rotation": [
-              0.6,
-              0.3,
-              0.4
-            ],
-            "scale": [
-              1.1,
-              1.9800000000000002,
-              1.1
-            ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              0.3,
-              1.0,
-              0.75,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 0,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 0,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
-        }
-      ],
-      "guid": 7146490613418420360,
-      "isFolder": false,
-      "locked": false,
-      "name": "Crystal",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              18,
-              -8,
-              615
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PointLightComponent",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "color": [
-              0.3,
-              1.0,
-              0.75,
-              1.0
-            ],
-            "intensity": 2.2,
-            "radius": 20.0,
-            "decay": 1.5,
-            "castShadow": false
-          }
-        }
-      ],
-      "guid": 5266394214883652059,
-      "isFolder": false,
-      "locked": false,
-      "name": "CrystalLight",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -18,
-              6,
-              640
-            ],
-            "rotation": [
-              0.6,
-              0.3,
-              0.4
-            ],
-            "scale": [
-              1.1,
-              1.9800000000000002,
-              1.1
-            ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              0.75,
-              0.45,
-              1.0,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 0,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 0,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
-        }
-      ],
-      "guid": 6451711153883474654,
-      "isFolder": false,
-      "locked": false,
-      "name": "Crystal",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -18,
-              6,
-              640
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PointLightComponent",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "color": [
-              0.75,
-              0.45,
-              1.0,
-              1.0
-            ],
-            "intensity": 2.2,
-            "radius": 20.0,
-            "decay": 1.5,
-            "castShadow": false
-          }
-        }
-      ],
-      "guid": 8947555347155685930,
-      "isFolder": false,
-      "locked": false,
-      "name": "CrystalLight",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              18,
-              10,
-              665
-            ],
-            "rotation": [
-              0.6,
-              0.3,
-              0.4
-            ],
-            "scale": [
-              1.1,
-              1.9800000000000002,
-              1.1
-            ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              1.0,
-              0.7,
-              0.35,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 0,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 0,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
-        }
-      ],
-      "guid": 4158498476694185916,
-      "isFolder": false,
-      "locked": false,
-      "name": "Crystal",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              18,
-              10,
-              665
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PointLightComponent",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "color": [
-              1.0,
-              0.7,
-              0.35,
-              1.0
-            ],
-            "intensity": 2.2,
-            "radius": 20.0,
-            "decay": 1.5,
-            "castShadow": false
-          }
-        }
-      ],
-      "guid": 360487605927970631,
-      "isFolder": false,
-      "locked": false,
-      "name": "CrystalLight",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -18,
-              8,
-              690
-            ],
-            "rotation": [
-              0.6,
-              0.3,
-              0.4
-            ],
-            "scale": [
-              1.1,
-              1.9800000000000002,
-              1.1
-            ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              0.3,
-              1.0,
-              0.75,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 0,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 0,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
-        }
-      ],
-      "guid": 4410350752132174236,
-      "isFolder": false,
-      "locked": false,
-      "name": "Crystal",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -18,
-              8,
-              690
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PointLightComponent",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "color": [
-              0.3,
-              1.0,
-              0.75,
-              1.0
-            ],
-            "intensity": 2.2,
-            "radius": 20.0,
-            "decay": 1.5,
-            "castShadow": false
-          }
-        }
-      ],
-      "guid": 8667790647068071501,
-      "isFolder": false,
-      "locked": false,
-      "name": "CrystalLight",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              18,
-              11,
-              715
-            ],
-            "rotation": [
-              0.6,
-              0.3,
-              0.4
-            ],
-            "scale": [
-              1.1,
-              1.9800000000000002,
-              1.1
-            ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              0.75,
-              0.45,
-              1.0,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 0,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 0,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
-        }
-      ],
-      "guid": 5473557706574165436,
-      "isFolder": false,
-      "locked": false,
-      "name": "Crystal",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              18,
-              11,
-              715
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PointLightComponent",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "color": [
-              0.75,
-              0.45,
-              1.0,
-              1.0
-            ],
-            "intensity": 2.2,
-            "radius": 20.0,
-            "decay": 1.5,
-            "castShadow": false
-          }
-        }
-      ],
-      "guid": 3031838012130582108,
-      "isFolder": false,
-      "locked": false,
-      "name": "CrystalLight",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
       "visible": true
     },
     {
@@ -13579,7 +11581,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -13660,7 +11662,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -13741,7 +11743,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -13822,7 +11824,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -13903,7 +11905,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -13984,7 +11986,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -14065,7 +12067,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -14146,7 +12148,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -14207,7 +12209,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -14268,7 +12270,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -14329,7 +12331,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -14390,7 +12392,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -14451,7 +12453,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -14512,7 +12514,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -14573,7 +12575,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -14634,7 +12636,7 @@
               1.0
             ],
             "environmentCoeff": 0.0,
-            "lightingMode": 2,
+            "lightingMode": 1,
             "normalMapPath": "",
             "roughnessMapPath": "",
             "shininess": 32.0,
@@ -14656,339 +12658,6 @@
       "isFolder": false,
       "locked": false,
       "name": "Stalactite52_7",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -14,
-              6,
-              740
-            ],
-            "rotation": [
-              0.6,
-              0.3,
-              0.4
-            ],
-            "scale": [
-              0.9,
-              1.62,
-              0.9
-            ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              1.0,
-              0.7,
-              0.35,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 0,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 0,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
-        }
-      ],
-      "guid": 6503559200253906740,
-      "isFolder": false,
-      "locked": false,
-      "name": "Crystal",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -14,
-              6,
-              740
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PointLightComponent",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "color": [
-              1.0,
-              0.7,
-              0.35,
-              1.0
-            ],
-            "intensity": 2.0,
-            "radius": 18.0,
-            "decay": 1.5,
-            "castShadow": false
-          }
-        }
-      ],
-      "guid": 9027063080988895249,
-      "isFolder": false,
-      "locked": false,
-      "name": "CrystalLight",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              14,
-              5,
-              760
-            ],
-            "rotation": [
-              0.6,
-              0.3,
-              0.4
-            ],
-            "scale": [
-              0.9,
-              1.62,
-              0.9
-            ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              0.35,
-              0.95,
-              1.0,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 0,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 0,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
-        }
-      ],
-      "guid": 3212688612685381455,
-      "isFolder": false,
-      "locked": false,
-      "name": "Crystal",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              14,
-              5,
-              760
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PointLightComponent",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "color": [
-              0.35,
-              0.95,
-              1.0,
-              1.0
-            ],
-            "intensity": 2.0,
-            "radius": 18.0,
-            "decay": 1.5,
-            "castShadow": false
-          }
-        }
-      ],
-      "guid": 2972793632937392956,
-      "isFolder": false,
-      "locked": false,
-      "name": "CrystalLight",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -13,
-              7,
-              780
-            ],
-            "rotation": [
-              0.6,
-              0.3,
-              0.4
-            ],
-            "scale": [
-              0.9,
-              1.62,
-              0.9
-            ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              1.0,
-              0.7,
-              0.35,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 0,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 0,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
-        }
-      ],
-      "guid": 9126553122988708907,
-      "isFolder": false,
-      "locked": false,
-      "name": "Crystal",
-      "parentGuid": 5574882955467875202,
-      "tags": {},
-      "visible": true
-    },
-    {
-      "active": true,
-      "components": [
-        {
-          "type": "TransformComponent",
-          "enabled": true,
-          "data": {
-            "position": [
-              -13,
-              7,
-              780
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        },
-        {
-          "type": "PointLightComponent",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "color": [
-              1.0,
-              0.7,
-              0.35,
-              1.0
-            ],
-            "intensity": 2.0,
-            "radius": 18.0,
-            "decay": 1.5,
-            "castShadow": false
-          }
-        }
-      ],
-      "guid": 2637433572741941480,
-      "isFolder": false,
-      "locked": false,
-      "name": "CrystalLight",
       "parentGuid": 5574882955467875202,
       "tags": {},
       "visible": true
@@ -15024,13 +12693,13 @@
             "visible": true,
             "color": [
               1.0,
-              0.8,
-              0.6,
+              0.82,
+              0.62,
               1.0
             ],
-            "intensity": 2.5,
-            "radius": 35.0,
-            "decay": 1.0,
+            "intensity": 2.2,
+            "radius": 40.0,
+            "decay": 1.4,
             "castShadow": false
           }
         }
@@ -15534,15 +13203,15 @@
         {
           "data": {
             "ambientColor": [
-              0.5,
-              0.5,
-              0.58
+              0.35,
+              0.4,
+              0.5
             ],
-            "ambientIntensity": 0.25,
+            "ambientIntensity": 0.06,
             "color": [
+              0.55,
+              0.6,
               0.7,
-              0.72,
-              0.8,
               1.0
             ],
             "direction": [
@@ -15550,7 +13219,7 @@
               -0.8,
               0.5
             ],
-            "intensity": 0.3,
+            "intensity": 0.05,
             "visible": true
           },
           "enabled": true,
@@ -16746,6 +14415,89 @@
       "isFolder": false,
       "locked": false,
       "name": "PauseMenu",
+      "parentGuid": 0,
+      "tags": {},
+      "visible": true
+    },
+    {
+      "active": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "enabled": true,
+          "data": {
+            "position": [
+              0.0,
+              2.0,
+              325.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "type": "SpotLightComponent",
+          "enabled": true,
+          "data": {
+            "visible": true,
+            "color": [
+              1.0,
+              0.9,
+              0.75,
+              1.0
+            ],
+            "direction": [
+              0.0,
+              0.0,
+              1.0
+            ],
+            "offset": [
+              0.35,
+              0.25,
+              0.0
+            ],
+            "intensity": 0.0,
+            "distance": 55.0,
+            "decay": 1.1,
+            "cosAngle": 0.72,
+            "castShadow": true,
+            "shadowNear": 0.3,
+            "shadowExcludeSelf": true,
+            "shadowPriority": -1
+          }
+        },
+        {
+          "type": "NativeScriptComponent",
+          "enabled": true,
+          "data": {
+            "scriptDataList": [
+              {
+                "fromZ": 0.0,
+                "toZ": 1.0,
+                "intensity": 2.0,
+                "flicker": 0.03,
+                "followRate": 12.0
+              }
+            ],
+            "scriptTypeName": "CaveHeadlampScript",
+            "scriptTypeNames": [
+              "CaveHeadlampScript"
+            ]
+          }
+        }
+      ],
+      "guid": 5223235249832573506,
+      "isFolder": false,
+      "locked": false,
+      "name": "Headlamp",
       "parentGuid": 0,
       "tags": {},
       "visible": true
