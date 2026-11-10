@@ -396,16 +396,23 @@ protected:
         // 水面の高さはシーンの WaterComponent から拾う（無ければ 0）
         // 光柱の向きはシーンの DirectionalLight から拾う（無ければ PostProcess の既定）
         waterHeight = 0.0f;
+        float waterClarity = 0.0f; // 水中の輪郭線を薄めるのに使う（水が無ければ 0 = 薄めない）
         if (Scene* scene = GetScene()) {
             for (auto& e : scene->GetEntities()) {
                 if (!e) continue;
-                if (e->GetComponent<WaterComponent>()) {
+                if (auto* water = e->GetComponent<WaterComponent>()) {
                     if (auto* wtr = e->GetComponent<TransformComponent>()) waterHeight = wtr->position.y;
+                    // Water.PS の屈折は clarity <= 0 のとき 3m として扱うので合わせる
+                    waterClarity = (water->clarity > 0.0f) ? water->clarity : 3.0f;
                 }
                 if (auto* dl = e->GetComponent<DirectionalLightComponent>()) {
                     if (dl->visible) { sunDir_ = dl->direction; hasSunDir_ = true; }
                 }
             }
+        }
+        // 水中の物の輪郭線を、水の濁りに合わせて薄める（深い床の線だけ透けて見えないように）
+        if (auto* postProcess = RC::GetRenderContext().GetPostProcess()) {
+            postProcess->SetOutlineWaterFade(waterHeight, waterClarity);
         }
 
         // 最初から水中に置かれている場合（DeepRiseIntroScript が深海から始めるとき）は、

@@ -166,6 +166,11 @@ void PostProcess::Initialize(Dx12Core *dxCore,
     mappedMaterial_->outlineThickness = outlineThickness_;
     mappedMaterial_->outlineMode = outlineMode_;
     mappedMaterial_->excludeCount = 0; // 除外矩形は毎フレーム UI 側から申告される
+    // 行列は SetViewInverse が来るまで単位行列。水中の線の薄めは SetOutlineWaterFade まで無効
+    const float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    memcpy(mappedMaterial_->viewInverse, identity, sizeof(identity));
+    mappedMaterial_->waterHeight = 0.0f;
+    mappedMaterial_->waterClarity = 0.0f;
   }
 
   // Dissolve CBuffer 初期化
@@ -663,6 +668,9 @@ void PostProcess::SetProjectionInverse(const float* projInv16) {
 }
 
 void PostProcess::SetViewInverse(const float* viewInv16) {
+  if (mappedMaterial_) {
+    memcpy(mappedMaterial_->viewInverse, viewInv16, sizeof(float) * 16);
+  }
   if (mappedCaustics_) {
     memcpy(mappedCaustics_->viewInverse, viewInv16, sizeof(float) * 16);
   }
@@ -696,6 +704,13 @@ void PostProcess::SetOutlineMode(int mode) {
   outlineMode_ = mode;
   if (mappedMaterial_) {
     mappedMaterial_->outlineMode = mode;
+  }
+}
+
+void PostProcess::SetOutlineWaterFade(float waterHeight, float clarity) {
+  if (mappedMaterial_) {
+    mappedMaterial_->waterHeight = waterHeight;
+    mappedMaterial_->waterClarity = clarity;
   }
 }
 

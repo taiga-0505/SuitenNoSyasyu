@@ -188,6 +188,11 @@ static const float kCausticFocus     = 0.75; ///< 集光の強さ。物理値は
 static const float kCausticMax       = 2.5;  ///< 集光で明るくなる上限
 static const float kCausticMin       = 0.6;  ///< 光が散って暗くなる下限（溝の真下が黒く抜けないように）
 
+/// @brief 屈折の減衰に「視線の中の水の厚み」をどれだけ混ぜるか（0: 深さだけ, 1: 厚みだけ＝従来）
+/// @details 少しだけ混ぜて、遠くを浅い角度で見たときに浅い所も徐々に霞むようにしている。
+///          DepthBasedOutline.PS.hlsl の kOutlineWaterPathWeight と同じ値にすること（線の消え方を揃える）。
+static const float kWaterPathWeight = 0.1;
+
 /// @brief 波紋の傾き s（= -∇h）に倍率をかけ、大きくなるほど頭打ちにする
 /// @details 小さな傾きはほぼ s * kRippleNormalGain（細かい波紋でも光が動いて見える）。
 ///          大きな傾きは kRippleMaxSlope に近づく。ただし本来の傾きより小さくはしない。
@@ -623,7 +628,11 @@ PixelShaderOutput main(VertexShaderOutput input)
         sceneCol *= caustic;
 
         float clarity = (gOceanParams2.x > 0.0) ? gOceanParams2.x : 3.0;
-        float d = thickness / clarity;
+        // 減衰は「水面からの深さ」を主に使う。視線の中の水の厚みだけで決めると、
+        // 浅い角度で見たときに水面すぐ下のサメやタコまで消えて、輪郭線しか残らなかった。
+        // 深さ主体にすると、浅い所の物は顔まで見え、深い床や海底は従来どおり水の色に沈む。
+        float depthBelow = thickness * saturate(abs(V.y));
+        float d = lerp(depthBelow, thickness, kWaterPathWeight) / clarity;
         float T = exp(-d);
         float3 tint = gWaterShallowColor.rgb
                     / max(max(gWaterShallowColor.r, gWaterShallowColor.g), max(gWaterShallowColor.b, 1e-3));

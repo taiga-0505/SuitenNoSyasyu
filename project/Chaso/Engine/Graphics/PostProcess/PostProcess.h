@@ -107,6 +107,13 @@ public:
   /// @param mode 0 = 両側、1 = 外側、2 = 内側
   void SetOutlineMode(int mode);
 
+  /// @brief 水中にある物の輪郭線を、水の濁りに合わせて薄める設定をする
+  /// @details 水面は深度を書かないので、そのままだと水の色で隠れた物の線だけが透けて見える。
+  ///          水面の屈折（Water.PS）と同じ式で線を薄める。
+  /// @param waterHeight 水面のワールド Y
+  /// @param clarity     水の透明度（m、WaterComponent::clarity と揃える）。0 以下で無効
+  void SetOutlineWaterFade(float waterHeight, float clarity);
+
   // ===========================
   // Dissolve パラメータ
   // ===========================
@@ -660,6 +667,10 @@ private:
     int excludeCount;            ///< 除外矩形の数
     float padding2[3];           ///< 16 バイト境界合わせ
     float excludeRects[kMaxOutlineExclusions][4]; ///< (minU, minV, maxU, maxV)
+    float viewInverse[16];       ///< ビュー逆行列（水中の線を薄めるために使う）
+    float waterHeight;           ///< 水面のワールド Y
+    float waterClarity;          ///< 水の透明度（m）。0 以下で水中の線を薄めない
+    float padding3[2];           ///< 16 バイト境界合わせ
   };
   MaterialData* mappedMaterial_ = nullptr; ///< 書き込み先（dynMaterial_ の CPU 側）
   RC::DynamicCB<MaterialData> dynMaterial_; ///< mappedMaterial_ の実体（CPU/GPU 並行のため毎フレームの領域へ送る）

@@ -8,15 +8,36 @@
 #include "RenderCommon.h"
 #include "Render/Systems/RenderInteractiveWater.h"
 #include "Scene.h"
+#include "Common/EngineConfig.h"
 #include <algorithm>
 #include <cmath>
 #include <vector>
 
+#if RC_ENABLE_IMGUI
+#include "imgui/imgui.h"
+#endif
+
+/// @brief 自機弾が水中を進むときの調整値（全自機弾で共通）
+/// @details 弾は実行時にコードで作られシーン JSON に保存されないため、値はここの既定値で決める。
+///          Debug / Development では弾エンティティの Inspector から実行中に調整できる（終了すると戻る）。
+struct UnderwaterBulletTuning {
+    float drag = 2.5f;            ///< 水の抵抗（毎秒 velocity *= exp(-drag)）。大きいほど水中で早く止まる
+    float gravityScale = 0.3f;    ///< 水中での重力の倍率（浮力のぶん弱める）
+    float minSpeed = 6.0f;        ///< この速さを下回ったら泡になって消える
+    float bubbleInterval = 0.04f; ///< 水中の軌跡に泡を出す間隔（秒）
+    int burstBubbles = 10;        ///< 水中で消える・当たるときに弾ける泡の数
+};
+
 /// @brief 水弾の飛行・命中判定・着弾演出を行うスクリプト
 /// @details タグ（bullet_type / bullet_speed / dir_* 等）から初期速度を決め、重力付きで飛ばす。
 ///          移動線分のレイキャストで命中を判定し、消滅時はエンティティを破棄せず非アクティブ化してプールに戻す。
+///          自機弾は水面を越えても消えず、しぶきを出して水中（または水上）へ進む。空中から飛び込んだ弾は
+///          抵抗で減速し、泡の軌跡を残して、遅くなったら泡になって消える（水中で撃った弾は減速しない）。
+///          敵弾は従来どおり水面で消える。
 class WaterBullet : public ScriptableEntity {
 public:
+    static inline UnderwaterBulletTuning s_underwater; ///< 水中の挙動の調整値（全自機弾で共通）
+
     RC::Vector3 velocity = { 0.0f, 0.0f, 0.0f };
     float lifetime = 3.0f;
     float gravity = -3.0f;
@@ -65,6 +86,8 @@ protected:
             isDead = false;
             initialized = false;
             velocity = {0.0f, 0.0f, 0.0f};
+            inWater_ = false;
+            bubbleTimer_ = 0.0f;
             self->ClearTag("reused");
         }
 
@@ -133,12 +156,24 @@ protected:
                     }
                 }
             }
+            // 水中から撃った弾（自機が潜っているとき）は従来どおり減速させない。
+            // 減速するのは「空中から水に飛び込んだ」弾だけ（水中戦の射程を変えないため）
+            inWater_ = false;
+            bubbleTimer_ = 0.0f;
             initialized = true;
         }
 
-        // === 物理（重力を加えて移動） ===
+        // === 物理（重力を加えて移動。水中では抵抗で減速し、重力も弱まる） ===
         RC::Vector3 oldPos = tr->position;
-        velocity.y += gravity * deltaTime;
+        if (inWater_) {
+            const float k = std::exp(-s_underwater.drag * deltaTime);
+            velocity.x *= k;
+            velocity.y *= k;
+            velocity.z *= k;
+            velocity.y += gravity * s_underwater.gravityScale * deltaTime;
+        } else {
+            velocity.y += gravity * deltaTime;
+        }
         tr->position.x += velocity.x * deltaTime;
         tr->position.y += velocity.y * deltaTime;
         tr->position.z += velocity.z * deltaTime;
@@ -242,6 +277,13 @@ protected:
 
             // 命中点へ位置を戻してから衝突処理を行う
             if (hitEntity) {
+                // 水面を越えたのと同じフレームで当たった場合も、先に水面のしぶきを出す
+                if (isPlayerBullet && ((oldPos.y > 0.0f) != (hitPoint.y > 0.0f))) {
+                    const float denom = oldPos.y - hitPoint.y;
+                    const float t = (std::abs(denom) > 1e-6f) ? (oldPos.y / denom) : 0.0f;
+                    SpawnSurfaceSplash({oldPos.x + (hitPoint.x - oldPos.x) * t, 0.0f,
+                                        oldPos.z + (hitPoint.z - oldPos.z) * t});
+                }
                 tr->position = hitPoint;
                 OnCollision(hitEntity, hitPoint);
                 if (isDead) return;
@@ -260,11 +302,53 @@ protected:
             return;
         }
 
-        // 水面（y = 0）をどちら向きにでも跨いだら着水として消滅
-        if ((oldPos.y > 0.0f && tr->position.y <= 0.0f) || (oldPos.y < 0.0f && tr->position.y >= 0.0f)) {
-            Die();
-            return;
+        // 水面（y = 0）をどちら向きにでも跨いだとき
+        const bool crossedDown = (oldPos.y > 0.0f && tr->position.y <= 0.0f);
+        const bool crossedUp = (oldPos.y < 0.0f && tr->position.y >= 0.0f);
+        if (crossedDown || crossedUp) {
+            if (!isPlayerBulletSelf(self)) {
+                // 敵弾は従来どおり着水で消滅（砲弾が水面で弾ける演出を残す）
+                Die();
+                return;
+            }
+            // 自機弾は水面を越えた点でしぶきを上げ、そのまま進む
+            const float denom = oldPos.y - tr->position.y;
+            const float t = (std::abs(denom) > 1e-6f) ? (oldPos.y / denom) : 0.0f;
+            const RC::Vector3 surfacePos = {
+                oldPos.x + (tr->position.x - oldPos.x) * t,
+                0.0f,
+                oldPos.z + (tr->position.z - oldPos.z) * t};
+            SpawnSurfaceSplash(surfacePos);
+            inWater_ = crossedDown;
+            if (inWater_) SpawnBubbles(surfacePos, 3, 0.04f); // 潜り込んだ瞬間の泡
         }
+
+        // 飛び込んだ弾：泡の軌跡を残し、遅くなったら泡になって消える
+        if (inWater_) {
+            bubbleTimer_ += deltaTime;
+            if (bubbleTimer_ >= s_underwater.bubbleInterval) {
+                bubbleTimer_ = 0.0f;
+                SpawnBubbles(tr->position, 1, 0.05f);
+            }
+            const float speedSq = velocity.x * velocity.x + velocity.y * velocity.y + velocity.z * velocity.z;
+            if (speedSq < s_underwater.minSpeed * s_underwater.minSpeed) {
+                Die();
+                return;
+            }
+        }
+    }
+
+    /// @brief 水中を進む自機弾の調整値を Inspector に出す（値は全自機弾で共通）
+    void OnImGui() override {
+#if RC_ENABLE_IMGUI
+        ImGui::TextUnformatted("Underwater (shared by all PlayerBullets)");
+        ImGui::DragFloat("Drag##WaterBullet", &s_underwater.drag, 0.05f, 0.0f, 20.0f);
+        ImGui::DragFloat("Gravity Scale##WaterBullet", &s_underwater.gravityScale, 0.01f, 0.0f, 2.0f);
+        ImGui::DragFloat("Min Speed##WaterBullet", &s_underwater.minSpeed, 0.1f, 0.0f, 40.0f);
+        ImGui::DragFloat("Bubble Interval##WaterBullet", &s_underwater.bubbleInterval, 0.005f, 0.005f, 1.0f);
+        ImGui::DragInt("Burst Bubbles##WaterBullet", &s_underwater.burstBubbles, 1.0f, 0, 40);
+        ImGui::Text("InWater: %s", inWater_ ? "yes" : "no");
+#endif
     }
 
     /// @brief 命中相手の種類（アイテム／敵・プレイヤー／地形）に応じてダメージやスコアを積み、弾を消滅させる
@@ -321,10 +405,7 @@ protected:
             }
             Die();
         } else if (hitTerrain) {
-            // 地形に当たって消滅
-            if (auto* tr = GetComponent<TransformComponent>()) {
-                SpawnSplash(tr->position);
-            }
+            // 地形に当たって消滅（エフェクトは Die() 内で出す）
             Die();
         }
     }
@@ -332,6 +413,8 @@ protected:
     private:
     float elapsed_ = 0.0f;
     bool markedForDestroy_ = false;
+    bool inWater_ = false;      ///< 空中から水に飛び込んで減速中か（自機弾のみ。水中で撃った弾は false のまま）
+    float bubbleTimer_ = 0.0f;  ///< 水中の泡の軌跡を出すためのタイマー
     std::weak_ptr<Entity> cachedCamera_;
 
     /// @brief 自機の弾かどうかを判定する
@@ -461,9 +544,37 @@ protected:
         return effectsFolderGuid_;
     }
 
-    /// @brief 着弾位置に水面の波と水しぶき・泡（heavy は水柱）のエフェクトを出す
-    /// @param pos 着弾位置（ワールド座標）
+    /// @brief 消滅位置にエフェクトを出す
+    /// @details 水中なら泡がまとめて弾けるだけ（水面の波・しぶきは出さない）。
+    ///          水上なら水面の波と水しぶき（heavy は水柱）に泡を添える。
+    /// @param pos 消滅位置（ワールド座標）
     void SpawnSplash(const RC::Vector3& pos) {
+        if (pos.y < 0.0f) {
+            SpawnBubbles(pos, s_underwater.burstBubbles * ((bulletType == "heavy") ? 2 : 1), 0.06f);
+            return;
+        }
+        SpawnSurfaceSplash(pos);
+        SpawnBubbles(pos, (bulletType == "heavy") ? 8 : 4, 0.05f);
+    }
+
+    /// @brief 泡を出す（大きさは base〜base+0.1 で少しずつ変える）
+    /// @param pos 出す位置（ワールド座標）
+    /// @param count 個数
+    /// @param baseScale 最小の大きさ
+    void SpawnBubbles(const RC::Vector3& pos, int count, float baseScale) {
+        for (int i = 0; i < count; ++i) {
+            RC::EffectParticleSpawn bubble;
+            bubble.kind = RC::EffectParticleKind::Bubble;
+            bubble.position = pos;
+            bubble.scale = baseScale + (i % 3) * 0.05f;
+            bubble.color = { 0.8f, 0.9f, 1.0f, 0.6f };
+            RC::SpawnEffectParticle(bubble);
+        }
+    }
+
+    /// @brief 水面の波と水しぶき（heavy は水柱）を出す（泡は出さない）
+    /// @param pos 出す位置（ワールド座標）
+    void SpawnSurfaceSplash(const RC::Vector3& pos) {
         Scene* scene = GetScene();
         if (!scene) return;
 
@@ -479,8 +590,7 @@ protected:
         RC::AddWaveSource(source);
 
         int splashCount = (bulletType == "heavy") ? 0 : 12;
-        int bubbleCount = (bulletType == "heavy") ? 8 : 4;
-        
+
         // 水しぶき・泡・水柱は Entity を作らず、エンジンのエフェクト粒として出す。
         // （以前は 1 粒ごとに Entity＋専用メッシュ＋スクリプトを作っており、
         //   弾を撃つと数百個の Entity が増えて更新・描画・エディタ表示が重くなっていた）
@@ -506,16 +616,6 @@ protected:
                 splash.impactFactor = 1.0f;
                 RC::SpawnEffectParticle(splash);
             }
-        }
-
-        // アクセントの泡（全弾種）
-        for (int i = 0; i < bubbleCount; ++i) {
-            RC::EffectParticleSpawn bubble;
-            bubble.kind = RC::EffectParticleKind::Bubble;
-            bubble.position = pos;
-            bubble.scale = 0.05f + (i % 3) * 0.05f;
-            bubble.color = { 0.8f, 0.9f, 1.0f, 0.6f };
-            RC::SpawnEffectParticle(bubble);
         }
     }
 };
