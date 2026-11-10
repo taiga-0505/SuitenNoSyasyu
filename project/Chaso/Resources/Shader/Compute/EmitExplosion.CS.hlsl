@@ -3,8 +3,8 @@
 // ----------------------------------------------------------------------------
 // GPU Particle の爆発エフェクト用 Emit Compute Shader。
 // 全方向にランダム放射するパーティクルを射出する。
-// 位置・スケール・速度・寿命・色はシェーダー内の固定値で決めており、
-// PerFrame のうち参照するのは gEmitCount と gMaxParticles だけ。
+// スケール・速度・寿命・色はシェーダー内の固定値で決めており、
+// PerFrame のうち参照するのは gEmitterPosition・gEmitCount・gMaxParticles だけ。
 //
 // u0 : gParticles      — パーティクルデータ
 // u1 : gFreeListIndex  — FreeList の現在のインデックス
@@ -123,8 +123,8 @@ void main(uint3 DTid : SV_DispatchThreadID)
         // パーティクル初期化
         Particle p = (Particle)0;
 
-        // 位置: 原点付近に集中（gEmitterPosition は足していない）
-        p.translate = float3(
+        // 位置: エミッタ位置の付近に集中
+        p.translate = gEmitterPosition + float3(
             HashSigned(seed + 10u) * 0.5f,
             Hash(seed + 11u) * 0.5f,
             HashSigned(seed + 12u) * 0.5f

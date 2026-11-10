@@ -7417,6 +7417,327 @@
       "active": true,
       "components": [
         {
+          "type": "ColliderComponent",
+          "enabled": true,
+          "data": {
+            "center": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "isTrigger": false,
+            "layer": 4294967295,
+            "radius": 1.0,
+            "shape": 0,
+            "size": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "type": "NativeScriptComponent",
+          "enabled": true,
+          "data": {
+            "scriptDataList": [
+              {
+                "bobAmplitude": 0.20000000298023224,
+                "bobSpeed": 1.5,
+                "hp": 3,
+                "maxHp": 3,
+                "openDuration": 1.2000000476837158,
+                "points": 100,
+                "popHeight": 1.0,
+                "spinSpeedDeg": 0.0
+              }
+            ],
+            "scriptTypeName": "TreasureChestScript",
+            "scriptTypeNames": [
+              "TreasureChestScript"
+            ]
+          }
+        },
+        {
+          "type": "TransformComponent",
+          "enabled": true,
+          "data": {
+            "position": [
+              10.1,
+              1.2,
+              -37
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              1.4,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "type": "PrimitiveMeshComponent",
+          "enabled": true,
+          "data": {
+            "color": [
+              0.55,
+              0.35,
+              0.15,
+              1.0
+            ],
+            "environmentCoeff": 0.0,
+            "lightingMode": 2,
+            "normalMapPath": "",
+            "roughnessMapPath": "",
+            "shininess": 32.0,
+            "texturePath": "",
+            "type": 1,
+            "uvOffset": [
+              0.0,
+              0.0
+            ],
+            "uvTiling": [
+              1.0,
+              1.0
+            ],
+            "visible": true
+          }
+        }
+      ],
+      "guid": 5945676774218550341,
+      "isFolder": false,
+      "locked": false,
+      "name": "TreasureChest_3",
+      "parentGuid": 2303383149465349767,
+      "tags": {
+        "current_hp": 3,
+        "is_item": 1,
+        "max_hp": 3
+      },
+      "visible": true
+    },
+    {
+      "active": true,
+      "components": [
+        {
+          "type": "ColliderComponent",
+          "enabled": true,
+          "data": {
+            "center": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "isTrigger": false,
+            "layer": 4294967295,
+            "radius": 1.0,
+            "shape": 0,
+            "size": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "type": "NativeScriptComponent",
+          "enabled": true,
+          "data": {
+            "scriptDataList": [
+              {
+                "bobAmplitude": 0.20000000298023224,
+                "bobSpeed": 1.5,
+                "hp": 3,
+                "maxHp": 3,
+                "openDuration": 1.2000000476837158,
+                "points": 100,
+                "popHeight": 1.0,
+                "spinSpeedDeg": 0.0
+              }
+            ],
+            "scriptTypeName": "TreasureChestScript",
+            "scriptTypeNames": [
+              "TreasureChestScript"
+            ]
+          }
+        },
+        {
+          "type": "TransformComponent",
+          "enabled": true,
+          "data": {
+            "position": [
+              7.6,
+              1.2,
+              18
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              1.4,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "type": "PrimitiveMeshComponent",
+          "enabled": true,
+          "data": {
+            "color": [
+              0.55,
+              0.35,
+              0.15,
+              1.0
+            ],
+            "environmentCoeff": 0.0,
+            "lightingMode": 2,
+            "normalMapPath": "",
+            "roughnessMapPath": "",
+            "shininess": 32.0,
+            "texturePath": "",
+            "type": 1,
+            "uvOffset": [
+              0.0,
+              0.0
+            ],
+            "uvTiling": [
+              1.0,
+              1.0
+            ],
+            "visible": true
+          }
+        }
+      ],
+      "guid": 5223235249832573506,
+      "isFolder": false,
+      "locked": false,
+      "name": "TreasureChest_4",
+      "parentGuid": 2303383149465349767,
+      "tags": {
+        "current_hp": 3,
+        "is_item": 1,
+        "max_hp": 3
+      },
+      "visible": true
+    },
+    {
+      "active": true,
+      "components": [
+        {
+          "type": "ColliderComponent",
+          "enabled": true,
+          "data": {
+            "center": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "isTrigger": false,
+            "layer": 4294967295,
+            "radius": 1.0,
+            "shape": 0,
+            "size": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "type": "NativeScriptComponent",
+          "enabled": true,
+          "data": {
+            "scriptDataList": [
+              {
+                "bobAmplitude": 0.20000000298023224,
+                "bobSpeed": 1.5,
+                "hp": 5,
+                "maxHp": 5,
+                "openDuration": 1.2000000476837158,
+                "points": 300,
+                "popHeight": 1.0,
+                "spinSpeedDeg": 0.0
+              }
+            ],
+            "scriptTypeName": "TreasureChestScript",
+            "scriptTypeNames": [
+              "TreasureChestScript"
+            ]
+          }
+        },
+        {
+          "type": "TransformComponent",
+          "enabled": true,
+          "data": {
+            "position": [
+              -6.1,
+              1.2,
+              83
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              1.4,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "type": "PrimitiveMeshComponent",
+          "enabled": true,
+          "data": {
+            "color": [
+              0.55,
+              0.35,
+              0.15,
+              1.0
+            ],
+            "environmentCoeff": 0.0,
+            "lightingMode": 2,
+            "normalMapPath": "",
+            "roughnessMapPath": "",
+            "shininess": 32.0,
+            "texturePath": "",
+            "type": 1,
+            "uvOffset": [
+              0.0,
+              0.0
+            ],
+            "uvTiling": [
+              1.0,
+              1.0
+            ],
+            "visible": true
+          }
+        }
+      ],
+      "guid": 6620543716447143360,
+      "isFolder": false,
+      "locked": false,
+      "name": "TreasureChest_5",
+      "parentGuid": 2303383149465349767,
+      "tags": {
+        "current_hp": 5,
+        "is_item": 1,
+        "max_hp": 5
+      },
+      "visible": true
+    },
+    {
+      "active": true,
+      "components": [
+        {
           "data": {
             "position": [
               4,
