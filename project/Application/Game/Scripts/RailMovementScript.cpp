@@ -7,6 +7,7 @@
 #include "Scene.h"
 #include "RenderCommon.h"
 #include "Game/Framework/GameSession.h"
+#include <algorithm>
 #include <vector>
 #include <string>
 #include <random>
@@ -254,6 +255,10 @@ private:
         const int waveId = waypoints[arrivedIndex].waveId;
         if (waveId == 0) return false;
         if (IsWaveAlreadyCleared(waveId)) return false;
+        // 見せ用デモ（ClearRunDemo）が終盤へ飛ばしたあとは、ウェーブ地点で止まらない
+        if (Entity* self = GetEntity()) {
+            if (self->GetTagInt("demo_skip_waves", 0) == 1) return false;
+        }
 
         Entity* manager = FindWaveManager();
         if (!manager) {
@@ -308,6 +313,36 @@ private:
                 NotifyRailFinished();
             }
         }
+    }
+
+    /// @brief 見せ用デモ：終点（isEnd か末尾）へ向かう最後の区間の、終点から distance m 手前へ移る
+    /// @details ウェーブ待ちは解除し、次の行き先を終点にする。達成率が途中のまま残らないよう、
+    ///          飛ばした地点も到達したものとして数える。
+    /// @param distance 終点の何 m 手前へ置くか（区間より長ければ区間の始点）
+    void DemoJumpNearEnd(float distance) {
+        const int n = static_cast<int>(waypoints.size());
+        if (n < 2) return;
+        int end = n - 1;
+        for (int i = 0; i < n; ++i) {
+            if (waypoints[i].isEnd) { end = i; break; }
+        }
+        if (end <= 0) return;
+        auto* tr = GetComponent<TransformComponent>();
+        if (!tr) return;
+        const RC::Vector3 a = waypoints[end - 1].pos;
+        const RC::Vector3 b = waypoints[end].pos;
+        const RC::Vector3 seg = RC::Sub(b, a);
+        const float len = RC::Length(seg);
+        const float d = (std::min)(distance, len);
+        tr->position = (len > 1e-4f) ? RC::Sub(b, RC::Mul(RC::SafeNormalize(seg), d)) : a;
+        waitingWaveId_ = 0;
+        waveWaypointIndex_ = -1;
+        currentWaypointIndex = end;
+        currentWaitTimer = 0.0f;
+        isMoving = true;
+        reachedCount_ = (std::max)(reachedCount_, end);
+        lastBranchLog_ = "demo jump -> " + std::to_string(end);
+        Log::Print("[RailMovementScript] demo jump near end (WP " + std::to_string(end) + ")");
     }
 
     /// @brief 0.0〜1.0 の一様乱数を得る
@@ -564,12 +599,23 @@ protected:
 
         if (waypoints.empty()) return;
 
+        // 見せ用デモ（ClearRunDemo）：暗転中に終点の手前（値は cm）へ移る。読んだらタグは消す
+        if (Entity* self = GetEntity()) {
+            const int jumpCm = self->GetTagInt("demo_rail_jump", 0);
+            if (jumpCm > 0) {
+                self->ClearTag("demo_rail_jump");
+                DemoJumpNearEnd(static_cast<float>(jumpCm) / 100.0f);
+            }
+        }
+
         // 開始演出（DeepRiseIntroScript が深海から浮上させている）のあいだは出発しない。
         // タグは同じエンティティに立つ。演出が終わると外れるので、そこからレールが動く。
         if (Entity* self = GetEntity()) {
             if (self->GetTagInt("intro_playing", 0) == 1) return;
             // 決着後の演出（ClearAscendScript / DeathSinkScript）がカメラを動かしている間は進まない
             if (self->GetTagInt("result_transition_owner", 0) == 1) return;
+            // 見せ用デモ（ClearRunDemo）がサメを倒すまで止めている
+            if (self->GetTagInt("demo_rail_hold", 0) == 1) return;
         }
 
         // ゲームオーバー判定

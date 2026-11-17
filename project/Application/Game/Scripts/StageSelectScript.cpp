@@ -717,6 +717,12 @@ private:
       }
       return;
     }
+    // 見せ用デモ（クリア）：毎回 kClearStage の面を遊ぶので、少し見せてからカーソルをそこへ動かす
+    // （クリア直後は新しく開いた面が選ばれて金の輪が付いた状態で始まるので、それを見せてから戻す）
+    if (TransitionDemo::IsClearDemo() && demoT_ >= TransitionDemo::kSelectMoveAt &&
+        selected_ != TransitionDemo::kClearStage && prog.IsUnlocked(TransitionDemo::kClearStage)) {
+      SetSelected(TransitionDemo::kClearStage);
+    }
     // 見せ用デモ：選択中の面で自動出航（未解放なら解放済みの一番奥へ寄せる）
     if (TransitionDemo::kEnabled && demoT_ >= TransitionDemo::kSelectHold) {
       if (!prog.IsUnlocked(selected_)) SetSelected(prog.HighestUnlocked());

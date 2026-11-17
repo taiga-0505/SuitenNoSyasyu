@@ -146,7 +146,8 @@ public:
     // 視点の可動範囲（レールシューターなので真後ろまでは振り向けない）
     float maxYawDeg = 80.0f;    ///< 左右の最大角（度）
     float maxPitchDeg = 60.0f;  ///< 上下の最大角（度）
-    
+    float demoAimSharpness = 7.0f; ///< 見せ用デモで照準を目標へ寄せる速さ（1/秒。大きいほど速く合う）
+
     // 描画設定（仮）
     RC::Vector4 reticleColor = { 1.0f, 0.0f, 0.0f, 1.0f };
     float reticleSize = 10.0f;
@@ -754,6 +755,22 @@ protected:
             constexpr float kDegToRad = 3.14159265358979f / 180.0f;
             const float maxYaw   = maxYawDeg * kDegToRad;
             const float maxPitch = maxPitchDeg * kDegToRad;
+            // 見せ用デモ（ClearRunDemo）が照準を動かしているときは、マウスの代わりにその向きへ寄せる
+            //   demo_look = 1: demo_look_yaw/pitch_mrad（ワールドの角度）へ / 2: 正面（オフセット 0）へ
+            const int demoLook = GetEntity() ? GetEntity()->GetTagInt("demo_look", 0) : 0;
+            if (demoLook != 0) {
+                float targetYaw = 0.0f, targetPitch = 0.0f;
+                if (demoLook == 1) {
+                    const float yawAbs = static_cast<float>(GetEntity()->GetTagInt("demo_look_yaw_mrad", 0)) / 1000.0f;
+                    const float pitchAbs = static_cast<float>(GetEntity()->GetTagInt("demo_look_pitch_mrad", 0)) / 1000.0f;
+                    targetYaw = std::remainder(yawAbs - baseRotation_.y, 6.28318530718f);
+                    targetPitch = pitchAbs - baseRotation_.x;
+                }
+                // 人が狙うように、少し遅れて追いつく
+                const float k = 1.0f - std::exp(-demoAimSharpness * deltaTime);
+                dYaw = (targetYaw - lookYaw_) * k;
+                dPitch = (targetPitch - lookPitch_) * k;
+            }
             lookYaw_   = RC::Clamp(lookYaw_ + dYaw, -maxYaw, maxYaw);
             lookPitch_ = RC::Clamp(lookPitch_ + dPitch, -maxPitch, maxPitch);
             // 力尽きたあとは向きを書かない（DeathSinkScript が沈みながら見上げさせるため）
@@ -771,7 +788,9 @@ protected:
         cursorPosition = { screenW * 0.5f, screenH * 0.5f };
 
         // 6. 射撃とクールダウン処理
-        if (!isDead) {
+        //    クリアの海図が出ているあいだは撃たない（クリックは海図の早送りに使う）
+        const bool clearChartPlaying = (GetEntity() && GetEntity()->GetTagInt("clear_chart_playing", 0) == 1);
+        if (!isDead && !clearChartPlaying) {
             currentCooldown -= deltaTime;
 
             bool isFirePressed = false;
@@ -788,6 +807,10 @@ protected:
             }
             // 右トリガーは半分程度（0〜255 の 128 超）押し込んだら射撃
             if (input->GetXInputRightTrigger() > 128) {
+                isFirePressed = true;
+            }
+            // 見せ用デモ（ClearRunDemo）が照準を合わせたら撃つ
+            if (GetEntity() && GetEntity()->GetTagInt("demo_fire", 0) == 1) {
                 isFirePressed = true;
             }
 
@@ -962,6 +985,8 @@ protected:
     /// @brief ポストプロセスの後に描く HUD テキスト（水中の歪み・ビネットが乗らないように）
     void OnOverlayRender() override {
         if (GetEntity() && GetEntity()->GetTagInt("intro_playing", 0) == 1) return;
+        // クリアの海図（ClearAscendScript）が出ているあいだは、STAGE CLEAR の文字もスコアも海図に任せる
+        if (GetEntity() && GetEntity()->GetTagInt("clear_chart_playing", 0) == 1) return;
 
         // PauseMenu と同じ 1280x720 基準レイアウト（レターボックス分をオフセット）
         float screenW = kDesignW, screenH = kDesignH;
@@ -1034,6 +1059,8 @@ protected:
     void OnRender() override {
         // 開始演出（深海からの浮上）中は HUD を出さない
         if (GetEntity() && GetEntity()->GetTagInt("intro_playing", 0) == 1) return;
+        // クリアの海図（ClearAscendScript）が出ているあいだは照準・HP・緑の帯を出さない
+        if (GetEntity() && GetEntity()->GetTagInt("clear_chart_playing", 0) == 1) return;
 
         // Primitive 2D描画を用いてレティクルを描画する
         RC::DrawCircle(cursorPosition, reticleSize + currentRecoil, reticleColor, kFill, 1.0f);
@@ -1162,6 +1189,8 @@ public:
     /// @note 無敵時間中または死亡済みなら何もしない。HP が 0 以下になると死亡し "game_over" タグを立てる
     void TakeDamage(int damage) {
         if (invincibleTimer > 0.0f || isDead) return;
+        // 見せ用デモ（ClearRunDemo）の間は被弾しない
+        if (GetEntity() && GetEntity()->GetTagInt("demo_invincible", 0) == 1) return;
         // リザルトの「被ダメージ」。無敵中に弾いたぶんは上の早期 return で除外され、
         // HP を割り込んだぶん（オーバーキル）は数えない。
         GameSession::Get().AddDamageTaken((std::min)(damage, hp));

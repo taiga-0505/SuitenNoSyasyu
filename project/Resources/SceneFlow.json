@@ -27,7 +27,7 @@
       "trigger": "cleared",
       "to": "Result",
       "transition": "ascend",
-      "note": "ステージクリア（ClearAscendScript が空へ跳ね上がって白く飛んでから遷移）"
+      "note": "ステージクリア（ClearAscendScript が海図に航路を引いて白く飛ばしてから遷移。style=ascend なら空へ跳ね上がる）"
     },
     {
       "from": "Stage*",

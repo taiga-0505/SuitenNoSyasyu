@@ -6,6 +6,7 @@
 #include "Game/Framework/WaterCameraFx.h"
 #include "Game/Framework/TransitionDemo.h"
 #include "Game/Framework/SharkFrenzyDemo.h"
+#include "Game/Framework/ClearRunDemo.h"
 #include "Game/Framework/DeathScreenFx.h"
 
 #if RC_ENABLE_IMGUI
@@ -51,10 +52,12 @@
 ///     沈む速さが泡の上昇よりずっと速いので、泡はカメラの動きを引き継ぎ、カメラから見て
 ///     ゆっくり昇っていくようにしてある（WaterCameraFx::BreathBurst）。
 ///
-///   見せ用デモ（TransitionDemo::kEnabled）:
-///     最初のウェーブが始まって少しすると、サメの群れ（SharkFrenzyDemo）が一斉に襲いかかり、
-///     1 匹目が噛みついた時点で致死ダメージ（pending_damage）を入れる。以降は通常の力尽きた流れと同じ
-///     （game_over → 沈む → "gameover" で Result へ）。サメはカメラに食らいついたまま一緒に沈む。
+///   見せ用デモ（TransitionDemo::kEnabled。ステージ側のデモはこのスクリプトが受け持つ）:
+///     Mode::GameOver: 最初のウェーブが始まって少しすると、サメの群れ（SharkFrenzyDemo）が一斉に襲いかかり、
+///       1 匹目が噛みついた時点で致死ダメージ（pending_damage）を入れる。以降は通常の力尽きた流れと同じ
+///       （game_over → 沈む → "gameover" で Result へ）。サメはカメラに食らいついたまま一緒に沈む。
+///     Mode::Clear: 序盤を少し遊んで見せ、暗転で終盤へ飛び、正面に出るサメを撃ち倒してクリアする
+///       （ClearRunDemo。暗転の幕はこのスクリプトの OnOverlayRender で描く）。
 ///
 ///   JSON (scriptDataList):
 ///     "enabled" / "delay" / "fallTime" / "sinkTime" / "depth" / "lookUpPitch" / "tiltTime" /
@@ -151,6 +154,7 @@ protected:
     breathed_ = false;
     screenFx.Clear(nullptr); // 状態だけ初期化（PostProcess はシーン切り替えで片付いている）
     if (Entity *self = GetEntity()) self->ClearTag(kOwnerTag); // 前回のプレイで保存された分を消す
+    clearRun_.Reset(GetEntity());                              // 見せ用デモ（クリア）の状態とタグ
     if (enabled && bubbles) bubbles_.Spawn(GetScene(), "DeathBubbles");
     if (enabled && breath) breath_.Spawn(GetScene(), "DeathBreath");
   }
@@ -160,10 +164,19 @@ protected:
   void OnUpdate(float dt) override {
     UpdateSink(dt);
     // 見せ用デモ：WAVE 1 の直後にサメの群れに食われる。カメラを動かしたあとに追従させる
-    if (TransitionDemo::kEnabled && dt > 0.0f && enabled) {
+    if (TransitionDemo::IsGameOverDemo() && dt > 0.0f && enabled) {
       Entity *self = GetEntity();
       auto *tr = GetComponent<TransformComponent>();
       if (self && tr) UpdateDemo(*self, *tr, dt);
+    }
+    // 見せ用デモ：暗転で終盤へ飛び、サメを倒してクリアする（再生中だけ。編集モードではサメを作らない）
+    if (TransitionDemo::IsClearDemo() && dt > 0.0f) {
+      Entity *self = GetEntity();
+      auto *tr = GetComponent<TransformComponent>();
+      SceneContext *ctx = GetSceneContext();
+      if (self && tr && ctx && ctx->isPlaying()) {
+        clearRun_.Update(GetScene(), *self, *tr, WaterCameraFx::FindWaterY(GetScene()), dt);
+      }
     }
   }
 
@@ -277,11 +290,26 @@ protected:
   }
 
   /// @brief 瞼を描く（GAME OVER の文字より手前。スクリプト順で RailShooterController の後に呼ばれる）
-  void OnOverlayRender() override { screenFx.DrawLids(); }
+  void OnOverlayRender() override {
+    screenFx.DrawLids();
+    // 見せ用デモ（クリア）の暗転。Dive 遷移と同じ深海色で、HUD ごと覆う
+    const float fade = clearRun_.FadeAlpha();
+    if (fade > 0.0f) {
+      float w = 1280.0f, h = 720.0f;
+      auto &rc = RC::GetRenderContext();
+      if (rc.Ctx() && rc.Ctx()->app) {
+        w = static_cast<float>(rc.Ctx()->app->width);
+        h = static_cast<float>(rc.Ctx()->app->height);
+      }
+      const RC::Vector4 &c = Scene::SceneManager::DiveScreenColor();
+      RC::DrawBox({0.0f, 0.0f}, {w, h}, {c.x, c.y, c.z, fade});
+    }
+  }
 
   /// @brief 遷移担当タグを外し、泡を破棄し、画面演出を元に戻す
   void OnDestroy() override {
     if (Entity *self = GetEntity()) self->ClearTag(kOwnerTag);
+    clearRun_.End(GetEntity());
     frenzy_.Destroy();
     bubbles_.Destroy();
     breath_.Destroy();
@@ -366,6 +394,7 @@ private:
   bool requested_ = false;
   float requestT_ = 0.0f;    ///< 遷移の要求を出し始めてからの経過（要求が通らないときの保険用）
   TransitionDemo::SharkFrenzy frenzy_; ///< 見せ用デモ：サメの群れ
+  TransitionDemo::ClearRun clearRun_;  ///< 見せ用デモ：暗転で終盤へ飛び、サメを倒してクリア
   float demoTimer_ = 0.0f;     ///< 最初のウェーブが始まってからの経過（デモ用）
   float demoFallbackT_ = 0.0f; ///< 開始演出が終わってからの経過（ウェーブが来ないときの保険。デモ用）
   bool demoWaveSeen_ = false;  ///< 最初のウェーブの開始を見たか（デモ用）

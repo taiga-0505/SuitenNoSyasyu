@@ -178,6 +178,20 @@ protected:
       }
     }
 
+    // 見せ用デモ（ClearRunDemo）の打ち切り：残りの敵を黙って消し、クリア表示も出さずに Idle へ戻す
+    if (self->GetTagInt("wave_demo_abort", 0) == 1) {
+      self->ClearTag("wave_demo_abort");
+      if (activeWaveId_ != 0) DespawnRemaining(activeWaveId_);
+      Log::Print("[WaveManagerScript] demo abort (wave " + std::to_string(activeWaveId_) + ")");
+      activeWaveId_ = 0;
+      remainingEnemies_ = 0;
+      peakEnemies_ = 0;
+      self->SetTag("wave_request", 0);
+      self->SetTag("wave_active", 0); // スポナーはこれで湧かせ途中でも打ち切る
+      SetState(State::Idle);
+      return;
+    }
+
     switch (state_) {
     case State::Idle: {
       // レールからの開始要求を受理する（受理したら要求タグは 0 へ戻す）

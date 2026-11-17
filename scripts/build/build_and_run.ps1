@@ -174,9 +174,29 @@ Write-Info "Working Directory: $WorkingDir"
 Write-Host ""
 
 # Launch with working directory = project/ (matches VS debugger behavior)
-$process = Start-Process -FilePath $ExePath `
-                         -WorkingDirectory $WorkingDir `
-                         -NoNewWindow -PassThru -Wait
+# 起動に失敗したら（OS のアプリ制御でブロックされた等）、ここで止めて原因を表示する
+try {
+    $process = Start-Process -FilePath $ExePath `
+                             -WorkingDirectory $WorkingDir `
+                             -NoNewWindow -PassThru -ErrorAction Stop
+} catch {
+    $launchError = $_.Exception.Message
+    Write-Err "Failed to launch ChasoApp: $launchError"
+
+    # 4551 = ERROR_SYSTEM_INTEGRITY_POLICY_VIOLATION（スマート アプリ コントロール / App Control for Business）
+    # Start-Process は Win32Exception を包まずに文言だけ渡すので、OS の言語に合わせた文言で照合する
+    $policyMessage = (New-Object System.ComponentModel.Win32Exception 4551).Message.Trim()
+    if ($policyMessage -and $launchError.Contains($policyMessage)) {
+        Write-Host ""
+        Write-Info "Windows blocked ChasoApp.exe by an application control policy (usually Smart App Control)."
+        Write-Info "Check: Windows Security > App & browser control > Smart App Control settings"
+        Write-Info "Details: Event Viewer > Applications and Services Logs > Microsoft > Windows > CodeIntegrity > Operational (Event ID 3077 / 3033)"
+    }
+    exit 1
+}
+
+# ExitCode を後で読めるよう、終了前にハンドルを取得しておく（-Wait なしの Start-Process の既知の挙動）
+$null = $process.Handle
 
 Write-OK "ChasoApp launched (PID: $($process.Id))"
 Write-Info "Process will run inline. Press Ctrl+C to force exit if stuck."
@@ -184,6 +204,7 @@ Write-Info "Process will run inline. Press Ctrl+C to force exit if stuck."
 # Wait for the process to exit
 $process.WaitForExit()
 $appExitCode = $process.ExitCode
+if ($null -eq $appExitCode) { $appExitCode = 1 }
 
 Write-Host ""
 if ($appExitCode -eq 0) {
