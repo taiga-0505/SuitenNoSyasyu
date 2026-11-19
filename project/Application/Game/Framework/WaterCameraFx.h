@@ -13,6 +13,7 @@
 #include "Scene.h"
 #include "Game/Framework/UnderwaterLook.h"
 #include "Game/Framework/ExposureFlash.h"
+#include "Game/Framework/StateMachine.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cmath>
@@ -110,13 +111,10 @@ inline constexpr float kDropletScale = 1.5f;        ///< レンズ水滴の大�
 inline constexpr float kDropletDrainTime = 0.35f;   ///< 遷移の直前に残った水滴を消しきるまで（秒。粒ごとに時間差で消える）
 
 /// @brief ラジアルブラー・レンズ水滴・露出フラッシュの減衰を管理する
-struct LensFx {
-  float radialTimer = 0.0f;              ///< ラジアルブラーの残り時間（秒）
-  float radialMax = kRadialBlurMaxWidth; ///< 今回のラジアルブラーの最大幅
-  float dropletTimer = 0.0f;             ///< レンズ水滴の残り時間（秒）
-  bool dropletDraining = false;          ///< Drain 中か（強度は 1 のまま、水滴側が時間差で消えていく）
-  ExposureFlash flash;                   ///< 出入水の露出フラッシュ
-
+/// @details 残り時間などの内部状態は Trigger / Update / Clear の組でしか整合が取れないので、
+///          メンバは private にして操作だけを公開する（カプセル化）。
+class LensFx {
+public:
   /// @brief 水面を出入りした瞬間のレンズ演出を一式開始する
   /// @param pp           対象の PostProcess（nullptr なら何もしない）
   /// @param radialScale  ラジアルブラーの強さと長さの倍率
@@ -203,6 +201,13 @@ struct LensFx {
     radialTimer = dropletTimer = 0.0f;
     dropletDraining = false;
   }
+
+private:
+  float radialTimer = 0.0f;              ///< ラジアルブラーの残り時間（秒）
+  float radialMax = kRadialBlurMaxWidth; ///< 今回のラジアルブラーの最大幅
+  float dropletTimer = 0.0f;             ///< レンズ水滴の残り時間（秒）
+  bool dropletDraining = false;          ///< Drain 中か（強度は 1 のまま、水滴側が時間差で消えていく）
+  ExposureFlash flash;                   ///< 出入水の露出フラッシュ
 };
 
 // ------------------------------------------------------------------
@@ -454,6 +459,76 @@ private:
 };
 
 // ------------------------------------------------------------------
+// カメラ演出の共通基底
+// ------------------------------------------------------------------
+
+/// @brief カメラ演出（飛び込み / 浮上 / 降下 / 跳ね上がり）の共通基底
+/// @details 4 つの演出は「Begin で開始 → 毎フレーム Update → IsActive が false になったら終わり」という
+///          同じ形をしている。そこで、
+///            ・Update の流れ（Begin 前なら何もしない → 1 フレーム進める）を基底で固定し、
+///              演出ごとに違う中身だけを派生の Step で差し替える（Template Method / NVI）
+///            ・動かすカメラの参照と「今の段階に入ってからの経過時間」を基底で持つ
+///          ようにした。呼び出し側は CameraSequence& 経由で、演出の種類を問わず進められる。
+///          Begin の引数（必要な調整値）と End の意味は演出ごとに違うので、基底には入れていない（is-a を崩さないため）。
+class CameraSequence {
+public:
+  virtual ~CameraSequence() = default;
+
+  /// @brief 1 フレーム進める（毎フレーム呼ぶ）
+  /// @details Template Method：開始前（IsRunning が false）は何もしない、という共通の流れを基底で固定し、
+  ///          演出ごとの処理は派生の Step に任せる。
+  /// @param dt 経過時間（秒）
+  /// @return カメラが消えていたら false（呼び出し側は演出を諦める）
+  bool Update(float dt) {
+    if (!IsRunning()) return true;
+    return Step(dt);
+  }
+
+  /// @brief 演出中か（画面効果の後始末を含むかは演出ごとの定義に従う）
+  /// @return 動作中なら true
+  virtual bool IsActive() const = 0;
+
+  /// @brief 今の段階の名前（ログ・デバッグ表示用）
+  /// @return 小文字の段階名。動作していなければ "none"
+  virtual const char *PhaseName() const = 0;
+
+protected:
+  CameraSequence() = default;
+  CameraSequence(const CameraSequence &) = default;
+  CameraSequence &operator=(const CameraSequence &) = default;
+  CameraSequence(CameraSequence &&) = default;
+  CameraSequence &operator=(CameraSequence &&) = default;
+
+  /// @brief 動かすカメラを覚える
+  /// @param cam カメラのエンティティ
+  void BindCamera(const std::shared_ptr<Entity> &cam) { camera_ = cam; }
+  /// @brief 動かすカメラを取り出す
+  /// @return カメラのエンティティ（消えていたら nullptr）
+  std::shared_ptr<Entity> LockCamera() const { return camera_.lock(); }
+
+  /// @brief 今の段階に入ってからの経過時間
+  /// @return 経過時間（秒）
+  float PhaseTime() const { return phaseTime_; }
+  /// @brief 段階の経過時間を進める
+  /// @param dt 経過時間（秒）
+  void AdvancePhaseTime(float dt) { phaseTime_ += dt; }
+  /// @brief 段階の経過時間を 0 に戻す（段階に入った瞬間に呼ぶ）
+  void ResetPhaseTime() { phaseTime_ = 0.0f; }
+
+private:
+  /// @brief Update の対象か（Begin 済みで、必要な参照がそろっているか）
+  /// @return 進めてよいなら true
+  virtual bool IsRunning() const = 0;
+  /// @brief 演出ごとの 1 フレームぶんの処理
+  /// @param dt 経過時間（秒）
+  /// @return カメラが消えていたら false
+  virtual bool Step(float dt) = 0;
+
+  std::weak_ptr<Entity> camera_; ///< 動かすカメラ
+  float phaseTime_ = 0.0f;       ///< 今の段階に入ってからの経過時間（秒）
+};
+
+// ------------------------------------------------------------------
 // 飛び込み
 // ------------------------------------------------------------------
 
@@ -525,11 +600,12 @@ struct DiveParams {
 /// @details ため → 落下（画角が広がる）→ 着水（水中一式＋ラジアルブラー＋上へ昇る水滴＋泡）
 ///          → 見上げながら沈む → 深さが look.deepDepth に達したら IsDone()。
 ///          IsDone() のあいだも緩く沈み続けるので、呼び出し側はその間に遷移を要求する。
-class DiveSequence {
+///
+///          段階（ため / 落下 / 沈降 / 暗くなりきった）は以前は enum + switch だったが、
+///          段階ごとの動きと「次へ進む条件」を 1 クラスずつに分けるため State パターンにした
+///          （StateMachine.h）。次の段階は各状態クラス自身が決める。未開始は「状態が無い」で表す。
+class DiveSequence final : public CameraSequence {
 public:
-  /// @brief 飛び込みの段階（未開始 / ため / 落下 / 沈降 / 暗くなりきった）
-  enum class Phase { None, Anticipate, Plunge, Sink, Done };
-
   /// @brief 飛び込みを開始する（カメラの現在の位置・向き・画角を開始状態として覚える）
   /// @param cam     動かすカメラ（Transform と CameraComponent が必要）
   /// @param waterY  水面のワールド Y
@@ -538,26 +614,7 @@ public:
   /// @param bubbles 泡のエミッタ（nullptr なら泡なし）
   /// @return 開始できた（または既に動作中）なら true。カメラが不正なら false
   bool Begin(std::shared_ptr<Entity> cam, float waterY, const DiveParams &p,
-             const UnderwaterLook::Params &look, Bubbles *bubbles) {
-    if (phase_ != Phase::None) return true;
-    if (!cam) return false;
-    auto *tr = cam->GetComponent<TransformComponent>();
-    auto *cc = cam->GetComponent<CameraComponent>();
-    if (!tr || !cc) return false;
-
-    *this = DiveSequence{};
-    p_ = &p;
-    look_ = &look;
-    bubbles_ = bubbles;
-    camera_ = cam;
-    basePos_ = tr->position;
-    baseRot_ = tr->rotation;
-    baseFov_ = cc->fovY;
-    waterY_ = waterY;
-    depth_ = waterY - tr->position.y;
-    phase_ = (p.anticipation > 0.0f) ? Phase::Anticipate : Phase::Plunge;
-    return true;
-  }
+             const UnderwaterLook::Params &look, Bubbles *bubbles);
 
   /// @brief 飛び込みを終える（水中エフェクト・レンズ演出・泡を止めて状態をリセットする）
   /// @param restoreCamera カメラの位置・向き・画角を開始時へ戻すか（中断用）
@@ -567,7 +624,7 @@ public:
     lens_.Clear(pp);
     if (bubbles_) bubbles_->SetEmission(0);
     if (restoreCamera) {
-      if (auto cam = camera_.lock()) {
+      if (auto cam = LockCamera()) {
         if (auto *tr = cam->GetComponent<TransformComponent>()) {
           tr->position = basePos_;
           tr->rotation = baseRot_;
@@ -578,117 +635,44 @@ public:
     *this = DiveSequence{};
   }
 
-  /// @brief 段階ごとにカメラを動かし、着水後は深さに応じて水中エフェクトを更新する（毎フレーム呼ぶ）
-  /// @param dt 経過時間（秒）
-  /// @return カメラが消えていたら false（呼び出し側は演出を諦める）
-  bool Update(float dt) {
-    if (phase_ == Phase::None || !p_ || !look_) return true;
-    auto cam = camera_.lock();
-    if (!cam) return false;
-    auto *tr = cam->GetComponent<TransformComponent>();
-    auto *cc = cam->GetComponent<CameraComponent>();
-    if (!tr || !cc) return false;
-    const DiveParams &p = *p_;
-
-    t_ += dt;
-    switch (phase_) {
-    case Phase::Anticipate: {
-      // ため：少し持ち上がる
-      const float u = t_ / (std::max)(p.anticipation, 1e-3f);
-      tr->position.y = basePos_.y + p.lift * EaseOutCubic(u);
-      if (u >= 1.0f) { phase_ = Phase::Plunge; t_ = 0.0f; }
-      break;
-    }
-    case Phase::Plunge: {
-      // 落下：加速しながら水面へ落ち、画角を広げて速度感を出す。水面に届いたら着水
-      const float u = t_ / (std::max)(p.plunge, 1e-3f);
-      const float e = EaseInQuad(u);
-      const float startY = basePos_.y + ((p.anticipation > 0.0f) ? p.lift : 0.0f);
-      tr->position.y = startY + (waterY_ - startY) * e;
-      cc->fovY = baseFov_ * (1.0f + (p.fovBoost - 1.0f) * e);
-      if (u >= 1.0f) {
-        tr->position.y = waterY_;
-        phase_ = Phase::Sink;
-        t_ = 0.0f;
-        OnSplash();
-      }
-      break;
-    }
-    case Phase::Sink: {
-      // 沈降：減速しながら沈み、見上げる向きへ傾け、広げた画角を元へ戻す
-      const float u = t_ / (std::max)(p.sink, 1e-3f);
-      tr->position.y = waterY_ - p.depth * EaseOutQuad(u);
-      const float tilt = (p.tilt > 0.0f) ? Smooth01(t_ / p.tilt) : 1.0f;
-      tr->rotation.x = baseRot_.x + (p.lookUpPitch - baseRot_.x) * tilt;
-      cc->fovY = baseFov_ * (p.fovBoost - (p.fovBoost - 1.0f) * EaseOutQuad(u));
-      // 画面が深海色になりきった時点で終わり（沈みきるまで待つと暗い時間が延びるだけ）
-      if (u >= 1.0f || (waterY_ - tr->position.y) >= look_->deepDepth) {
-        phase_ = Phase::Done;
-        t_ = 0.0f;
-      }
-      break;
-    }
-    case Phase::Done:
-      tr->position.y -= kDoneSinkSpeed * dt; // 遷移が始まるまで止まって見えないように
-      break;
-    case Phase::None:
-      break;
-    }
-
-    depth_ = waterY_ - tr->position.y;
-
-    // 着水後：水中エフェクトを surfaceBlend 秒で掛けきり、深さに応じてフォグを暗くする
-    if (effectsOn_) {
-      submerged_ += dt;
-      PostProcess *pp = RC::GetRenderContext().GetPostProcess();
-      const float blend = (p.surfaceBlend > 0.0f) ? Smooth01(submerged_ / p.surfaceBlend) : 1.0f;
-      UnderwaterLook::SetLerp(pp, blend);
-      UnderwaterLook::ApplyFogByDepth(pp, *look_, depth_);
-      // 暗くなりきる前に水滴を消しきる（残ったまま次のシーンへ切り替わると一瞬で消えて見える）。
-      // Done の直後に遷移が始まるので、深海色の 8 割まで沈んで画面がほぼ暗くなった時点で消し始める
-      // （早すぎると、突入直後の気泡がまだ見えているうちに消えてしまう）。
-      // タイマーを縮めると全粒が同時に消えるので、粒ごとに時間差で痩せさせる
-      const bool nearDark = (phase_ == Phase::Done) ||
-                            (phase_ == Phase::Sink && depth_ >= look_->deepDepth * 0.8f);
-      if (nearDark) lens_.DrainDroplets(pp, kDropletDrainTime);
-      lens_.Update(pp, dt);
-    }
-    if (bubbles_) bubbles_->Follow(*tr, waterY_);
-    return true;
-  }
-
   /// @brief 演出中か
   /// @return Begin 後、End されるまで true
-  bool IsActive() const { return phase_ != Phase::None; }
+  bool IsActive() const override { return fsm_.HasState(); }
   /// @brief 画面が深海色まで暗くなりきったか（呼び出し側はここで遷移を要求する）
   /// @return Done 段階なら true
-  bool IsDone() const { return phase_ == Phase::Done; }
+  bool IsDone() const;
   /// @brief Done 段階に入ってからの経過時間
   /// @return 経過時間（秒）。Done 以外では 0
-  float DoneTime() const { return phase_ == Phase::Done ? t_ : 0.0f; }
-  /// @brief 現在の段階
-  /// @return 段階
-  Phase GetPhase() const { return phase_; }
+  float DoneTime() const;
   /// @brief カメラの水面からの深さ
   /// @return 深さ（m。水面より下が正）
   float Depth() const { return depth_; }
 
-  /// @brief 段階の名前（ログ・デバッグ表示用）
-  /// @param ph 段階
-  /// @return 小文字の段階名。不明なら "?"
-  static const char *PhaseName(Phase ph) {
-    switch (ph) {
-    case Phase::None: return "none";
-    case Phase::Anticipate: return "anticipate";
-    case Phase::Plunge: return "plunge";
-    case Phase::Sink: return "sink";
-    case Phase::Done: return "done";
-    }
-    return "?";
-  }
+  /// @brief 今の段階の名前（ログ・デバッグ表示用）
+  /// @return "none" / "anticipate" / "plunge" / "sink" / "done"
+  const char *PhaseName() const override { return fsm_.HasState() ? fsm_.CurrentName() : "none"; }
 
 private:
+  class AnticipateState; ///< ため：少し持ち上がる
+  class PlungeState;     ///< 落下：加速しながら水面へ
+  class SinkState;       ///< 沈降：見上げながら沈む
+  class DoneState;       ///< 暗くなりきった：遷移を待ちながら緩く沈む
+
   static constexpr float kDoneSinkSpeed = 4.0f; ///< Done 段階で沈み続ける速さ（m/秒）
+
+  /// @brief Step の間だけ有効な、カメラのコンポーネント（状態クラスが書き換える）
+  struct CameraParts {
+    TransformComponent *tr = nullptr; ///< カメラの Transform
+    CameraComponent *cc = nullptr;    ///< カメラの CameraComponent
+  };
+
+  /// @brief Update の対象か
+  /// @return Begin 済みで調整値がそろっていれば true
+  bool IsRunning() const override { return fsm_.HasState() && p_ && look_; }
+  /// @brief 段階ごとにカメラを動かし、着水後は深さに応じて水中エフェクトを更新する
+  /// @param dt 経過時間（秒）
+  /// @return カメラが消えていたら false
+  bool Step(float dt) override;
 
   /// @brief 着水の瞬間に水中エフェクト一式・レンズ演出・泡を開始する
   void OnSplash() {
@@ -709,9 +693,8 @@ private:
   const DiveParams *p_ = nullptr;                 ///< 調整値（Begin で渡されたもの）
   const UnderwaterLook::Params *look_ = nullptr;  ///< 水中の見た目（Begin で渡されたもの）
   Bubbles *bubbles_ = nullptr;                    ///< 泡のエミッタ（nullptr 可）
-  std::weak_ptr<Entity> camera_;                  ///< 動かすカメラ
-  Phase phase_ = Phase::None;                     ///< 現在の段階
-  float t_ = 0.0f;                                ///< 現在の段階に入ってからの経過時間（秒）
+  StateMachine<DiveSequence> fsm_;                ///< 段階のステートマシン（状態が無い＝未開始）
+  CameraParts cam_{};                             ///< Step の間だけ有効なカメラのコンポーネント
   RC::Vector3 basePos_{};                         ///< 開始時のカメラ位置
   RC::Vector3 baseRot_{};                         ///< 開始時のカメラ回転
   float baseFov_ = 0.45f;                         ///< 開始時の画角（rad）
@@ -721,6 +704,160 @@ private:
   bool effectsOn_ = false;                        ///< 水中エフェクトを積んだか
   LensFx lens_;                                   ///< 着水時のレンズ演出
 };
+
+// ---- DiveSequence の状態クラス（遷移先を先に定義する：Done ← Sink ← Plunge ← Anticipate）----
+
+/// @brief 暗くなりきった：遷移が始まるまで止まって見えないよう緩く沈み続ける
+class DiveSequence::DoneState final : public IState<DiveSequence> {
+public:
+  void OnEnter(DiveSequence &owner, StateMachine<DiveSequence> &machine) override {
+    (void)machine;
+    owner.ResetPhaseTime();
+  }
+  void OnUpdate(DiveSequence &owner, StateMachine<DiveSequence> &machine, float deltaTime) override {
+    (void)machine;
+    owner.cam_.tr->position.y -= kDoneSinkSpeed * deltaTime; // 遷移が始まるまで止まって見えないように
+  }
+  const char *Name() const override { return "done"; }
+};
+
+/// @brief 沈降：減速しながら沈み、見上げる向きへ傾け、広げた画角を元へ戻す
+class DiveSequence::SinkState final : public IState<DiveSequence> {
+public:
+  /// @brief 着水の瞬間：段階の時間を戻し、水中エフェクト一式を開始する
+  void OnEnter(DiveSequence &owner, StateMachine<DiveSequence> &machine) override {
+    (void)machine;
+    owner.ResetPhaseTime();
+    owner.OnSplash();
+  }
+  void OnUpdate(DiveSequence &owner, StateMachine<DiveSequence> &machine, float deltaTime) override {
+    (void)deltaTime;
+    const DiveParams &p = *owner.p_;
+    TransformComponent *tr = owner.cam_.tr;
+    const float t = owner.PhaseTime();
+    const float u = t / (std::max)(p.sink, 1e-3f);
+    tr->position.y = owner.waterY_ - p.depth * EaseOutQuad(u);
+    const float tilt = (p.tilt > 0.0f) ? Smooth01(t / p.tilt) : 1.0f;
+    tr->rotation.x = owner.baseRot_.x + (p.lookUpPitch - owner.baseRot_.x) * tilt;
+    owner.cam_.cc->fovY = owner.baseFov_ * (p.fovBoost - (p.fovBoost - 1.0f) * EaseOutQuad(u));
+    // 画面が深海色になりきった時点で終わり（沈みきるまで待つと暗い時間が延びるだけ）
+    if (u >= 1.0f || (owner.waterY_ - tr->position.y) >= owner.look_->deepDepth) {
+      machine.ChangeState<DoneState>();
+    }
+  }
+  const char *Name() const override { return "sink"; }
+};
+
+/// @brief 落下：加速しながら水面へ落ち、画角を広げて速度感を出す。水面に届いたら着水
+class DiveSequence::PlungeState final : public IState<DiveSequence> {
+public:
+  void OnEnter(DiveSequence &owner, StateMachine<DiveSequence> &machine) override {
+    (void)machine;
+    owner.ResetPhaseTime();
+  }
+  void OnUpdate(DiveSequence &owner, StateMachine<DiveSequence> &machine, float deltaTime) override {
+    (void)deltaTime;
+    const DiveParams &p = *owner.p_;
+    TransformComponent *tr = owner.cam_.tr;
+    const float u = owner.PhaseTime() / (std::max)(p.plunge, 1e-3f);
+    const float e = EaseInQuad(u);
+    const float startY = owner.basePos_.y + ((p.anticipation > 0.0f) ? p.lift : 0.0f);
+    tr->position.y = startY + (owner.waterY_ - startY) * e;
+    owner.cam_.cc->fovY = owner.baseFov_ * (1.0f + (p.fovBoost - 1.0f) * e);
+    if (u >= 1.0f) {
+      tr->position.y = owner.waterY_;
+      machine.ChangeState<SinkState>(); // 着水の処理は SinkState::OnEnter
+    }
+  }
+  const char *Name() const override { return "plunge"; }
+};
+
+/// @brief ため：少し持ち上がる
+class DiveSequence::AnticipateState final : public IState<DiveSequence> {
+public:
+  void OnEnter(DiveSequence &owner, StateMachine<DiveSequence> &machine) override {
+    (void)machine;
+    owner.ResetPhaseTime();
+  }
+  void OnUpdate(DiveSequence &owner, StateMachine<DiveSequence> &machine, float deltaTime) override {
+    (void)deltaTime;
+    const DiveParams &p = *owner.p_;
+    const float u = owner.PhaseTime() / (std::max)(p.anticipation, 1e-3f);
+    owner.cam_.tr->position.y = owner.basePos_.y + p.lift * EaseOutCubic(u);
+    if (u >= 1.0f) machine.ChangeState<PlungeState>();
+  }
+  const char *Name() const override { return "anticipate"; }
+};
+
+// ---- DiveSequence のうち、状態クラスを使う関数（状態クラスが完全型になってから定義する）----
+
+inline bool DiveSequence::Begin(std::shared_ptr<Entity> cam, float waterY, const DiveParams &p,
+                                const UnderwaterLook::Params &look, Bubbles *bubbles) {
+  if (fsm_.HasState()) return true;
+  if (!cam) return false;
+  auto *tr = cam->GetComponent<TransformComponent>();
+  auto *cc = cam->GetComponent<CameraComponent>();
+  if (!tr || !cc) return false;
+
+  *this = DiveSequence{};
+  p_ = &p;
+  look_ = &look;
+  bubbles_ = bubbles;
+  BindCamera(cam);
+  basePos_ = tr->position;
+  baseRot_ = tr->rotation;
+  baseFov_ = cc->fovY;
+  waterY_ = waterY;
+  depth_ = waterY - tr->position.y;
+  // ためが 0 秒なら落下から始める
+  if (p.anticipation > 0.0f) {
+    fsm_.ChangeState<AnticipateState>();
+  } else {
+    fsm_.ChangeState<PlungeState>();
+  }
+  fsm_.ApplyPending(*this); // Begin の直後から IsActive() が true になるよう、すぐ切り替える
+  return true;
+}
+
+inline bool DiveSequence::IsDone() const { return fsm_.IsIn<DoneState>(); }
+
+inline float DiveSequence::DoneTime() const { return fsm_.IsIn<DoneState>() ? PhaseTime() : 0.0f; }
+
+inline bool DiveSequence::Step(float dt) {
+  auto cam = LockCamera();
+  if (!cam) return false;
+  auto *tr = cam->GetComponent<TransformComponent>();
+  auto *cc = cam->GetComponent<CameraComponent>();
+  if (!tr || !cc) return false;
+  const DiveParams &p = *p_;
+
+  // 段階ごとのカメラの動きは状態クラスへ任せる（遷移もそちらで決まる）
+  AdvancePhaseTime(dt);
+  cam_ = {tr, cc};
+  fsm_.Update(*this, dt);
+  cam_ = {};
+
+  depth_ = waterY_ - tr->position.y;
+
+  // 着水後：水中エフェクトを surfaceBlend 秒で掛けきり、深さに応じてフォグを暗くする
+  if (effectsOn_) {
+    submerged_ += dt;
+    PostProcess *pp = RC::GetRenderContext().GetPostProcess();
+    const float blend = (p.surfaceBlend > 0.0f) ? Smooth01(submerged_ / p.surfaceBlend) : 1.0f;
+    UnderwaterLook::SetLerp(pp, blend);
+    UnderwaterLook::ApplyFogByDepth(pp, *look_, depth_);
+    // 暗くなりきる前に水滴を消しきる（残ったまま次のシーンへ切り替わると一瞬で消えて見える）。
+    // Done の直後に遷移が始まるので、深海色の 8 割まで沈んで画面がほぼ暗くなった時点で消し始める
+    // （早すぎると、突入直後の気泡がまだ見えているうちに消えてしまう）。
+    // タイマーを縮めると全粒が同時に消えるので、粒ごとに時間差で痩せさせる
+    const bool nearDark = fsm_.IsIn<DoneState>() ||
+                          (fsm_.IsIn<SinkState>() && depth_ >= look_->deepDepth * 0.8f);
+    if (nearDark) lens_.DrainDroplets(pp, kDropletDrainTime);
+    lens_.Update(pp, dt);
+  }
+  if (bubbles_) bubbles_->Follow(*tr, waterY_);
+  return true;
+}
 
 // ------------------------------------------------------------------
 // 浮上（深海 → 水面 → 真上視点へ上昇）
@@ -785,11 +922,11 @@ struct RiseParams {
 ///          2. 上昇  : 水面を抜け（ラジアルブラー＋下へ垂れる水滴）、水平線を見ながら上がり、
 ///                     最後に最終の向き（真上視点なら真下）へ傾く。
 ///          水中エフェクトは Begin で積み、水面を抜けたら surfaceBlend 秒で外す。
-class RiseSequence {
+///
+///          段階（水中 / 上昇 / 動きは終わり後始末中）は State パターン（StateMachine.h）で表し、
+///          次の段階は各状態クラス自身が決める。後始末が済んだら状態を空にする（＝未開始と同じ）。
+class RiseSequence final : public CameraSequence {
 public:
-  /// @brief 浮上の段階（未開始 / 水中 / 上昇 / 動きは終わり後始末中）
-  enum class Phase { None, Underwater, Climb, Done };
-
   /// @brief 浮上を開始する（カメラを深海の開始位置へ移し、水中エフェクトを積む）
   /// @param cam     動かすカメラ（Transform が必要。現在の位置・向きが最終位置になる）
   /// @param waterY  水面のワールド Y
@@ -798,46 +935,11 @@ public:
   /// @param bubbles 泡のエミッタ（nullptr なら泡なし）
   /// @return 開始できたら true。カメラが不正なら false
   bool Begin(std::shared_ptr<Entity> cam, float waterY, const RiseParams &p,
-             const UnderwaterLook::Params &look, Bubbles *bubbles) {
-    if (!cam) return false;
-    auto *tr = cam->GetComponent<TransformComponent>();
-    if (!tr) return false;
-
-    // 現在のカメラを最終位置として覚え、深海の開始位置・水面直下の中継点を決める
-    *this = RiseSequence{};
-    p_ = &p;
-    look_ = &look;
-    bubbles_ = bubbles;
-    camera_ = cam;
-    waterY_ = waterY;
-    goalPos_ = tr->position;
-    goalRot_ = tr->rotation;
-    startPos_ = {goalPos_.x, waterY - p.depth, goalPos_.z};
-    startRot_ = {p.pitchStart, goalRot_.y, goalRot_.z};
-    surfacePos_ = {goalPos_.x, waterY - kUnderSurface, goalPos_.z};
-    tr->position = startPos_;
-    tr->rotation = startRot_;
-
-    // 最初から完全に水中の見た目で始める。泡は水面に届かない深さから始まるときだけ出す
-    if (PostProcess *pp = RC::GetRenderContext().GetPostProcess()) {
-      UnderwaterLook::SetupLight(pp, look, waterY);
-      UnderwaterLook::AddStack(pp);
-      UnderwaterLook::SetLerp(pp, 1.0f);
-      UnderwaterLook::ApplyFogByDepth(pp, look, p.depth);
-      effectsOn_ = true;
-    }
-    if (bubbles_ && p.bubbles && p.depth > Bubbles::kMinDepth + 1.0f) {
-      bubbles_->SetEmission(Bubbles::kEmitPerFrame);
-      emitting_ = true;
-    }
-    phase_ = Phase::Underwater;
-    Log::Print("[WaterCameraFx] rise begin");
-    return true;
-  }
+             const UnderwaterLook::Params &look, Bubbles *bubbles);
 
   /// @brief 途中で止める。カメラは最終位置へ置き、画面効果は外す
   void End() {
-    if (auto cam = camera_.lock()) {
+    if (auto cam = LockCamera()) {
       if (auto *tr = cam->GetComponent<TransformComponent>()) {
         tr->position = goalPos_;
         tr->rotation = goalRot_;
@@ -850,95 +952,44 @@ public:
     *this = RiseSequence{};
   }
 
-  /// @brief 段階ごとにカメラを動かし、水面通過・水中エフェクトの解除・後始末を進める（毎フレーム呼ぶ）
-  /// @param dt 経過時間（秒）
-  /// @note カメラが消えていたら End して終了する。
-  void Update(float dt) {
-    if (phase_ == Phase::None || !p_ || !look_) return;
-    PostProcess *pp = RC::GetRenderContext().GetPostProcess();
-    auto cam = camera_.lock();
-    auto *tr = cam ? cam->GetComponent<TransformComponent>() : nullptr;
-    if (!tr) { End(); return; }
-    const RiseParams &p = *p_;
-
-    t_ += dt;
-    // 水中：深海から水面直下へ（序盤ほど速い）。向きは見上げ → 水平へ
-    if (phase_ == Phase::Underwater) {
-      const float u = t_ / (std::max)(p.underwaterTime, 1e-3f);
-      const float e = EaseOutPow(u, p.ease);
-      tr->position = RC::Lerp(startPos_, surfacePos_, e);
-      tr->rotation = RC::Lerp(startRot_, {0.0f, goalRot_.y, goalRot_.z}, Smooth01(u));
-      if (u >= 1.0f) { phase_ = Phase::Climb; t_ = 0.0f; }
-    } else if (phase_ == Phase::Climb) {
-      const float u = t_ / (std::max)(p.climbTime, 1e-3f);
-      tr->position = RC::Lerp(surfacePos_, goalPos_, Smooth01(u));
-      // 水面を抜けた直後は水平線を見せ、上がりきる手前で最終の向きへ傾く
-      const float r = Smooth01((u - 0.2f) / 0.8f);
-      tr->rotation = RC::Lerp({0.0f, goalRot_.y, goalRot_.z}, goalRot_, r);
-      if (u >= 1.0f) {
-        tr->position = goalPos_;
-        tr->rotation = goalRot_;
-        phase_ = Phase::Done;
-        t_ = 0.0f;
-        Log::Print("[WaterCameraFx] rise finished");
-      }
-    }
-
-    const float depth = waterY_ - tr->position.y;
-
-    // 泡は水面に届かない深さまでで止める
-    if (emitting_ && depth < Bubbles::kMinDepth + 1.0f) {
-      bubbles_->SetEmission(0);
-      emitting_ = false;
-    }
-    if (bubbles_) bubbles_->Follow(*tr, waterY_);
-
-    // 水面を抜けた瞬間：出水の演出を出し、水中エフェクトを外し始める
-    if (effectsOn_ && !surfaced_ && depth <= 0.0f) {
-      surfaced_ = true;
-      surfacedTime_ = 0.0f;
-      // 出水：水滴が下へ垂れる＋一瞬白く飛ぶ
-      lens_.Trigger(pp, 0.7f, 1.3f, ExposureFlashDefaults::kEmergeEv, ExposureFlashDefaults::kEmergeDuration);
-    }
-    // 水中では深さに応じてフォグを明るくし、水面を抜けた後は surfaceBlend 秒で水中エフェクトを外す
-    if (effectsOn_) {
-      if (!surfaced_) {
-        UnderwaterLook::ApplyFogByDepth(pp, *look_, depth);
-      } else {
-        surfacedTime_ += dt;
-        const float blend = (p.surfaceBlend > 0.0f) ? 1.0f - Smooth01(surfacedTime_ / p.surfaceBlend) : 0.0f;
-        UnderwaterLook::SetLerp(pp, blend);
-        if (blend <= 0.0f) {
-          UnderwaterLook::RemoveStack(pp);
-          effectsOn_ = false;
-        }
-      }
-    }
-    lens_.Update(pp, dt);
-
-    // カメラが止まり、画面効果もすべて消えたら完全に終了
-    if (phase_ == Phase::Done && !effectsOn_ && !lens_.Active()) {
-      if (bubbles_) bubbles_->SetEmission(0);
-      phase_ = Phase::None;
-    }
-  }
-
   /// @brief カメラがまだ動いているか（入力を止める判定に使う）
   /// @return Underwater / Climb 段階なら true
-  bool IsMoving() const { return phase_ == Phase::Underwater || phase_ == Phase::Climb; }
+  bool IsMoving() const;
   /// @brief 画面効果の後始末まで含めてまだ動いているか
-  /// @return None 以外なら true
-  bool IsActive() const { return phase_ != Phase::None; }
+  /// @return 状態があれば（Underwater / Climb / Done）true
+  bool IsActive() const override { return fsm_.HasState(); }
+
+  /// @brief 今の段階の名前（ログ・デバッグ表示用）
+  /// @return "none" / "underwater" / "climb" / "done"
+  const char *PhaseName() const override { return fsm_.HasState() ? fsm_.CurrentName() : "none"; }
 
 private:
+  class UnderwaterState; ///< 水中：深海から水面直下へ
+  class ClimbState;      ///< 上昇：水面を抜けて最終位置へ
+  class DoneState;       ///< カメラは止まり、画面効果の後始末中
+
   static constexpr float kUnderSurface = 0.6f; ///< 水中フェーズの終点（水面の少し下）
+
+  /// @brief Update の対象か
+  /// @return Begin 済みで調整値がそろっていれば true
+  bool IsRunning() const override { return fsm_.HasState() && p_ && look_; }
+  /// @brief 段階ごとにカメラを動かし、水面通過・水中エフェクトの解除・後始末を進める
+  /// @param dt 経過時間（秒）
+  /// @return カメラが消えていたら false（そのときは End 済み）
+  bool Step(float dt) override;
+
+  /// @brief カメラが止まり画面効果もすべて消えたので、泡を止めて状態を空にする（未開始と同じになる）
+  /// @details 「状態が無い」は状態クラスでは表せないので、本体が Step の最後（状態の更新の外）で行う。
+  void Finish() {
+    if (bubbles_) bubbles_->SetEmission(0);
+    fsm_ = StateMachine<RiseSequence>{};
+  }
 
   const RiseParams *p_ = nullptr;                    ///< 調整値（Begin で渡されたもの）
   const UnderwaterLook::Params *look_ = nullptr;     ///< 水中の見た目（Begin で渡されたもの）
   Bubbles *bubbles_ = nullptr;                       ///< 泡のエミッタ（nullptr 可）
-  std::weak_ptr<Entity> camera_;                     ///< 動かすカメラ
-  Phase phase_ = Phase::None;                        ///< 現在の段階
-  float t_ = 0.0f;                                   ///< 現在の段階に入ってからの経過時間（秒）
+  StateMachine<RiseSequence> fsm_;                   ///< 段階のステートマシン（状態が無い＝未開始 / 終了）
+  TransformComponent *camTr_ = nullptr;              ///< Step の間だけ有効なカメラの Transform（状態クラスが書き換える）
   float waterY_ = 0.0f;                              ///< 水面のワールド Y
   RC::Vector3 startPos_{}, surfacePos_{}, goalPos_{}; ///< 開始位置 / 水面直下の中継点 / 最終位置
   RC::Vector3 startRot_{}, goalRot_{};               ///< 開始時の向き / 最終の向き
@@ -948,6 +999,167 @@ private:
   bool emitting_ = false;                            ///< 泡を出しているか
   LensFx lens_;                                      ///< 出水時のレンズ演出
 };
+
+// ---- RiseSequence の状態クラス（遷移先を先に定義する：Done ← Climb ← Underwater）----
+
+/// @brief カメラは最終位置で止まっている。画面効果が消えきるのを待つ（後始末は RiseSequence::Step）
+class RiseSequence::DoneState final : public IState<RiseSequence> {
+public:
+  void OnEnter(RiseSequence &owner, StateMachine<RiseSequence> &machine) override {
+    (void)machine;
+    owner.ResetPhaseTime();
+    Log::Print("[WaterCameraFx] rise finished");
+  }
+  void OnUpdate(RiseSequence &owner, StateMachine<RiseSequence> &machine, float deltaTime) override {
+    (void)owner;
+    (void)machine;
+    (void)deltaTime;
+  }
+  const char *Name() const override { return "done"; }
+};
+
+/// @brief 上昇：水面直下から最終位置へ。水面を抜けた直後は水平線を見せ、上がりきる手前で最終の向きへ傾く
+class RiseSequence::ClimbState final : public IState<RiseSequence> {
+public:
+  void OnEnter(RiseSequence &owner, StateMachine<RiseSequence> &machine) override {
+    (void)machine;
+    owner.ResetPhaseTime();
+  }
+  void OnUpdate(RiseSequence &owner, StateMachine<RiseSequence> &machine, float deltaTime) override {
+    (void)deltaTime;
+    const RiseParams &p = *owner.p_;
+    TransformComponent *tr = owner.camTr_;
+    const float u = owner.PhaseTime() / (std::max)(p.climbTime, 1e-3f);
+    tr->position = RC::Lerp(owner.surfacePos_, owner.goalPos_, Smooth01(u));
+    // 水面を抜けた直後は水平線を見せ、上がりきる手前で最終の向きへ傾く
+    const float r = Smooth01((u - 0.2f) / 0.8f);
+    tr->rotation = RC::Lerp({0.0f, owner.goalRot_.y, owner.goalRot_.z}, owner.goalRot_, r);
+    if (u >= 1.0f) {
+      tr->position = owner.goalPos_;
+      tr->rotation = owner.goalRot_;
+      machine.ChangeState<DoneState>();
+    }
+  }
+  const char *Name() const override { return "climb"; }
+};
+
+/// @brief 水中：深海から水面直下へ（序盤ほど速い）。向きは見上げ → 水平へ
+class RiseSequence::UnderwaterState final : public IState<RiseSequence> {
+public:
+  void OnEnter(RiseSequence &owner, StateMachine<RiseSequence> &machine) override {
+    (void)machine;
+    owner.ResetPhaseTime();
+  }
+  void OnUpdate(RiseSequence &owner, StateMachine<RiseSequence> &machine, float deltaTime) override {
+    (void)deltaTime;
+    const RiseParams &p = *owner.p_;
+    TransformComponent *tr = owner.camTr_;
+    const float u = owner.PhaseTime() / (std::max)(p.underwaterTime, 1e-3f);
+    const float e = EaseOutPow(u, p.ease);
+    tr->position = RC::Lerp(owner.startPos_, owner.surfacePos_, e);
+    tr->rotation = RC::Lerp(owner.startRot_, {0.0f, owner.goalRot_.y, owner.goalRot_.z}, Smooth01(u));
+    if (u >= 1.0f) machine.ChangeState<ClimbState>();
+  }
+  const char *Name() const override { return "underwater"; }
+};
+
+// ---- RiseSequence のうち、状態クラスを使う関数（状態クラスが完全型になってから定義する）----
+
+inline bool RiseSequence::Begin(std::shared_ptr<Entity> cam, float waterY, const RiseParams &p,
+                                const UnderwaterLook::Params &look, Bubbles *bubbles) {
+  if (!cam) return false;
+  auto *tr = cam->GetComponent<TransformComponent>();
+  if (!tr) return false;
+
+  // 現在のカメラを最終位置として覚え、深海の開始位置・水面直下の中継点を決める
+  *this = RiseSequence{};
+  p_ = &p;
+  look_ = &look;
+  bubbles_ = bubbles;
+  BindCamera(cam);
+  waterY_ = waterY;
+  goalPos_ = tr->position;
+  goalRot_ = tr->rotation;
+  startPos_ = {goalPos_.x, waterY - p.depth, goalPos_.z};
+  startRot_ = {p.pitchStart, goalRot_.y, goalRot_.z};
+  surfacePos_ = {goalPos_.x, waterY - kUnderSurface, goalPos_.z};
+  tr->position = startPos_;
+  tr->rotation = startRot_;
+
+  // 最初から完全に水中の見た目で始める。泡は水面に届かない深さから始まるときだけ出す
+  if (PostProcess *pp = RC::GetRenderContext().GetPostProcess()) {
+    UnderwaterLook::SetupLight(pp, look, waterY);
+    UnderwaterLook::AddStack(pp);
+    UnderwaterLook::SetLerp(pp, 1.0f);
+    UnderwaterLook::ApplyFogByDepth(pp, look, p.depth);
+    effectsOn_ = true;
+  }
+  if (bubbles_ && p.bubbles && p.depth > Bubbles::kMinDepth + 1.0f) {
+    bubbles_->SetEmission(Bubbles::kEmitPerFrame);
+    emitting_ = true;
+  }
+  fsm_.ChangeState<UnderwaterState>();
+  fsm_.ApplyPending(*this); // Begin の直後から IsActive() / IsMoving() が true になるよう、すぐ切り替える
+  Log::Print("[WaterCameraFx] rise begin");
+  return true;
+}
+
+inline bool RiseSequence::IsMoving() const {
+  return fsm_.IsIn<UnderwaterState>() || fsm_.IsIn<ClimbState>();
+}
+
+inline bool RiseSequence::Step(float dt) {
+  PostProcess *pp = RC::GetRenderContext().GetPostProcess();
+  auto cam = LockCamera();
+  auto *tr = cam ? cam->GetComponent<TransformComponent>() : nullptr;
+  if (!tr) {
+    End();
+    return false;
+  }
+  const RiseParams &p = *p_;
+
+  // 段階ごとのカメラの動きは状態クラスへ任せる（遷移もそちらで決まる）
+  AdvancePhaseTime(dt);
+  camTr_ = tr;
+  fsm_.Update(*this, dt);
+  camTr_ = nullptr;
+
+  const float depth = waterY_ - tr->position.y;
+
+  // 泡は水面に届かない深さまでで止める
+  if (emitting_ && depth < Bubbles::kMinDepth + 1.0f) {
+    bubbles_->SetEmission(0);
+    emitting_ = false;
+  }
+  if (bubbles_) bubbles_->Follow(*tr, waterY_);
+
+  // 水面を抜けた瞬間：出水の演出を出し、水中エフェクトを外し始める
+  if (effectsOn_ && !surfaced_ && depth <= 0.0f) {
+    surfaced_ = true;
+    surfacedTime_ = 0.0f;
+    // 出水：水滴が下へ垂れる＋一瞬白く飛ぶ
+    lens_.Trigger(pp, 0.7f, 1.3f, ExposureFlashDefaults::kEmergeEv, ExposureFlashDefaults::kEmergeDuration);
+  }
+  // 水中では深さに応じてフォグを明るくし、水面を抜けた後は surfaceBlend 秒で水中エフェクトを外す
+  if (effectsOn_) {
+    if (!surfaced_) {
+      UnderwaterLook::ApplyFogByDepth(pp, *look_, depth);
+    } else {
+      surfacedTime_ += dt;
+      const float blend = (p.surfaceBlend > 0.0f) ? 1.0f - Smooth01(surfacedTime_ / p.surfaceBlend) : 0.0f;
+      UnderwaterLook::SetLerp(pp, blend);
+      if (blend <= 0.0f) {
+        UnderwaterLook::RemoveStack(pp);
+        effectsOn_ = false;
+      }
+    }
+  }
+  lens_.Update(pp, dt);
+
+  // カメラが止まり、画面効果もすべて消えたら完全に終了
+  if (fsm_.IsIn<DoneState>() && !effectsOn_ && !lens_.Active()) Finish();
+  return true;
+}
 
 // ------------------------------------------------------------------
 // 空からの降下（Ascend 遷移で入ってきたとき：白 → 空 → 真上視点へ降りる）
@@ -989,7 +1201,8 @@ struct DescendParams {
 /// @details Begin の時点でカメラが置かれている位置・向きが「最終位置」になる（RiseSequence と同じ）。
 ///          画面は白く飛んだ露出（flashEv）から始まり、降りながら元の明るさへ戻る。
 ///          ステージクリアの「空へ抜ける」（ClearAscendScript → Ascend 遷移）の受け側。
-class DescendSequence {
+///          段階は「降下中か」の 1 つしかない（あとは露出の減衰だけ）ので、State パターンにはせず bool で持つ。
+class DescendSequence final : public CameraSequence {
 public:
   /// @brief 降下を開始する（カメラを上空の開始位置へ移し、白く飛んだ露出から始める）
   /// @param cam 動かすカメラ（Transform が必要。現在の位置・向きが最終位置になる）
@@ -1001,7 +1214,7 @@ public:
     if (!tr) return false;
     *this = DescendSequence{};
     p_ = &p;
-    camera_ = cam;
+    BindCamera(cam);
     goalPos_ = tr->position;
     goalRot_ = tr->rotation;
     startPos_ = {goalPos_.x, goalPos_.y + p.height, goalPos_.z};
@@ -1014,33 +1227,9 @@ public:
     return true;
   }
 
-  /// @brief カメラを最終位置へ降ろし、露出を戻していく（毎フレーム呼ぶ）
-  /// @param dt 経過時間（秒）
-  /// @note カメラが止まった後も露出の減衰は続ける。カメラが消えていたら End する。
-  void Update(float dt) {
-    if (!p_) return;
-    PostProcess *pp = RC::GetRenderContext().GetPostProcess();
-    flash_.Update(pp, dt);
-    if (!moving_) return;
-    auto cam = camera_.lock();
-    auto *tr = cam ? cam->GetComponent<TransformComponent>() : nullptr;
-    if (!tr) { End(); return; }
-    t_ += dt;
-    const float u = t_ / (std::max)(p_->duration, 1e-3f);
-    // 位置は最初に速く、最後にふわりと止まる。向きは少し遅れて真下（最終の向き）へ傾く
-    tr->position = RC::Lerp(startPos_, goalPos_, EaseOutCubic(u));
-    tr->rotation = RC::Lerp(startRot_, goalRot_, Smooth01((u - 0.15f) / 0.85f));
-    if (u >= 1.0f) {
-      tr->position = goalPos_;
-      tr->rotation = goalRot_;
-      moving_ = false;
-      Log::Print("[WaterCameraFx] descend finished");
-    }
-  }
-
   /// @brief 途中で止める。カメラは最終位置へ置き、露出は戻す
   void End() {
-    if (auto cam = camera_.lock()) {
+    if (auto cam = LockCamera()) {
       if (auto *tr = cam->GetComponent<TransformComponent>()) {
         tr->position = goalPos_;
         tr->rotation = goalRot_;
@@ -1055,12 +1244,46 @@ public:
   bool IsMoving() const { return moving_; }
   /// @brief 露出の後始末まで含めてまだ動いているか
   /// @return 降下中または露出フラッシュ中なら true
-  bool IsActive() const { return moving_ || flash_.Active(); }
+  bool IsActive() const override { return moving_ || flash_.Active(); }
+
+  /// @brief 今の段階の名前（ログ・デバッグ表示用）
+  /// @return 降下中なら "descend"、露出の戻し中なら "fx"、それ以外は "none"
+  const char *PhaseName() const override { return moving_ ? "descend" : (flash_.Active() ? "fx" : "none"); }
 
 private:
+  /// @brief Update の対象か
+  /// @return Begin 済みなら true
+  bool IsRunning() const override { return p_ != nullptr; }
+
+  /// @brief カメラを最終位置へ降ろし、露出を戻していく
+  /// @param dt 経過時間（秒）
+  /// @return カメラが消えていたら false（そのときは End 済み）
+  /// @note カメラが止まった後も露出の減衰は続ける。
+  bool Step(float dt) override {
+    PostProcess *pp = RC::GetRenderContext().GetPostProcess();
+    flash_.Update(pp, dt);
+    if (!moving_) return true;
+    auto cam = LockCamera();
+    auto *tr = cam ? cam->GetComponent<TransformComponent>() : nullptr;
+    if (!tr) {
+      End();
+      return false;
+    }
+    AdvancePhaseTime(dt);
+    const float u = PhaseTime() / (std::max)(p_->duration, 1e-3f);
+    // 位置は最初に速く、最後にふわりと止まる。向きは少し遅れて真下（最終の向き）へ傾く
+    tr->position = RC::Lerp(startPos_, goalPos_, EaseOutCubic(u));
+    tr->rotation = RC::Lerp(startRot_, goalRot_, Smooth01((u - 0.15f) / 0.85f));
+    if (u >= 1.0f) {
+      tr->position = goalPos_;
+      tr->rotation = goalRot_;
+      moving_ = false;
+      Log::Print("[WaterCameraFx] descend finished");
+    }
+    return true;
+  }
+
   const DescendParams *p_ = nullptr;   ///< 調整値（Begin で渡されたもの）
-  std::weak_ptr<Entity> camera_;       ///< 動かすカメラ
-  float t_ = 0.0f;                     ///< 降下開始からの経過時間（秒）
   bool moving_ = false;                ///< 降下中か
   RC::Vector3 startPos_{}, goalPos_{}; ///< 開始位置 / 最終位置
   RC::Vector3 startRot_{}, goalRot_{}; ///< 開始時の向き / 最終の向き
@@ -1089,87 +1312,23 @@ struct AscendParams {
 ///          幕が 1 に届いたら IsDone()。呼び出し側はそこで Ascend 遷移を要求する
 ///          （SceneManager は同じ白へ抜けるので継ぎ目が見えない）。
 ///          白い幕はポストプロセスの後に描く必要があるので、呼び出し側の OnOverlayRender で描く。
-class AscendSequence {
+///
+///          段階（ため / 跳ね上がり / 白くなりきった）は DiveSequence と同じく State パターン（StateMachine.h）で表す。
+class AscendSequence final : public CameraSequence {
 public:
-  /// @brief 跳ね上がりの段階（未開始 / ため / 跳ね上がり / 白くなりきった）
-  enum class Phase { None, Anticipate, Launch, Done };
-
   /// @brief 跳ね上がりを開始する（カメラの現在の位置・向き・画角を開始状態として覚える）
   /// @param cam    動かすカメラ（Transform と CameraComponent が必要）
   /// @param waterY 水面のワールド Y（水中から始まったときに上昇量へ深さを足すのに使う）
   /// @param p      跳ね上がりの調整値（演出中は参照を保持するので寿命に注意）
   /// @return 開始できたら true。カメラが不正なら false
-  bool Begin(std::shared_ptr<Entity> cam, float waterY, const AscendParams &p) {
-    if (!cam) return false;
-    auto *tr = cam->GetComponent<TransformComponent>();
-    auto *cc = cam->GetComponent<CameraComponent>();
-    if (!tr || !cc) return false;
-    *this = AscendSequence{};
-    p_ = &p;
-    camera_ = cam;
-    basePos_ = tr->position;
-    baseRot_ = tr->rotation;
-    baseFov_ = cc->fovY;
-    // 水中で終わったステージ（沈み洞など）でも、水面を抜けて空まで上がるように深さを足す
-    const float below = (std::max)(0.0f, waterY - basePos_.y);
-    rise_ = p.height + below;
-    phase_ = (p.anticipation > 0.0f) ? Phase::Anticipate : Phase::Launch;
-    Log::Print("[WaterCameraFx] ascend begin");
-    return true;
-  }
-
-  /// @brief 段階ごとにカメラを動かし、後半で露出と白い幕を上げていく（毎フレーム呼ぶ）
-  /// @param dt 経過時間（秒）
-  /// @return カメラが消えていたら false
-  bool Update(float dt) {
-    if (phase_ == Phase::None || !p_) return true;
-    auto cam = camera_.lock();
-    if (!cam) return false;
-    auto *tr = cam->GetComponent<TransformComponent>();
-    auto *cc = cam->GetComponent<CameraComponent>();
-    if (!tr || !cc) return false;
-    const AscendParams &p = *p_;
-    PostProcess *pp = RC::GetRenderContext().GetPostProcess();
-
-    t_ += dt;
-    switch (phase_) {
-    case Phase::Anticipate: {
-      // ため：少し沈み込む
-      const float u = t_ / (std::max)(p.anticipation, 1e-3f);
-      tr->position.y = basePos_.y - p.dip * EaseOutCubic(u);
-      if (u >= 1.0f) { phase_ = Phase::Launch; t_ = 0.0f; }
-      break;
-    }
-    case Phase::Launch: {
-      const float u = (std::min)(t_ / (std::max)(p.launch, 1e-3f), 1.0f);
-      const float startY = basePos_.y - ((p.anticipation > 0.0f) ? p.dip : 0.0f);
-      // 最初は速く飛び出し（EaseOutQuad）、そのまま空へ抜けていく
-      tr->position.y = startY + (rise_ + p.dip) * EaseOutQuad(u);
-      tr->rotation.x = baseRot_.x + (p.lookUpPitch - baseRot_.x) * Smooth01(u / 0.8f);
-      const float fovK = std::sin(3.14159265f * (std::min)(u * 1.2f, 1.0f)); // 途中で広がって戻る
-      cc->fovY = baseFov_ * (1.0f + (p.fovBoost - 1.0f) * fovK);
-      // 後半で白へ：露出を上げ、白い幕を重ねる
-      const float w = Smooth01((u - p.whiteStart) / (std::max)(1.0f - p.whiteStart, 1e-3f));
-      white_ = w;
-      flash_.Hold(pp, p.whiteEv * w);
-      if (u >= 1.0f) { phase_ = Phase::Done; t_ = 0.0f; white_ = 1.0f; }
-      break;
-    }
-    case Phase::Done:
-      tr->position.y += 6.0f * dt; // 遷移が始まるまで止まって見えないように
-      break;
-    case Phase::None:
-      break;
-    }
-    return true;
-  }
+  bool Begin(std::shared_ptr<Entity> cam, float waterY, const AscendParams &p);
 
   /// @brief 途中で止める（露出を戻し、自分で積んだ ColorGrade を外す）
   /// @param restoreCamera カメラの位置・向き・画角を開始時へ戻すか
   void End(bool restoreCamera) {
     flash_.Clear(RC::GetRenderContext().GetPostProcess());
     if (restoreCamera) {
-      if (auto cam = camera_.lock()) {
+      if (auto cam = LockCamera()) {
         if (auto *tr = cam->GetComponent<TransformComponent>()) {
           tr->position = basePos_;
           tr->rotation = baseRot_;
@@ -1182,28 +1341,157 @@ public:
 
   /// @brief 演出中か
   /// @return Begin 後、End されるまで true
-  bool IsActive() const { return phase_ != Phase::None; }
+  bool IsActive() const override { return fsm_.HasState(); }
   /// @brief 白い幕が 1 に届いたか（呼び出し側はここで Ascend 遷移を要求する）
   /// @return Done 段階なら true
-  bool IsDone() const { return phase_ == Phase::Done; }
+  bool IsDone() const;
   /// @brief Done 段階に入ってからの経過時間
   /// @return 経過時間（秒）。Done 以外では 0
-  float DoneTime() const { return phase_ == Phase::Done ? t_ : 0.0f; }
+  float DoneTime() const;
   /// @brief 白い幕の不透明度。呼び出し側が OnOverlayRender で画面全体に敷く
   /// @return 不透明度（0〜1）
   float WhiteAlpha() const { return white_; }
 
+  /// @brief 今の段階の名前（ログ・デバッグ表示用）
+  /// @return "none" / "anticipate" / "launch" / "done"
+  const char *PhaseName() const override { return fsm_.HasState() ? fsm_.CurrentName() : "none"; }
+
 private:
-  const AscendParams *p_ = nullptr; ///< 調整値（Begin で渡されたもの）
-  std::weak_ptr<Entity> camera_;    ///< 動かすカメラ
-  Phase phase_ = Phase::None;       ///< 現在の段階
-  float t_ = 0.0f;                  ///< 現在の段階に入ってからの経過時間（秒）
-  RC::Vector3 basePos_{};           ///< 開始時のカメラ位置
-  RC::Vector3 baseRot_{};           ///< 開始時のカメラ回転
-  float baseFov_ = 0.45f;           ///< 開始時の画角（rad）
-  float rise_ = 0.0f;               ///< 跳ね上がる高さ（m。水中開始なら水面までの深さを含む）
-  float white_ = 0.0f;              ///< 白い幕の不透明度（0〜1）
-  ExposureFlash flash_;             ///< 白へ飛ばす露出
+  class AnticipateState; ///< ため：少し沈み込む
+  class LaunchState;     ///< 跳ね上がり：空へ抜けながら白へ飛ばす
+  class DoneState;       ///< 白くなりきった：遷移を待ちながら上がり続ける
+
+  /// @brief Step の間だけ有効な、カメラのコンポーネントと PostProcess（状態クラスが書き換える）
+  struct FrameParts {
+    TransformComponent *tr = nullptr; ///< カメラの Transform
+    CameraComponent *cc = nullptr;    ///< カメラの CameraComponent
+    PostProcess *pp = nullptr;        ///< 露出を上げる PostProcess（nullptr 可）
+  };
+
+  /// @brief Update の対象か
+  /// @return Begin 済みで調整値があれば true
+  bool IsRunning() const override { return fsm_.HasState() && p_; }
+  /// @brief 段階ごとにカメラを動かし、後半で露出と白い幕を上げていく
+  /// @param dt 経過時間（秒）
+  /// @return カメラが消えていたら false
+  bool Step(float dt) override;
+
+  const AscendParams *p_ = nullptr;  ///< 調整値（Begin で渡されたもの）
+  StateMachine<AscendSequence> fsm_; ///< 段階のステートマシン（状態が無い＝未開始）
+  FrameParts frame_{};               ///< Step の間だけ有効なカメラのコンポーネントと PostProcess
+  RC::Vector3 basePos_{};            ///< 開始時のカメラ位置
+  RC::Vector3 baseRot_{};            ///< 開始時のカメラ回転
+  float baseFov_ = 0.45f;            ///< 開始時の画角（rad）
+  float rise_ = 0.0f;                ///< 跳ね上がる高さ（m。水中開始なら水面までの深さを含む）
+  float white_ = 0.0f;               ///< 白い幕の不透明度（0〜1）
+  ExposureFlash flash_;              ///< 白へ飛ばす露出
 };
+
+// ---- AscendSequence の状態クラス（遷移先を先に定義する：Done ← Launch ← Anticipate）----
+
+/// @brief 白くなりきった：遷移が始まるまで止まって見えないよう上がり続ける
+class AscendSequence::DoneState final : public IState<AscendSequence> {
+public:
+  void OnEnter(AscendSequence &owner, StateMachine<AscendSequence> &machine) override {
+    (void)machine;
+    owner.ResetPhaseTime();
+    owner.white_ = 1.0f;
+  }
+  void OnUpdate(AscendSequence &owner, StateMachine<AscendSequence> &machine, float deltaTime) override {
+    (void)machine;
+    owner.frame_.tr->position.y += 6.0f * deltaTime; // 遷移が始まるまで止まって見えないように
+  }
+  const char *Name() const override { return "done"; }
+};
+
+/// @brief 跳ね上がり：最初は速く飛び出して空へ抜け、後半で露出と白い幕を上げる
+class AscendSequence::LaunchState final : public IState<AscendSequence> {
+public:
+  void OnEnter(AscendSequence &owner, StateMachine<AscendSequence> &machine) override {
+    (void)machine;
+    owner.ResetPhaseTime();
+  }
+  void OnUpdate(AscendSequence &owner, StateMachine<AscendSequence> &machine, float deltaTime) override {
+    (void)deltaTime;
+    const AscendParams &p = *owner.p_;
+    TransformComponent *tr = owner.frame_.tr;
+    const float u = (std::min)(owner.PhaseTime() / (std::max)(p.launch, 1e-3f), 1.0f);
+    const float startY = owner.basePos_.y - ((p.anticipation > 0.0f) ? p.dip : 0.0f);
+    // 最初は速く飛び出し（EaseOutQuad）、そのまま空へ抜けていく
+    tr->position.y = startY + (owner.rise_ + p.dip) * EaseOutQuad(u);
+    tr->rotation.x = owner.baseRot_.x + (p.lookUpPitch - owner.baseRot_.x) * Smooth01(u / 0.8f);
+    const float fovK = std::sin(3.14159265f * (std::min)(u * 1.2f, 1.0f)); // 途中で広がって戻る
+    owner.frame_.cc->fovY = owner.baseFov_ * (1.0f + (p.fovBoost - 1.0f) * fovK);
+    // 後半で白へ：露出を上げ、白い幕を重ねる
+    const float w = Smooth01((u - p.whiteStart) / (std::max)(1.0f - p.whiteStart, 1e-3f));
+    owner.white_ = w;
+    owner.flash_.Hold(owner.frame_.pp, p.whiteEv * w);
+    if (u >= 1.0f) machine.ChangeState<DoneState>(); // 白い幕は DoneState::OnEnter で 1 に揃える
+  }
+  const char *Name() const override { return "launch"; }
+};
+
+/// @brief ため：少し沈み込む
+class AscendSequence::AnticipateState final : public IState<AscendSequence> {
+public:
+  void OnEnter(AscendSequence &owner, StateMachine<AscendSequence> &machine) override {
+    (void)machine;
+    owner.ResetPhaseTime();
+  }
+  void OnUpdate(AscendSequence &owner, StateMachine<AscendSequence> &machine, float deltaTime) override {
+    (void)deltaTime;
+    const AscendParams &p = *owner.p_;
+    const float u = owner.PhaseTime() / (std::max)(p.anticipation, 1e-3f);
+    owner.frame_.tr->position.y = owner.basePos_.y - p.dip * EaseOutCubic(u);
+    if (u >= 1.0f) machine.ChangeState<LaunchState>();
+  }
+  const char *Name() const override { return "anticipate"; }
+};
+
+// ---- AscendSequence のうち、状態クラスを使う関数（状態クラスが完全型になってから定義する）----
+
+inline bool AscendSequence::Begin(std::shared_ptr<Entity> cam, float waterY, const AscendParams &p) {
+  if (!cam) return false;
+  auto *tr = cam->GetComponent<TransformComponent>();
+  auto *cc = cam->GetComponent<CameraComponent>();
+  if (!tr || !cc) return false;
+  *this = AscendSequence{};
+  p_ = &p;
+  BindCamera(cam);
+  basePos_ = tr->position;
+  baseRot_ = tr->rotation;
+  baseFov_ = cc->fovY;
+  // 水中で終わったステージ（沈み洞など）でも、水面を抜けて空まで上がるように深さを足す
+  const float below = (std::max)(0.0f, waterY - basePos_.y);
+  rise_ = p.height + below;
+  // ためが 0 秒なら跳ね上がりから始める
+  if (p.anticipation > 0.0f) {
+    fsm_.ChangeState<AnticipateState>();
+  } else {
+    fsm_.ChangeState<LaunchState>();
+  }
+  fsm_.ApplyPending(*this); // Begin の直後から IsActive() が true になるよう、すぐ切り替える
+  Log::Print("[WaterCameraFx] ascend begin");
+  return true;
+}
+
+inline bool AscendSequence::IsDone() const { return fsm_.IsIn<DoneState>(); }
+
+inline float AscendSequence::DoneTime() const { return fsm_.IsIn<DoneState>() ? PhaseTime() : 0.0f; }
+
+inline bool AscendSequence::Step(float dt) {
+  auto cam = LockCamera();
+  if (!cam) return false;
+  auto *tr = cam->GetComponent<TransformComponent>();
+  auto *cc = cam->GetComponent<CameraComponent>();
+  if (!tr || !cc) return false;
+
+  // 段階ごとのカメラの動きは状態クラスへ任せる（遷移もそちらで決まる）
+  AdvancePhaseTime(dt);
+  frame_ = {tr, cc, RC::GetRenderContext().GetPostProcess()};
+  fsm_.Update(*this, dt);
+  frame_ = {};
+  return true;
+}
 
 } // namespace WaterCameraFx

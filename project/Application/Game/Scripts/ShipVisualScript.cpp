@@ -43,20 +43,67 @@
 //   ※ エンジンの描画は Transform の親子を解決しないので、部位のワールド姿勢は PartPose で合成して書き込む。
 // ============================================================================
 
+namespace {
+
+/// @brief 部位の動き方（Strategy）
+/// @details 以前は `enum class Role { Static, Flag }` を部位に持たせ、配置のたびに
+///          `if (p.role == Role::Flag)` で分岐していた。動き方を足す（帆のはためき、大砲の反動など）
+///          たびに PlaceParts の分岐が増えるため、動き方をクラスに分けて部位ごとに差し替えられるようにした。
+///          動き方は状態を持たないので、共有の const インスタンスを部位から指す。
+class PartMotion {
+public:
+  virtual ~PartMotion() = default;
+
+  /// @brief 本体に対する部位の向きに、このフレームの動きを加える
+  /// @param local 本体に対する部位の基本の向き
+  /// @param time 部位を作ってからの経過時間（秒）
+  /// @return 動きを加えた向き
+  virtual PartPose::Mat3 Animate(const PartPose::Mat3 &local, float time) const = 0;
+
+protected:
+  /// @brief 基底だけを直接作らせない
+  PartMotion() = default;
+};
+
+/// @brief 本体に固定された部位（動かない）
+class StaticPartMotion final : public PartMotion {
+public:
+  /// @brief 向きをそのまま返す
+  PartPose::Mat3 Animate(const PartPose::Mat3 &local, float time) const override {
+    (void)time;
+    return local;
+  }
+};
+
+/// @brief 旗としてなびく部位
+class FlagPartMotion final : public PartMotion {
+public:
+  /// @brief Y 軸まわりに ±0.35rad を周期的に振ってなびかせる
+  PartPose::Mat3 Animate(const PartPose::Mat3 &local, float time) const override {
+    const float flag = 0.35f * std::sin(time * 5.0f);
+    return PartPose::MatMul(PartPose::RotY(flag), local);
+  }
+};
+
+/// @brief 固定の動き方の共有インスタンス
+/// @return 固定（動かない）
+const PartMotion &StaticMotion() {
+  static const StaticPartMotion kMotion{};
+  return kMotion;
+}
+
+/// @brief 旗の動き方の共有インスタンス
+/// @return 旗（なびく）
+const PartMotion &FlagMotion() {
+  static const FlagPartMotion kMotion{};
+  return kMotion;
+}
+
+} // namespace
+
 /// @brief ShipEnemyScript の船に部位を付けて帆船に見せる
 class ShipVisualScript : public ScriptableEntity {
 public:
-  RC::Vector4 deckColor = {0.62f, 0.46f, 0.28f, 1.0f};
-  RC::Vector4 trimColor = {0.24f, 0.15f, 0.08f, 1.0f};   ///< 舷側・マスト
-  RC::Vector4 cabinColor = {0.84f, 0.80f, 0.70f, 1.0f};
-  RC::Vector4 roofColor = {0.55f, 0.14f, 0.12f, 1.0f};
-  RC::Vector4 sailColor = {0.93f, 0.90f, 0.82f, 1.0f};
-  RC::Vector4 flagColor = {0.12f, 0.12f, 0.14f, 1.0f};   ///< 敵なので黒旗
-  RC::Vector4 cannonColor = {0.16f, 0.16f, 0.18f, 1.0f};
-  int cannonsPerSide = 3;
-  float mastHeightScale = 1.0f; ///< マストと帆の高さの倍率
-  float sailBillowDeg = 14.0f;  ///< 帆が風で前へはらむ角度
-
   /// @brief 見た目のパラメータを JSON に書き出す
   /// @return 各部位の色・片舷の大砲数・マスト高さ倍率・帆のはらみ角度を格納した JSON
   nlohmann::json Serialize() override {
@@ -132,18 +179,29 @@ protected:
 
 private:
   using Mat3 = PartPose::Mat3;
-  /// @brief 部位の動き方（Static: 本体に固定 / Flag: 旗としてなびかせる）
-  enum class Role { Static, Flag };
 
   /// @brief 生成した部位 1 つぶんの情報（本体ローカルでの配置と元の色）
+  /// @details 振る舞いを持たない受け渡し用のデータなので struct のままにしている。
   struct Part {
     std::weak_ptr<Entity> entity;
     RC::Vector3 offset{};  ///< 本体中心からの位置（m、本体ローカル）
     RC::Vector3 scale{};   ///< Transform の scale（m）
     Mat3 local = PartPose::Identity();
     RC::Vector4 color{1, 1, 1, 1};
-    Role role = Role::Static;
+    const PartMotion *motion = &StaticMotion(); ///< 部位の動き方（Strategy）
   };
+
+  // --- 見た目のパラメータ（シーン JSON に保存） ---
+  RC::Vector4 deckColor = {0.62f, 0.46f, 0.28f, 1.0f};
+  RC::Vector4 trimColor = {0.24f, 0.15f, 0.08f, 1.0f};   ///< 舷側・マスト
+  RC::Vector4 cabinColor = {0.84f, 0.80f, 0.70f, 1.0f};
+  RC::Vector4 roofColor = {0.55f, 0.14f, 0.12f, 1.0f};
+  RC::Vector4 sailColor = {0.93f, 0.90f, 0.82f, 1.0f};
+  RC::Vector4 flagColor = {0.12f, 0.12f, 0.14f, 1.0f};   ///< 敵なので黒旗
+  RC::Vector4 cannonColor = {0.16f, 0.16f, 0.18f, 1.0f};
+  int cannonsPerSide = 3;
+  float mastHeightScale = 1.0f; ///< マストと帆の高さの倍率
+  float sailBillowDeg = 14.0f;  ///< 帆が風で前へはらむ角度
 
   /// @brief 部位エンティティを 1 つ生成して parts_ に登録する
   /// @param scene 生成先のシーン
@@ -153,9 +211,10 @@ private:
   /// @param offset 本体中心からの位置（m、本体ローカル）
   /// @param scale 部位の Transform の scale（m）
   /// @param local 本体に対する部位の向き
-  /// @param role 部位の動き方
+  /// @param motion 部位の動き方
   void AddPart(Scene *scene, Entity &self, PrimitiveType type, const RC::Vector4 &color, const RC::Vector3 &offset,
-           const RC::Vector3 &scale, const Mat3 &local = PartPose::Identity(), Role role = Role::Static) {
+           const RC::Vector3 &scale, const Mat3 &local = PartPose::Identity(),
+           const PartMotion &motion = StaticMotion()) {
     auto e = scene->CreateEntity(self.GetName() + "_part");
     if (!e) return;
     e->SetParentGuid(self.Guid()); // Hierarchy で船の下にまとまるように（描画上の親子ではない）
@@ -175,30 +234,48 @@ private:
     p.scale = scale;
     p.local = local;
     p.color = color;
-    p.role = role;
+    p.motion = &motion;
     parts_.push_back(p);
+  }
+
+  /// @brief 見た目を用意する（モデルならクリップを、プリミティブなら部位を作る）
+  /// @param scene 生成先のシーン
+  /// @param self 船の本体エンティティ
+  /// @param tr 本体の Transform（scale を船体の寸法として使う）
+  /// @details モデル / プリミティブの分岐は生成時の 1 回だけで、以降の毎フレームの処理は
+  ///          「部位が 0 個かどうか」で自然に同じコードを通る。振る舞いの分岐が 1 か所しかないので
+  ///          クラスに分けず、関数を 2 つに分けるだけにしている。
+  void Build(Scene *scene, Entity &self, const TransformComponent &tr) {
+    built_ = true;
+    // モデルで描くときは部位を作らず、旗と帆はモデルのクリップで動かす
+    if (self.GetComponent<ModelRendererComponent>()) {
+      SetupModelClips(self, tr);
+      return;
+    }
+    BuildPrimitiveParts(scene, self, tr);
+  }
+
+  /// @brief モデルで描く船に、旗と帆を動かすクリップ "Sail" を用意する
+  /// @param self 船の本体エンティティ
+  /// @param tr 本体の Transform（なびく速さをずらすのに使う）
+  void SetupModelClips(Entity &self, const TransformComponent &tr) {
+    auto *anim = self.GetComponent<AnimationComponent>();
+    if (!anim) anim = &self.AddComponent<AnimationComponent>();
+    if (anim->clips.empty()) {
+      anim->clips = {{"Sail", "", 0, true, 1.0f}};
+      anim->defaultClip = "Sail";
+      anim->MarkDirty();
+    }
+    // 同じウェーブの船の旗がそろってなびかないよう、生成位置で速さを少しずらす
+    anim->speed = 0.9f + 0.2f * std::fmod(std::fabs(tr.position.x * 0.37f + tr.position.z * 0.11f), 1.0f);
   }
 
   /// @brief 本体の寸法を基準に船首・甲板・手すり・船室・マスト・帆・旗・大砲の部位を生成する
   /// @param scene 生成先のシーン
   /// @param self 船の本体エンティティ
   /// @param tr 本体の Transform（scale を船体の寸法として使う）
-  void Build(Scene *scene, Entity &self, const TransformComponent &tr) {
+  void BuildPrimitiveParts(Scene *scene, Entity &self, const TransformComponent &tr) {
     using namespace PartPose;
-    built_ = true;
-    // モデルで描くときは部位を作らず、旗と帆はモデルのクリップで動かす
-    if (self.GetComponent<ModelRendererComponent>()) {
-      auto *anim = self.GetComponent<AnimationComponent>();
-      if (!anim) anim = &self.AddComponent<AnimationComponent>();
-      if (anim->clips.empty()) {
-        anim->clips = {{"Sail", "", 0, true, 1.0f}};
-        anim->defaultClip = "Sail";
-        anim->MarkDirty();
-      }
-      // 同じウェーブの船の旗がそろってなびかないよう、生成位置で速さを少しずらす
-      anim->speed = 0.9f + 0.2f * std::fmod(std::fabs(tr.position.x * 0.37f + tr.position.z * 0.11f), 1.0f);
-      return;
-    }
     // 本体の箱の寸法（幅 W・高さ H・長さ L）。箱は一辺 1 で生成されるので scale ＝ 寸法
     const float W = (std::max)(std::fabs(tr.scale.x), 0.5f);
     const float H = (std::max)(std::fabs(tr.scale.y), 0.3f);
@@ -244,7 +321,7 @@ private:
         {0.07f, W * 1.6f, 0.07f}, RotZ(kHalfPi));
     // 旗（マストの先で船首側へなびく）
     AddPart(scene, self, PrimitiveType::Box, flagColor, {0.0f, top + mast - 0.3f, mastZ + 0.55f}, {0.04f, 0.5f, 1.0f},
-        Identity(), Role::Flag);
+        Identity(), FlagMotion());
     // 大砲：左右の舷側から外へ突き出す（ShipEnemyScript の gunOffset ≒ 2.2m に砲口が来る長さ）
     const int n = (std::max)(cannonsPerSide, 0);
     for (int i = 0; i < n; ++i) {
@@ -259,20 +336,18 @@ private:
     Log::Print("[ShipVisualScript] built " + std::to_string(parts_.size()) + " parts for " + self.GetName());
   }
 
-  /// @brief 全部位を本体の位置・回転に合わせて配置する（旗はなびかせる）
+  /// @brief 全部位を本体の位置・回転に合わせて配置する（動き方は部位ごとの PartMotion に任せる）
   /// @param tr 本体の Transform
   void PlaceParts(const TransformComponent &tr) {
     using namespace PartPose;
     const Mat3 body = FromEngineEuler(tr.rotation);
-    // 旗は Y 軸まわりに ±0.35rad を周期的に振ってなびかせる
-    const float flag = 0.35f * std::sin(time_ * 5.0f);
     for (const auto &p : parts_) {
       auto e = p.entity.lock();
       if (!e) continue;
       auto *ptr = e->GetComponent<TransformComponent>();
       if (!ptr) continue;
-      Mat3 local = p.local;
-      if (p.role == Role::Flag) local = MatMul(RotY(flag), local);
+      // 旗ならなびかせるなど、部位ごとの動きを加える（ポリモーフィズム）
+      const Mat3 local = p.motion->Animate(p.local, time_);
       // 本体ローカルの位置・向きを本体の姿勢で回してワールドへ変換する
       ptr->position = AddV(tr.position, Apply(p.offset, body));
       ptr->rotation = ToEngineEuler(MatMul(local, body));

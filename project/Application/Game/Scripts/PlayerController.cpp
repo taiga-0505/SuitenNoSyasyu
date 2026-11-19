@@ -9,8 +9,10 @@
 #include "RenderCommon.h"
 #include "Render/Systems/RenderInteractiveWater.h"
 #include "Scene.h"
+#include "Game/Framework/StateMachine.h"
 #include <iostream>
 #include <cmath>
+#include <cstdlib>
 
 #if RC_ENABLE_IMGUI
 #include "imgui/imgui.h"
@@ -19,42 +21,83 @@
 /// @brief プレイヤーの移動・被ダメージ・HUD 表示を担うスクリプト
 /// @details 水面上を移動して波を立て、タグ経由で受け取ったダメージ／スコアを反映する。
 ///          HP が 0 になると落下・着水し、シーン側へ "game_over" タグで通知する。
+///
+///          生存中 / 死亡後で毎フレームの処理がまるごと違うため、以前の `isDead` フラグと
+///          `if (isDead) { ...; return; }` の分岐を State パターン（AliveState / DeadState）に分けた。
+///          死亡への遷移は「生存中の状態」自身が被ダメージの結果を見て決める。
 class PlayerController : public ScriptableEntity {
 public:
-    float speed = 5.0f;
-    int hp = 5;
-    int maxHp = 5;
-    float invincibleTimer = 0.0f;
-    float invincibleDuration = 1.0f;
-    int score = 0;
-    float weight = 5.0f;
-    bool isDead = false;
-
-    protected:
-    /// @brief 生成時にログを出力する
-    void OnCreate() override {
-        std::cout << "[PlayerController] OnCreate\n";
+    /// @brief 速度・HP・重さの調整 UI とスコア表示を ImGui に出す
+    void OnImGui() override {
+#if RC_ENABLE_IMGUI
+        ImGui::DragFloat("Speed##PC", &speed, 0.1f, 0.1f, 50.0f);
+        ImGui::DragInt("HP##PC", &hp, 1, 0, maxHp);
+        ImGui::DragFloat("Weight##PC", &weight, 0.1f, 0.1f, 50.0f);
+        ImGui::Text("Score: %d", score);
+#endif
     }
 
-    /// @brief 落下・着水、タグ経由のダメージ／スコア反映、入力による移動、水面への波生成を行う
+protected:
+    /// @brief 生成時にログを出力し、生存中の状態から始める
+    void OnCreate() override;
+
+    /// @brief 現在の状態（生存中 / 死亡後）の処理を 1 フレーム進める
     /// @param deltaTime 前フレームからの経過時間（秒）
-    void OnUpdate(float deltaTime) override {
+    void OnUpdate(float deltaTime) override;
+
+    /// @brief HUD（HP バー・スコア・死亡オーバーレイ）を描画する
+    void OnRender() override {
+        DrawHUD();
+    }
+
+    /// @brief 破棄時にログを出力する
+    void OnDestroy() override {
+        std::cout << "[PlayerController] OnDestroy\n";
+    }
+
+private:
+    class AliveState; ///< 生存中：落下・着水、被ダメージ、入力による移動
+    class DeadState;  ///< 死亡後：重力で落ちて着水するだけ
+
+    float speed = 5.0f;              ///< 移動速度（m/s）
+    int hp = 5;                      ///< 現在の HP
+    int maxHp = 5;                   ///< 最大 HP
+    float invincibleTimer = 0.0f;    ///< 被弾後の無敵の残り時間（秒）
+    float invincibleDuration = 1.0f; ///< 被弾後の無敵時間（秒）
+    int score = 0;                   ///< スコア
+    float weight = 5.0f;             ///< 着水のしぶきの大きさに効く重さ
+
+    RC::Vector3 prevPosition_ = {0.0f, 0.0f, 0.0f};
+    bool firstUpdate_ = true;
+    float verticalVel_ = 0.0f;
+    StateMachine<PlayerController> fsm_; ///< 生存中 / 死亡後の状態
+
+    /// @brief 死亡しているか
+    /// @return 死亡後の状態なら true
+    bool IsDead() const;
+
+    /// @brief 死亡後の処理：重力で落下し、空中から水面に落ちた時だけ水しぶきを上げる
+    /// @param deltaTime 前フレームからの経過時間（秒）
+    void UpdateSinking(float deltaTime) {
         auto* tr = GetComponent<TransformComponent>();
         if (!tr) return;
-
         float prevY = tr->position.y;
 
-        // 死亡後は重力で落下させるだけで、入力や被ダメージ処理は行わない
-        if (isDead) {
-            verticalVel_ -= 9.8f * deltaTime;
-            tr->position.y += verticalVel_ * deltaTime;
-            // 空中から水面に落ちた時だけ水しぶきを上げる
-            if (prevY > 0.1f && tr->position.y <= 0.1f) {
-                float impactSpeed = std::abs(verticalVel_);
-                SpawnSplash({tr->position.x, 0.0f, tr->position.z}, impactSpeed, weight);
-            }
-            return;
+        verticalVel_ -= 9.8f * deltaTime;
+        tr->position.y += verticalVel_ * deltaTime;
+        // 空中から水面に落ちた時だけ水しぶきを上げる
+        if (prevY > 0.1f && tr->position.y <= 0.1f) {
+            float impactSpeed = std::abs(verticalVel_);
+            SpawnSplash({tr->position.x, 0.0f, tr->position.z}, impactSpeed, weight);
         }
+    }
+
+    /// @brief 生存中の落下・着水：空中にいれば落下し、水面に着いたら止める
+    /// @param deltaTime 前フレームからの経過時間（秒）
+    void UpdateFloating(float deltaTime) {
+        auto* tr = GetComponent<TransformComponent>();
+        if (!tr) return;
+        float prevY = tr->position.y;
 
         // 生きている時も空中にいれば落下する
         if (tr->position.y > 0.0f) {
@@ -74,21 +117,37 @@ public:
             tr->position.y = 0.0f;
             verticalVel_ = 0.0f;
         }
+    }
 
-        // 他スクリプトがタグで積んだダメージ／スコア加算を取り出して反映し、タグを消す
+    /// @brief 他スクリプトがタグで積んだダメージを取り出して反映し、タグを消す
+    /// @return このダメージで死亡したら true
+    bool ConsumePendingDamage() {
         Entity* self = GetEntity();
-        if (self) {
-            int dmg = self->GetTagInt("pending_damage", 0);
-            if (dmg > 0) {
-                self->ClearTag("pending_damage");
-                TakeDamage(dmg);
-            }
-            int scoreAdd = self->GetTagInt("score_add", 0);
-            if (scoreAdd > 0) {
-                self->ClearTag("score_add");
-                score += scoreAdd;
-            }
+        if (!self) return false;
+        int dmg = self->GetTagInt("pending_damage", 0);
+        if (dmg > 0) {
+            self->ClearTag("pending_damage");
+            return TakeDamage(dmg);
         }
+        return false;
+    }
+
+    /// @brief 他スクリプトがタグで積んだスコア加算を取り出して反映し、タグを消す
+    void ConsumePendingScore() {
+        Entity* self = GetEntity();
+        if (!self) return;
+        int scoreAdd = self->GetTagInt("score_add", 0);
+        if (scoreAdd > 0) {
+            self->ClearTag("score_add");
+            score += scoreAdd;
+        }
+    }
+
+    /// @brief 無敵時間の減算、入力による移動、水面への波生成を行う
+    /// @param deltaTime 前フレームからの経過時間（秒）
+    void UpdateMovement(float deltaTime) {
+        auto* tr = GetComponent<TransformComponent>();
+        if (!tr) return;
 
         Input* input = Input::GetInstance();
         if (!input) return;
@@ -159,53 +218,32 @@ public:
             RC::AddWaveSource(source);
 
         }
-        
+
         prevPosition_ = tr->position;
         firstUpdate_ = false;
     }
 
-    /// @brief HUD（HP バー・スコア・死亡オーバーレイ）を描画する
-    void OnRender() override {
-        DrawHUD();
-    }
-
-    /// @brief 破棄時にログを出力する
-    void OnDestroy() override {
-        std::cout << "[PlayerController] OnDestroy\n";
-    }
-
-public:
-    /// @brief 速度・HP・重さの調整 UI とスコア表示を ImGui に出す
-    void OnImGui() override {
-#if RC_ENABLE_IMGUI
-        ImGui::DragFloat("Speed##PC", &speed, 0.1f, 0.1f, 50.0f);
-        ImGui::DragInt("HP##PC", &hp, 1, 0, maxHp);
-        ImGui::DragFloat("Weight##PC", &weight, 0.1f, 0.1f, 50.0f);
-        ImGui::Text("Score: %d", score);
-#endif
-    }
-
     /// @brief ダメージを受けて HP を減らし、無敵時間を開始する
     /// @param damage 減らす HP 量
-    /// @note 無敵時間中または死亡済みなら何もしない。HP が 0 以下になると死亡し "game_over" タグを立てる
-    void TakeDamage(int damage) {
-        if (invincibleTimer > 0.0f || isDead) return;
+    /// @return このダメージで HP が 0 以下になった（死亡した）なら true
+    /// @note 無敵時間中または死亡済みなら何もしない。死亡の遷移と "game_over" タグは呼び出し側の状態が行う
+    bool TakeDamage(int damage) {
+        if (invincibleTimer > 0.0f || IsDead()) return false;
         hp -= damage;
         invincibleTimer = invincibleDuration;
         if (hp <= 0) {
             hp = 0;
-            isDead = true;
-            // タグでシーン側に死亡を通知
-            if (Entity* self = GetEntity()) {
-                self->SetTag("game_over", 1);
-            }
+            return true;
         }
+        return false;
     }
 
-private:
-    RC::Vector3 prevPosition_ = {0.0f, 0.0f, 0.0f};
-    bool firstUpdate_ = true;
-    float verticalVel_ = 0.0f;
+    /// @brief 死亡したことをシーン側へ "game_over" タグで通知する
+    void NotifyGameOver() {
+        if (Entity* self = GetEntity()) {
+            self->SetTag("game_over", 1);
+        }
+    }
 
     /// @brief 画面左下に HP バー、右上にスコア（丸の個数）、死亡時は中央に赤帯を描画する
     void DrawHUD() {
@@ -244,7 +282,7 @@ private:
         }
 
         // === ゲームオーバー時のオーバーレイ（画面中央の赤帯） ===
-        if (isDead) {
+        if (IsDead()) {
             RC::DrawBox({ 0.0f, screenH * 0.4f }, { screenW, screenH * 0.6f },
                         { 0.8f, 0.1f, 0.1f, 0.7f });
         }
@@ -289,5 +327,82 @@ private:
         }
     }
 };
+
+// ============================================================================
+// 状態クラス（PlayerController の private な入れ子クラス）
+// ============================================================================
+
+/// @brief 生存中：落下・着水、タグ経由のダメージ／スコア反映、入力による移動
+/// @details 被ダメージで HP が尽きたら、自分で死亡状態への遷移を予約する。
+///          遷移はこのフレームの処理を最後まで終えてから行われる（以前の実装と同じく、
+///          死亡したフレームでも移動・波の処理までは行う）。
+class PlayerController::AliveState final : public IState<PlayerController> {
+public:
+    /// @brief 生存中の 1 フレームぶんの処理
+    /// @param owner プレイヤー
+    /// @param machine ステートマシン（死亡時の遷移の予約に使う）
+    /// @param deltaTime 前フレームからの経過時間（秒）
+    void OnUpdate(PlayerController& owner, StateMachine<PlayerController>& machine, float deltaTime) override;
+
+    /// @brief 状態名
+    /// @return "Alive"
+    const char* Name() const override { return "Alive"; }
+};
+
+/// @brief 死亡後：入力や被ダメージ処理は行わず、重力で落下させるだけ
+class PlayerController::DeadState final : public IState<PlayerController> {
+public:
+    /// @brief 死亡した瞬間にシーン側へ "game_over" タグで通知する
+    /// @param owner プレイヤー
+    /// @param machine ステートマシン（未使用）
+    void OnEnter(PlayerController& owner, StateMachine<PlayerController>& machine) override {
+        (void)machine;
+        owner.NotifyGameOver();
+    }
+
+    /// @brief 重力で落下し、空中から水面に落ちた時だけ水しぶきを上げる
+    /// @param owner プレイヤー
+    /// @param machine ステートマシン（死亡後はどこへも遷移しない）
+    /// @param deltaTime 前フレームからの経過時間（秒）
+    void OnUpdate(PlayerController& owner, StateMachine<PlayerController>& machine, float deltaTime) override {
+        (void)machine;
+        owner.UpdateSinking(deltaTime);
+    }
+
+    /// @brief 状態名
+    /// @return "Dead"
+    const char* Name() const override { return "Dead"; }
+};
+
+void PlayerController::AliveState::OnUpdate(PlayerController& owner, StateMachine<PlayerController>& machine,
+                                            float deltaTime) {
+    owner.UpdateFloating(deltaTime);
+    // 他スクリプトがタグで積んだダメージ／スコア加算を取り出して反映する
+    if (owner.ConsumePendingDamage()) {
+        machine.ChangeState<DeadState>();
+    }
+    owner.ConsumePendingScore();
+    owner.UpdateMovement(deltaTime);
+}
+
+bool PlayerController::IsDead() const {
+    return fsm_.IsIn<DeadState>();
+}
+
+void PlayerController::OnCreate() {
+    std::cout << "[PlayerController] OnCreate\n";
+    fsm_.ChangeState<AliveState>();
+    fsm_.ApplyPending(*this);
+}
+
+void PlayerController::OnUpdate(float deltaTime) {
+    auto* tr = GetComponent<TransformComponent>();
+    if (!tr) return;
+    // OnCreate より先に Update が来ても生存中から始める
+    if (!fsm_.HasState()) {
+        fsm_.ChangeState<AliveState>();
+    }
+    fsm_.Update(*this, deltaTime);
+}
 
 REGISTER_SCRIPT(PlayerController)

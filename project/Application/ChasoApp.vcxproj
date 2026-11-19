@@ -248,6 +248,14 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClInclude Include="..\Chaso\Game\Framework\GameModeBase.h" />
     <ClInclude Include="..\Chaso\Game\Framework\GameStateBase.h" />
     <ClInclude Include="..\Application\Game\Framework\GameSession.h" />
+    <ClInclude Include="..\Application\Game\Framework\StateMachine.h" />
+    <ClInclude Include="..\Application\Game\Framework\GameEvents.h" />
+    <ClInclude Include="..\Application\Game\Framework\EntityPool.h" />
+    <ClInclude Include="..\Application\Game\Framework\PlayerMotionTracker.h" />
+    <ClInclude Include="..\Application\Game\Framework\ScreenFx.h" />
+    <ClInclude Include="..\Application\Game\Framework\StageDemo.h" />
+    <ClInclude Include="..\Application\Game\Scripts\CameraZoneScript.h" />
+    <ClInclude Include="..\Application\Game\Scripts\DamageableScript.h" />
     <ClInclude Include="..\Application\Game\Framework\StageProgress.h" />
     <ClInclude Include="..\Application\Game\Framework\GameSettings.h" />
     <ClInclude Include="..\Application\Game\Framework\UnderwaterLook.h" />

@@ -31,33 +31,27 @@
 ///            "panelColor"  : バナーの下に敷くパネルの色 (RGBA)
 class SceneFlowUI : public ScriptableEntity {
 public:
-  // --- インスペクタ / JSON から設定する項目 ---
-  std::string bannerPath;                        ///< 中央に置くバナー画像のパス
-  bool showScore = false;                        ///< スコアと評価を表示するか
-  bool showPrompt = true;                        ///< 続行プロンプトを点滅表示するか
-  RC::Vector4 panelColor = {0.92f, 0.95f, 1.0f, 0.82f}; ///< バナー背後のパネル色
-
   /// @brief 設定項目を JSON に書き出す
   /// @return 設定項目を格納した JSON
   nlohmann::json Serialize() override {
     return {
-        {"bannerPath", bannerPath},
-        {"showScore", showScore},
-        {"showPrompt", showPrompt},
-        {"panelColor", {panelColor.x, panelColor.y, panelColor.z, panelColor.w}},
+        {"bannerPath", bannerPath_},
+        {"showScore", showScore_},
+        {"showPrompt", showPrompt_},
+        {"panelColor", {panelColor_.x, panelColor_.y, panelColor_.z, panelColor_.w}},
     };
   }
 
   /// @brief JSON から設定項目を読み込む
   /// @param j 読み込み元の JSON（存在するキーだけ反映する。panelColor は要素 4 つ以上の配列のときだけ）
   void Deserialize(const nlohmann::json &j) override {
-    if (j.contains("bannerPath")) bannerPath = j["bannerPath"].get<std::string>();
-    if (j.contains("showScore")) showScore = j["showScore"].get<bool>();
-    if (j.contains("showPrompt")) showPrompt = j["showPrompt"].get<bool>();
+    if (j.contains("bannerPath")) bannerPath_ = j["bannerPath"].get<std::string>();
+    if (j.contains("showScore")) showScore_ = j["showScore"].get<bool>();
+    if (j.contains("showPrompt")) showPrompt_ = j["showPrompt"].get<bool>();
     if (j.contains("panelColor")) {
       const auto &c = j["panelColor"];
       if (c.is_array() && c.size() >= 4) {
-        panelColor = {c[0].get<float>(), c[1].get<float>(), c[2].get<float>(),
+        panelColor_ = {c[0].get<float>(), c[1].get<float>(), c[2].get<float>(),
                       c[3].get<float>()};
       }
     }
@@ -66,10 +60,10 @@ public:
 #if RC_ENABLE_IMGUI
   /// @brief インスペクタに表示設定と現在のセッションのスコア・評価を表示する
   void OnImGui() override {
-    ImGui::Checkbox("Show Score", &showScore);
-    ImGui::Checkbox("Show Prompt", &showPrompt);
-    ImGui::ColorEdit4("Panel Color", &panelColor.x);
-    ImGui::TextUnformatted(bannerPath.empty() ? "(no banner)" : bannerPath.c_str());
+    ImGui::Checkbox("Show Score", &showScore_);
+    ImGui::Checkbox("Show Prompt", &showPrompt_);
+    ImGui::ColorEdit4("Panel Color", &panelColor_.x);
+    ImGui::TextUnformatted(bannerPath_.empty() ? "(no banner)" : bannerPath_.c_str());
     ImGui::Separator();
     ImGui::Text("Session score: %d", GameSession::Get().Score());
     ImGui::Text("Session rank : %c", GameSession::Get().Rank());
@@ -82,10 +76,10 @@ protected:
     SceneContext *ctx = GetSceneContext();
     if (!ctx) return;
 
-    if (!bannerPath.empty()) {
-      bannerHandle_ = RC::LoadSprite(bannerPath, *ctx);
+    if (!bannerPath_.empty()) {
+      bannerHandle_ = RC::LoadSprite(bannerPath_, *ctx);
     }
-    if (showScore) {
+    if (showScore_) {
       // 桁ごとに別のスプライトハンドルを持つ。
       // Sprite2D は 1 ハンドルにつき定数バッファを 1 つしか持たず、Draw は
       // コマンドリストへの「記録」でしかない。同じハンドルを 1 フレームに
@@ -123,15 +117,48 @@ protected:
     }
 
     DrawBanner(screenW, screenH);
-    if (showScore) {
+    if (showScore_) {
       DrawScore(screenW, screenH);
     }
-    if (showPrompt) {
+    if (showPrompt_) {
       DrawPrompt(screenW, screenH);
     }
   }
 
 private:
+  // --- インスペクタ / JSON から設定する項目（外から直接書き換えさせず、Deserialize / OnImGui だけが触る） ---
+  std::string bannerPath_;                                ///< 中央に置くバナー画像のパス
+  bool showScore_ = false;                                ///< スコアと評価を表示するか
+  bool showPrompt_ = true;                                ///< 続行プロンプトを点滅表示するか
+  RC::Vector4 panelColor_ = {0.92f, 0.95f, 1.0f, 0.82f}; ///< バナー背後のパネル色
+
+  /// @brief 評価ランク 1 段ぶんの見た目（バーの本数と色）
+  /// @details 不変条件の無い受け渡し用のデータなので struct のまま。
+  struct RankStyle {
+    char rank;         ///< 評価ランクの文字（'S' / 'A' / 'B' / 'C'）
+    int barCount;      ///< 並べるバーの本数
+    RC::Vector4 color; ///< バーの色
+  };
+
+  /// @brief 評価ランクに対応する見た目を引く
+  /// @param rank GameSession::Rank() の文字
+  /// @return 対応する見た目。表に無い文字は C（1 本・灰色）扱い
+  /// @details 以前は if / else if の連鎖でランクごとに本数と色を書き分けていた。
+  ///          ランクごとに違うのは「値」だけで振る舞いは同じなので、派生クラスにはせず
+  ///          表（データドリブン）にした。ランクを増やすときは表に 1 行足すだけでよい。
+  static const RankStyle &FindRankStyle(char rank) {
+    static const RankStyle kStyles[] = {
+        {'S', 4, {1.00f, 0.84f, 0.20f, 0.95f}},
+        {'A', 3, {0.95f, 0.45f, 0.30f, 0.95f}},
+        {'B', 2, {0.35f, 0.70f, 0.95f, 0.95f}},
+    };
+    static const RankStyle kDefault = {'C', 1, {0.65f, 0.65f, 0.70f, 0.95f}};
+    for (const RankStyle &style : kStyles) {
+      if (style.rank == rank) return style;
+    }
+    return kDefault;
+  }
+
   /// @brief 中央のバナー（Clear / GameOver など）とその下敷きパネルを描く
   /// @param screenW 画面幅（ピクセル）
   /// @param screenH 画面高さ（ピクセル）
@@ -141,8 +168,8 @@ private:
     // 素材の文字が黒なので、読めるように明るいパネルを先に敷く
     const float panelH = screenH * 0.34f;
     const float panelY = screenH * 0.16f;
-    if (panelColor.w > 0.0f) {
-      RC::DrawBox({0.0f, panelY}, {screenW, panelY + panelH}, panelColor);
+    if (panelColor_.w > 0.0f) {
+      RC::DrawBox({0.0f, panelY}, {screenW, panelY + panelH}, panelColor_);
     }
 
     // バナーは 1280x720 のキャンバス中央に文字が置かれた素材なので、
@@ -222,12 +249,9 @@ private:
     }
 
     // 評価ランクは文字素材が無いので、色付きバーの本数で表す（S=4 / A=3 / B=2 / C=1）
-    const char rank = session.Rank();
-    int barCount = 1;
-    RC::Vector4 rankColor = {0.65f, 0.65f, 0.70f, 0.95f};
-    if (rank == 'S') { barCount = 4; rankColor = {1.00f, 0.84f, 0.20f, 0.95f}; }
-    else if (rank == 'A') { barCount = 3; rankColor = {0.95f, 0.45f, 0.30f, 0.95f}; }
-    else if (rank == 'B') { barCount = 2; rankColor = {0.35f, 0.70f, 0.95f, 0.95f}; }
+    const RankStyle &style = FindRankStyle(session.Rank());
+    const int barCount = style.barCount;
+    const RC::Vector4 rankColor = style.color;
 
     // バー列を数字の下に中央寄せで並べる
     const float barW = 46.0f;

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <utility>
 #include <vector>
 
 // ============================================================================
@@ -14,9 +15,14 @@
 //   「カーソルで船が揺れる」のように、別のスクリプトが持つ物の位置を知りたい場面がある。
 //   そこで値だけを置く場所をここに用意する（書く人・読む人がそれぞれ決まっている）。
 //
-//     letters / menu / lettersInteractive … TitleScreenScript が毎フレーム書く（文字・メニューの今の姿勢）
-//     letterPush                   … TitleAmbient / TitleOctopus が書き、TitleScreenScript が読んで 0 に戻す
-//     cursor*                      … TitleMouseRippleScript が毎フレーム書く（カーソルの水面上の位置）
+//     Letters / Menu / LettersInteractive … TitleScreenScript が毎フレーム書く（PublishLetters）
+//     文字の押しのけ要求                   … TitleAmbient / TitleOctopus が PushLetter で書き、
+//                                            TitleScreenScript が ConsumeLetterPush / ConsumeLetterShake で読んで 0 に戻す
+//     Cursor*                              … TitleMouseRippleScript が毎フレーム書く（SetCursor / InvalidateCursor）
+//
+//   値はすべて State の private メンバに閉じ込め、書き換えは「誰が・何を」書くかが名前で分かる
+//   専用関数だけに絞っている（以前は public なメンバ変数を誰でも直接書き換えられた）。
+//   読む側は const 参照の getter だけを使う。
 //
 //   エンティティの更新順は Title.json の並び（TitleScreen → TitleAmbient → TitleMouseRipple →
 //   … → TitleOctopus）。読む側が 1 フレーム古い値を見ることがあるが、見た目には分からない。
@@ -29,35 +35,52 @@ namespace TitleBlackboard {
 /// @details TitleScreenScript が文字を作るときに 1 度だけ焼く。座標は文字メッシュのローカル
 ///          （X: 幅、Y: 文字の上方向。ベースラインが Y = 0）で、単位もメッシュのまま（拡大率 1）。
 ///          値は「いちばん近い輪郭までの距離」で、文字の中が負・外が正。
-struct LetterMask {
-  int w = 0;           ///< 格子の横の数
-  int h = 0;           ///< 格子の縦の数
-  float x0 = 0.0f;     ///< 格子 (0, 0) の中心のメッシュ X
-  float y0 = 0.0f;     ///< 格子 (0, 0) の中心のメッシュ Y
-  float cell = 1.0f;   ///< 格子 1 つの大きさ（メッシュ単位）
-  std::vector<float> sdf; ///< w * h 個。負が文字の中
+///          焼いたあとは読むだけなので、格子の値はコンストラクタでだけ受け取り private に閉じ込める。
+class LetterMask {
+public:
+  /// @brief 空の距離場（Sample は常に「遠い外側」を返す）
+  LetterMask() = default;
+
+  /// @brief 焼いた格子から距離場を作る
+  /// @param w 格子の横の数
+  /// @param h 格子の縦の数
+  /// @param x0 格子 (0, 0) の中心のメッシュ X
+  /// @param y0 格子 (0, 0) の中心のメッシュ Y
+  /// @param cell 格子 1 つの大きさ（メッシュ単位）
+  /// @param sdf w * h 個の距離（負が文字の中）
+  LetterMask(int w, int h, float x0, float y0, float cell, std::vector<float> sdf)
+      : w_(w), h_(h), x0_(x0), y0_(y0), cell_(cell), sdf_(std::move(sdf)) {}
 
   /// @brief メッシュ座標での符号付き距離（双線形補間。格子の外は外側の距離を足す）
   /// @param mx メッシュ X
   /// @param my メッシュ Y
   /// @return 距離（メッシュ単位。負が中）
   float Sample(float mx, float my) const {
-    if (w < 2 || h < 2 || sdf.size() < static_cast<size_t>(w) * static_cast<size_t>(h)) return 1e3f;
-    const float gx = (mx - x0) / cell, gy = (my - y0) / cell;
-    const float cx = std::clamp(gx, 0.0f, static_cast<float>(w - 1));
-    const float cy = std::clamp(gy, 0.0f, static_cast<float>(h - 1));
-    const float outside = std::sqrt((gx - cx) * (gx - cx) + (gy - cy) * (gy - cy)) * cell;
-    const int ix = (std::min)(static_cast<int>(cx), w - 2);
-    const int iy = (std::min)(static_cast<int>(cy), h - 2);
+    if (w_ < 2 || h_ < 2 || sdf_.size() < static_cast<size_t>(w_) * static_cast<size_t>(h_)) return 1e3f;
+    const float gx = (mx - x0_) / cell_, gy = (my - y0_) / cell_;
+    const float cx = std::clamp(gx, 0.0f, static_cast<float>(w_ - 1));
+    const float cy = std::clamp(gy, 0.0f, static_cast<float>(h_ - 1));
+    const float outside = std::sqrt((gx - cx) * (gx - cx) + (gy - cy) * (gy - cy)) * cell_;
+    const int ix = (std::min)(static_cast<int>(cx), w_ - 2);
+    const int iy = (std::min)(static_cast<int>(cy), h_ - 2);
     const float fx = cx - static_cast<float>(ix), fy = cy - static_cast<float>(iy);
-    const float a = sdf[iy * w + ix], b = sdf[iy * w + ix + 1];
-    const float c = sdf[(iy + 1) * w + ix], d = sdf[(iy + 1) * w + ix + 1];
+    const float a = sdf_[iy * w_ + ix], b = sdf_[iy * w_ + ix + 1];
+    const float c = sdf_[(iy + 1) * w_ + ix], d = sdf_[(iy + 1) * w_ + ix + 1];
     const float v = (a + (b - a) * fx) * (1.0f - fy) + (c + (d - c) * fx) * fy;
     return v + outside;
   }
+
+private:
+  int w_ = 0;              ///< 格子の横の数
+  int h_ = 0;              ///< 格子の縦の数
+  float x0_ = 0.0f;        ///< 格子 (0, 0) の中心のメッシュ X
+  float y0_ = 0.0f;        ///< 格子 (0, 0) の中心のメッシュ Y
+  float cell_ = 1.0f;      ///< 格子 1 つの大きさ（メッシュ単位）
+  std::vector<float> sdf_; ///< w * h 個。負が文字の中
 };
 
 /// @brief 水面に浮いているタイトル文字 1 つの今の姿勢（真上から見た足元の長方形）
+/// @details 不変条件を持たない受け渡し用の値の束なので struct のままにしている（01_01 の例外）。
 struct Letter {
   RC::Vector3 center{};  ///< 足元の長方形の中心（ワールド。y は文字の上面の高さ）
   float halfX = 1.0f;    ///< 長方形の半幅（文字のローカル X 方向、m）
@@ -72,29 +95,153 @@ struct Letter {
   float maskCenterY = 0.0f; ///< 長方形の中心（center）のメッシュ Y
 };
 
-/// @brief 共有する値
-struct State {
+/// @brief 共有する値（掲示板の中身）
+/// @details 値は private。読む側は const の getter、書く側は用途ごとの専用関数だけを使う。
+class State {
+public:
+  // ------------------------------------------------------------------
+  // 読み取り（誰でも）
+  // ------------------------------------------------------------------
+
+  /// @brief タイトル文字の今の姿勢
+  /// @return 文字の並び（読み取り専用）
+  const std::vector<Letter> &Letters() const { return letters_; }
+
+  /// @brief メニュー項目の今の姿勢（押しのけはしない。よける・しがみつく判定用）
+  /// @return メニュー項目の並び（読み取り専用）
+  const std::vector<Letter> &Menu() const { return menu_; }
+
+  /// @brief 文字に触れてよい状態か（起動演出・飛び込み・浮上の最中は false）
+  /// @return 触れてよければ true
+  bool LettersInteractive() const { return lettersInteractive_; }
+
+  /// @brief カーソルが画面内で水面に当たっているか
+  /// @return 当たっていれば true
+  bool CursorValid() const { return cursorValid_; }
+
+  /// @brief カーソルが指す水面上の点（ワールド）
+  /// @return 位置（無効になっても最後の値を保つ）
+  const RC::Vector3 &CursorPos() const { return cursorPos_; }
+
+  /// @brief カーソルが指す点の速度（m/s。なめらかにしたもの）
+  /// @return 速度
+  const RC::Vector3 &CursorVel() const { return cursorVel_; }
+
+  /// @brief このフレームに左クリックされたか
+  /// @return クリックされていれば true
+  bool CursorClicked() const { return cursorClicked_; }
+
+  // ------------------------------------------------------------------
+  // 文字（TitleScreenScript が書く）
+  // ------------------------------------------------------------------
+
+  /// @brief 文字・メニューの今の姿勢を書き出す
+  /// @param letters タイトル文字の姿勢
+  /// @param menu メニュー項目の姿勢
+  /// @param interactive 文字に触れてよい状態か
+  /// @details 押しのけ・揺れの要求の受け皿は文字と同じ数にそろえる（数が変わったときだけ 0 で作り直す）。
+  void PublishLetters(const std::vector<Letter> &letters, const std::vector<Letter> &menu, bool interactive) {
+    lettersInteractive_ = interactive;
+    if (letterPush_.size() != letters.size()) letterPush_.assign(letters.size(), RC::Vector3{0.0f, 0.0f, 0.0f});
+    if (letterShake_.size() != letters.size()) letterShake_.assign(letters.size(), 0.0f);
+    letters_ = letters;
+    menu_ = menu;
+  }
+
+  /// @brief 溜まっている押しのけ要求を取り出して 0 に戻す
+  /// @param index 文字の番号
+  /// @param outPush 押しのけたい量（xz、m）の出力先
+  /// @return 受け皿があれば true（範囲外なら false で outPush は触らない）
+  bool ConsumeLetterPush(size_t index, RC::Vector3 &outPush) {
+    if (index >= letterPush_.size()) return false;
+    outPush = letterPush_[index];
+    letterPush_[index] = {0.0f, 0.0f, 0.0f};
+    return true;
+  }
+
+  /// @brief 溜まっている揺れの要求を取り出して 0 に戻す
+  /// @param index 文字の番号
+  /// @param outShake 揺らしたい強さの出力先
+  /// @return 受け皿があれば true（範囲外なら false で outShake は触らない）
+  bool ConsumeLetterShake(size_t index, float &outShake) {
+    if (index >= letterShake_.size()) return false;
+    outShake = letterShake_[index];
+    letterShake_[index] = 0.0f;
+    return true;
+  }
+
+  /// @brief 文字・メニューの情報をすべて消す（TitleScreenScript の OnDestroy）
+  void ClearLetters() {
+    letters_.clear();
+    menu_.clear();
+    letterPush_.clear();
+    letterShake_.clear();
+    lettersInteractive_ = false;
+  }
+
+  // ------------------------------------------------------------------
+  // 押しのけ要求（TitleAmbient / TitleOctopus が書く）
+  // ------------------------------------------------------------------
+
+  /// @brief 文字の押しのけ要求を足し込む（添字が範囲外なら何もしない）
+  /// @param index 文字の番号
+  /// @param push 押しのけたい量（xz、m）
+  /// @param shake 揺らしたい強さ（0 以上）
+  void PushLetter(size_t index, const RC::Vector3 &push, float shake) {
+    if (index >= letters_.size()) return;
+    if (letterPush_.size() < letters_.size()) letterPush_.resize(letters_.size(), RC::Vector3{0.0f, 0.0f, 0.0f});
+    if (letterShake_.size() < letters_.size()) letterShake_.resize(letters_.size(), 0.0f);
+    letterPush_[index].x += push.x;
+    letterPush_[index].z += push.z;
+    letterShake_[index] = (std::max)(letterShake_[index], shake);
+  }
+
+  // ------------------------------------------------------------------
+  // カーソル（TitleMouseRippleScript が書く）
+  // ------------------------------------------------------------------
+
+  /// @brief カーソルが水面に当たっていることと、その位置・速さ・クリックを書く
+  /// @param pos カーソルが指す水面上の点（ワールド）
+  /// @param vel その点の速度（m/s）
+  /// @param clicked このフレームに左クリックされたか
+  void SetCursor(const RC::Vector3 &pos, const RC::Vector3 &vel, bool clicked) {
+    cursorValid_ = true;
+    cursorPos_ = pos;
+    cursorVel_ = vel;
+    cursorClicked_ = clicked;
+  }
+
+  /// @brief このフレームはカーソルが無効（位置・速さは最後の値を保つ）
+  void InvalidateCursor() {
+    cursorValid_ = false;
+    cursorClicked_ = false;
+  }
+
+  /// @brief カーソルの情報を消す（TitleMouseRippleScript の OnDestroy。速さも 0 に戻す）
+  void ResetCursor() {
+    InvalidateCursor();
+    cursorVel_ = {0.0f, 0.0f, 0.0f};
+  }
+
+private:
   // ---- 文字（TitleScreenScript が書く）----
-  std::vector<Letter> letters;
-  /// 文字に触れてよい状態か（起動演出・飛び込み・浮上の最中は false）
-  bool lettersInteractive = false;
-  /// 文字を押しのけたい量（xz、m）。letters と同じ添字。書く側は「足りないぶん」を足し込む。
-  /// TitleScreenScript が読んだら 0 に戻す
-  std::vector<RC::Vector3> letterPush;
-  /// 文字を揺らしたい強さ（ぶつかった瞬間の衝撃）。letters と同じ添字。読んだら 0 に戻す
-  std::vector<float> letterShake;
-  /// メニュー項目（TitleScreenScript が書く。押しのけはしない。よける・しがみつく判定用）
-  std::vector<Letter> menu;
+  std::vector<Letter> letters_;          ///< タイトル文字の姿勢
+  bool lettersInteractive_ = false;      ///< 文字に触れてよい状態か
+  std::vector<RC::Vector3> letterPush_;  ///< 押しのけたい量（xz、m）。letters_ と同じ添字。読んだら 0 に戻す
+  std::vector<float> letterShake_;       ///< 揺らしたい強さ。letters_ と同じ添字。読んだら 0 に戻す
+  std::vector<Letter> menu_;             ///< メニュー項目の姿勢
 
   // ---- カーソル（TitleMouseRippleScript が書く）----
-  bool cursorValid = false;   ///< カーソルが画面内で水面に当たっているか
-  RC::Vector3 cursorPos{};    ///< カーソルが指す水面上の点（ワールド）
-  RC::Vector3 cursorVel{};    ///< その点の速度（m/s。なめらかにしたもの）
-  bool cursorClicked = false; ///< このフレームに左クリックされたか
+  bool cursorValid_ = false;   ///< カーソルが画面内で水面に当たっているか
+  RC::Vector3 cursorPos_{};    ///< カーソルが指す水面上の点（ワールド）
+  RC::Vector3 cursorVel_{};    ///< その点の速度（m/s。なめらかにしたもの）
+  bool cursorClicked_ = false; ///< このフレームに左クリックされたか
 };
 
 /// @brief 共有の値（1 つだけ）
-/// @return 共有の値への参照
+/// @details 実体は関数内 static に閉じ込め、名前空間スコープの書き換え可能な変数は置かない。
+///          中身は State の private メンバなので、この参照からも専用関数経由でしか書き換えられない。
+/// @return 共有の値への参照（読むだけなら const 参照で受けること）
 inline State &Get() {
   static State s;
   return s;
@@ -104,15 +251,7 @@ inline State &Get() {
 /// @param index 文字の番号
 /// @param push 押しのけたい量（xz、m）
 /// @param shake 揺らしたい強さ（0 以上）
-inline void PushLetter(size_t index, const RC::Vector3 &push, float shake) {
-  State &s = Get();
-  if (index >= s.letters.size()) return;
-  if (s.letterPush.size() < s.letters.size()) s.letterPush.resize(s.letters.size(), RC::Vector3{0.0f, 0.0f, 0.0f});
-  if (s.letterShake.size() < s.letters.size()) s.letterShake.resize(s.letters.size(), 0.0f);
-  s.letterPush[index].x += push.x;
-  s.letterPush[index].z += push.z;
-  s.letterShake[index] = (std::max)(s.letterShake[index], shake);
-}
+inline void PushLetter(size_t index, const RC::Vector3 &push, float shake) { Get().PushLetter(index, push, shake); }
 
 /// @brief 円と文字の足元の長方形が重なっているかを調べ、円を外へ出す向きと深さを返す
 /// @param L 文字

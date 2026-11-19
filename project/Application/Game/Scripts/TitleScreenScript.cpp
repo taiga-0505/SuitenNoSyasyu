@@ -16,6 +16,7 @@
 #include "RenderCommon.h"
 #include "Engine/Render/RenderContext.h"
 #include "Framework/App.h"
+#include "Game/Framework/StateMachine.h"
 #include "Game/Framework/TitleBlackboard.h"
 #include "Game/Framework/TransitionDemo.h"
 #include "Game/Framework/UnderwaterLook.h"
@@ -29,10 +30,226 @@
 
 #include <Windows.h>
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
+
+namespace {
+
+// ============================================================================
+// 起動演出の泡のエミッタ（01_02 ポリモーフィズム ＋ 01_04 Template Method）
+//
+//   文字が水面を抜けた瞬間の泡は 2 種類の GPU パーティクルで作る（どちらも射出数 0 で寝かせておき、抜けた瞬間だけ射出）。
+//   見た目は炭酸の泡：gpu_particle_bubble パイプライン（BubbleParticle.PS。縁とハイライトだけ白く、
+//   中は透ける輪）で描く。テクスチャは使わない
+//     spray : 小さな泡。文字の足元から外へ放射状にゆっくり広がり、少しずつ浮いて消える（シュワッと弾ける）
+//     foam  : 少し大きめの泡。文字の足元に散らばって、その場でゆらゆらしながら長めに残る
+//   以前は白い丸を大きく撒いていたため、綿や煙のように見えていた。
+//
+//   以前は spray / foam を weak_ptr 2 本で持ち、「cone か box か」を bool 引数で分岐していた。
+//   生成・配置・射出の手順は共通で、違うのは「粒の設定」「射出範囲の合わせ方」「高さ・大きさ・数」だけなので、
+//   手順を基底 SplashLayer の非 virtual 関数（Template Method）に固定し、違う部分だけを派生が override する。
+// ============================================================================
+
+/// @brief 起動演出の泡 1 種類ぶんのエミッタ（基底）
+class SplashLayer {
+public:
+  virtual ~SplashLayer() = default;
+
+  /// @brief エミッタを生成する（射出数 0 で停止中）
+  /// @param scene 生成先のシーン
+  /// @details 手順（エンティティ生成 → 共通設定 → 種類ごとの設定 → ランタイム初期化）は固定で、
+  ///          種類ごとの設定だけを派生の Configure に任せる（Template Method）。
+  void Spawn(Scene *scene) {
+    auto e = scene->CreateEntity(EntityName());
+    if (!e) return;
+    e->SetTag("transient", 1);
+    auto &tr = e->AddComponent<TransformComponent>();
+    tr.position = {0.0f, -200.0f, 0.0f}; // 使うまでは画面外
+    auto &gpu = e->AddComponent<GPUParticleComponent>();
+    if (auto *ps = gpu.particleSystem.get()) {
+      ps->SetParticleType(ParticleType::Default);   // EmitParticle.CS：形状・速度・寿命・色を全部使う
+      ps->SetPipelinePrefix("gpu_particle_bubble");  // 中が透ける泡の輪（飛び込み・浮上の泡と同じ描き方）
+      ps->SetBlendMode(kBlendModeNormal);            // BubbleParticle.PS は乗算済みでない色＋α を返す
+      ps->SetMaxParticles(1024);
+      ps->SetEmitCount(0);
+    }
+    if (auto *ps = e->GetComponent<GPUParticleComponent>()->particleSystem.get()) Configure(*ps);
+    scene->InitDynamicEntityRuntime(*e);
+    entity_ = e;
+  }
+
+  /// @brief エミッタを破棄する
+  void Destroy() {
+    if (auto e = entity_.lock()) e->Destroy();
+    entity_.reset();
+  }
+
+  /// @brief エミッタが生きているか
+  /// @return 生成済みで、まだ破棄されていなければ true
+  bool IsSpawned() const { return !entity_.expired(); }
+
+  /// @brief 文字の位置へ動かして射出を始める
+  /// @param x 射出位置のワールド X 座標
+  /// @param y 射出位置のワールド Y 座標（種類によっては使わない）
+  /// @param z 射出位置のワールド Z 座標
+  /// @param count 基準の粒の数（種類ごとに EmitCount で換算する）
+  /// @param width 文字の幅（真上から見た X 方向の大きさ, m）
+  /// @param length 文字の高さ（真上から見た Z 方向の大きさ, m）
+  void Burst(float x, float y, float z, int count, float width, float length) {
+    Place(x, EmitY(y), z, width * SizeScale(), length * SizeScale());
+    SetEmission(EmitCount(count));
+  }
+
+  /// @brief 射出を止める
+  void Stop() { SetEmission(0); }
+
+protected:
+  /// @brief エンティティ名
+  /// @return 名前
+  virtual const char *EntityName() const = 0;
+
+  /// @brief 粒の形状・速度・寿命・色を設定する（生成時に 1 回）
+  /// @param ps 設定先のパーティクルシステム
+  virtual void Configure(GPUParticle &ps) const = 0;
+
+  /// @brief 文字の大きさに合わせて射出範囲を変える
+  /// @param ps 対象のパーティクルシステム
+  /// @param width 文字の幅（m。SizeScale 適用済み）
+  /// @param length 文字の高さ（m。SizeScale 適用済み）
+  virtual void FitShape(GPUParticle &ps, float width, float length) const = 0;
+
+  /// @brief 射出する高さ
+  /// @param y 呼び出し側が指定した高さ
+  /// @return 実際に使う高さ
+  virtual float EmitY(float y) const = 0;
+
+  /// @brief 文字の大きさに掛ける倍率
+  /// @return 倍率
+  virtual float SizeScale() const = 0;
+
+  /// @brief 基準の粒の数から、1 フレームあたりの射出数を求める
+  /// @param count 基準の粒の数（1 以上）
+  /// @return 射出数
+  virtual uint32_t EmitCount(int count) const = 0;
+
+private:
+  /// @brief エミッタを指定位置へ動かし、射出範囲を文字の大きさに合わせる
+  /// @param x ワールド X
+  /// @param y ワールド Y
+  /// @param z ワールド Z
+  /// @param width 文字の幅（m）
+  /// @param length 文字の高さ（m）
+  void Place(float x, float y, float z, float width, float length) {
+    auto e = entity_.lock();
+    if (!e) return;
+    if (auto *tr = e->GetComponent<TransformComponent>()) tr->position = {x, y, z};
+    auto *gpu = e->GetComponent<GPUParticleComponent>();
+    auto *ps = gpu ? gpu->particleSystem.get() : nullptr;
+    if (!ps) return;
+    // 位置はシーン側が毎フレーム Transform から写すが、同じフレームに射出されるよう直接も書く
+    ps->emitterPosition_ = {x, y, z};
+    FitShape(*ps, width, length);
+  }
+
+  /// @brief 射出数を設定する
+  /// @param count 1 フレームあたりの射出数（0 で止める）
+  void SetEmission(uint32_t count) {
+    auto e = entity_.lock();
+    if (!e) return;
+    if (auto *gpu = e->GetComponent<GPUParticleComponent>()) {
+      if (gpu->particleSystem) gpu->particleSystem->SetEmitCount(count);
+    }
+  }
+
+  std::weak_ptr<Entity> entity_; ///< エミッタのエンティティ
+};
+
+/// @brief spray：外へ広がる小さな泡
+class SpraySplashLayer final : public SplashLayer {
+protected:
+  /// @copydoc SplashLayer::EntityName
+  const char *EntityName() const override { return "TitleSplashSpray"; }
+
+  /// @copydoc SplashLayer::Configure
+  void Configure(GPUParticle &ps) const override {
+    // Cone は「真上から coneAngle まで」の範囲にばらけた向きへ、|baseVelocity| の速さで飛ぶ。
+    // 角度を大きく（≒ 72°）取って、ほとんどを横向き＝外へ放射状に広げる。
+    // 出る位置は半径 tan(coneAngle) × shapeRadius の円内（射出のたびに文字の大きさへ合わせる）
+    ps.emitterShape_ = EmitterShape::Cone;
+    ps.coneAngle_ = 1.25f;
+    ps.shapeRadius_ = 0.5f;
+    ps.baseVelocity_ = {0.0f, 0.04f, 0.0f}; // 1 フレームあたり 0.04 ≒ 2.4 m/s（ゆっくり広がる）
+    ps.velocityVariance_ = 0.02f;
+    // 負の重力で少しずつ浮く（velocity.y -= gravity * dt。1 フレームあたり）
+    ps.gravity_ = -0.02f;
+    ps.minLifeTime_ = 0.5f;
+    ps.maxLifeTime_ = 1.1f;
+    ps.minScale_ = 0.06f;
+    ps.maxScale_ = 0.18f;
+    // ほんのり水色の泡。消えるときは α だけ落とす（通常ブレンドなので RGB は残してよい）
+    ps.startColor_ = {0.85f, 0.97f, 1.0f, 0.9f};
+    ps.endColor_ = {0.85f, 0.97f, 1.0f, 0.0f};
+  }
+
+  /// @copydoc SplashLayer::FitShape
+  void FitShape(GPUParticle &ps, float width, float length) const override {
+    // 出る位置の半径 = tan(coneAngle) × shapeRadius。文字の半分くらいの円から出す
+    const float r = 0.35f * (std::max)((std::min)(width, length), 0.5f);
+    ps.shapeRadius_ = r / (std::max)(std::tan(ps.coneAngle_), 0.1f);
+  }
+
+  /// @copydoc SplashLayer::EmitY
+  float EmitY(float y) const override { return y; }
+
+  /// @copydoc SplashLayer::SizeScale
+  float SizeScale() const override { return 1.0f; }
+
+  /// @copydoc SplashLayer::EmitCount
+  uint32_t EmitCount(int count) const override { return static_cast<uint32_t>(count); }
+};
+
+/// @brief foam：足元に散らばって残る、少し大きめの泡
+class FoamSplashLayer final : public SplashLayer {
+protected:
+  /// @copydoc SplashLayer::EntityName
+  const char *EntityName() const override { return "TitleSplashFoam"; }
+
+  /// @copydoc SplashLayer::Configure
+  void Configure(GPUParticle &ps) const override {
+    ps.emitterShape_ = EmitterShape::Box;
+    ps.shapeBoxSize_ = {2.0f, 0.05f, 2.0f};
+    ps.baseVelocity_ = {0.0f, 0.0f, 0.0f};
+    ps.velocityVariance_ = 0.012f; // その場でゆらゆら
+    ps.gravity_ = 0.0f;
+    ps.minLifeTime_ = 0.8f;
+    ps.maxLifeTime_ = 1.8f;
+    ps.minScale_ = 0.12f;
+    ps.maxScale_ = 0.32f;
+    ps.startColor_ = {0.85f, 0.97f, 1.0f, 0.8f};
+    ps.endColor_ = {0.85f, 0.97f, 1.0f, 0.0f};
+  }
+
+  /// @copydoc SplashLayer::FitShape
+  void FitShape(GPUParticle &ps, float width, float length) const override {
+    ps.shapeBoxSize_ = {(std::max)(width, 0.5f), 0.05f, (std::max)(length, 0.5f)};
+  }
+
+  /// @copydoc SplashLayer::EmitY
+  float EmitY(float /*y*/) const override { return 0.05f; } // 水面付近に固定
+
+  /// @copydoc SplashLayer::SizeScale
+  float SizeScale() const override { return 1.1f; }
+
+  /// @copydoc SplashLayer::EmitCount
+  uint32_t EmitCount(int count) const override { return static_cast<uint32_t>((std::max)(count / 2, 1)); }
+};
+
+} // namespace
 
 /// @class TitleScreenScript
 /// @brief タイトル画面（真上から見た水面 ＋ 水面に浮くタイトル文字 ＋ 水面に浮くメニュー）
@@ -63,6 +280,15 @@
 ///       4. 沈降   : 見上げる向きへ傾きながら沈み、深さに応じてフォグが深海色へ（diveSink 秒）
 ///       5. 完了   : RequestSceneChange(行き先, "dive")
 ///     水中の色・距離は UnderwaterLook（Game 側と共通の定義）で決める。
+///
+///   設計（クラス設計の課題で整理したところ）:
+///     - メニュー項目は MenuCommand の派生（StartCommand / QuitCommand）。決定時は選択中のコマンドの
+///       Execute を基底の参照経由で呼ぶだけ（Command パターン。項目ごとの if 分岐を持たない）。
+///     - 起動演出の進み方は IntroPhase の派生（IntroWaitRiseState / IntroPlayingState / IntroIdleState）
+///       を StateMachine で切り替える（State パターン。以前は bool フラグ 2 本の組み合わせ）。
+///     - 起動演出の泡（spray / foam）は SplashLayer の派生。生成・配置・射出の手順は基底に固定し、
+///       粒の設定や射出範囲の合わせ方だけを派生が override する（Template Method）。
+///     - 他のタイトル用スクリプトとのやり取りは TitleBlackboard の専用関数だけで行う。
 ///
 ///   注意:
 ///     - DataDrivenScene 側の「導線シーンで Space → 次のシーン」判定から Title を外してあること。
@@ -142,7 +368,13 @@
 ///     ※ 実装は Application/Game/Framework/WaterCameraFx.h（Result と共通）
 ///     "underwater"        : 水中の見た目（UnderwaterLook::Params。Game 側と同じキー）
 class TitleScreenScript : public ScriptableEntity {
-public:
+private:
+  // ==================================================================
+  // 設定値（シーン JSON / インスペクタから変える）
+  //   以前は public なメンバ変数だったが、外から書き換える呼び出し側は無いので private に閉じ込めた。
+  //   値の出し入れは Serialize / Deserialize / OnImGui（どれもこのクラスのメンバ）だけが行う。
+  // ==================================================================
+
   // ---- タイトル文字 ----
   std::string titleText = "水天の射手";
   std::string fontPath = "Resources/fonts/Kiwi_Maru/KiwiMaru-Medium.ttf";
@@ -261,6 +493,7 @@ public:
   WaterCameraFx::RiseParams rise; ///< JSON キーは "rise*"
   UnderwaterLook::Params look;    ///< 水中の見た目（Game 側と共通）
 
+public:
   /// @brief 全設定項目（飛び込み・浮上のパラメータを含む）を JSON に書き出す
   /// @return 設定項目を格納した JSON
   nlohmann::json Serialize() override {
@@ -536,7 +769,7 @@ public:
   /// @note ポストプロセスの値を変えたときは積み直して即時反映する
   void OnImGui() override {
     ImGui::Text("Letters: %d  Menu: %d  Selected: %s", static_cast<int>(letters_.size()),
-                static_cast<int>(menu_.size()), selected_ == kMenuStart ? "Start" : "Quit");
+                static_cast<int>(menu_.size()), SelectedDebugName());
     ImGui::Text("Water time: %.2f", RC::GetWaterTime());
     ImGui::SeparatorText("Title Letters");
     ImGui::DragFloat("Float Offset", &floatOffset, 0.01f, -1.0f, 1.0f);
@@ -608,7 +841,9 @@ public:
     ImGui::DragFloat("Select Ripple", &ring.selectRipple, 0.01f, -1.0f, 1.0f);
 
     ImGui::SeparatorText("Intro");
-    ImGui::Text("Intro: %s  t=%.2f", introActive_ ? "playing" : "done", introTime_);
+    ImGui::Text("Intro: %s  t=%.2f", IsIntroActive() ? "playing" : "done", introTime_);
+    ImGui::SameLine();
+    ImGui::TextDisabled("[%s]", introFsm_.CurrentName());
     ImGui::Checkbox("Intro Enabled", &intro.enabled);
     ImGui::DragFloat("Intro Delay", &intro.delay, 0.01f, 0.0f, 5.0f);
     ImGui::DragFloat("Intro Interval", &intro.interval, 0.01f, 0.0f, 2.0f);
@@ -639,7 +874,7 @@ public:
 
     ImGui::SeparatorText("Dive (Start -> Game)");
     ImGui::Text("Dive: %s  depth=%.1f   Rise: %s",
-                WaterCameraFx::DiveSequence::PhaseName(dive_.GetPhase()), dive_.Depth(),
+                dive_.PhaseName(), dive_.Depth(),
                 rise_.IsMoving() ? "moving" : (rise_.IsActive() ? "fx" : "idle"));
     dive.DrawImGui();
     if (ImGui::Button("Test Dive (no scene change)")) {
@@ -662,6 +897,10 @@ public:
 protected:
   /// @brief タイトル文字・メニュー・リング・ポストプロセスを生成し、起動演出や浮上演出を開始する
   void OnCreate() override {
+    // 起動演出は「終わっている」状態から始める（StartIntro で演出中へ移る）
+    introFsm_.ChangeState<IntroIdleState>();
+    introFsm_.ApplyPending(*this);
+
     // 前のシーン（Game）の障害物が水面の定数バッファに残っていると、
     // タイトルの水面に岩の反射波が出てしまう。ここには障害物が無いので空にする。
     RC::SetWaterObstacles(nullptr, 0);
@@ -698,8 +937,9 @@ protected:
     if (intro.enabled && playing) {
       StartIntro();
       if (willRise) {
-        introWaitRise_ = true;
-        SetFloatersVisible(false);
+        // 浮上が終わるまで待つ状態へ（入った瞬間に文字とメニューを隠す）
+        introFsm_.ChangeState<IntroWaitRiseState>();
+        introFsm_.ApplyPending(*this);
       }
     }
 
@@ -728,9 +968,10 @@ protected:
     pulseTimer_ += deltaTime;
 
     // 飛沫は 1 フレームだけ射出して止める（射出数は「1 フレームあたり」なので）
-    if (splashFramesLeft_ > 0 && --splashFramesLeft_ == 0) SetSplashEmission(0);
+    if (splashFramesLeft_ > 0 && --splashFramesLeft_ == 0) StopSplash();
 
-    if (introActive_) UpdateIntro(deltaTime);
+    // 起動演出を進める（状態クラスが自分で次の状態を決める。演出が終わっていれば何もしない）
+    introFsm_.Update(*this, deltaTime);
 
     UpdateFloaters(deltaTime);
     UpdateRings(deltaTime);
@@ -750,7 +991,7 @@ protected:
       return;
     }
 
-    if (introActive_) {
+    if (IsIntroActive()) {
       // 演出中は操作させない。キーを押したら最後まで飛ばす（その押下はメニュー操作に使わない）
       if (intro.skippable && AnyMenuKeyTriggered()) SkipIntro();
       return;
@@ -776,22 +1017,12 @@ protected:
     for (auto &r : rings_) {
       if (auto e = r.lock()) e->Destroy();
     }
-    if (auto e = splash_.lock()) e->Destroy();
-    if (auto e = foam_.lock()) e->Destroy();
-    foam_.reset();
+    for (SplashLayer *layer : SplashLayers()) layer->Destroy();
     letters_.clear();
     menu_.clear();
     rings_.clear();
-    splash_.reset();
     // 掲示板に出していた文字を消す（他のスクリプトが消えた文字に触らないように）
-    {
-      TitleBlackboard::State &bb = TitleBlackboard::Get();
-      bb.letters.clear();
-      bb.menu.clear();
-      bb.letterPush.clear();
-      bb.letterShake.clear();
-      bb.lettersInteractive = false;
-    }
+    TitleBlackboard::Get().ClearLetters();
     // 自分が有効にした読み戻しだけ戻す（他が使っていれば触らない）
     if (readbackOwned_) {
       RC::SetInteractiveWaterReadback(false);
@@ -817,7 +1048,7 @@ protected:
     // 飛び込み中・浮上中は操作ヒントを出さない
     if (!showHint || hintFont_ < 0 || dive_.IsActive() || rise_.IsMoving()) return;
     // 起動演出中は、メニューが出そろうまで出さない
-    if (introActive_) return;
+    if (IsIntroActive()) return;
 
     // 画面サイズはウィンドウから取得し、取れなければ 1280x720 を仮定する
     float screenW = 1280.0f;
@@ -831,10 +1062,247 @@ protected:
   }
 
 private:
-  /// @brief メニュー項目の番号（menu_ の添字と一致）
-  enum MenuItem { kMenuStart = 0, kMenuQuit = 1, kMenuCount = 2 };
+  // ==================================================================
+  // メニュー項目（01_04 Command パターン ＋ 01_02 ポリモーフィズム）
+  // ==================================================================
+  // 以前は enum MenuItem { kMenuStart, kMenuQuit } と、ラベル・エンティティ名の配列を別々に持ち、
+  // 決定時に「if (selected_ == kMenuStart) {…スタート…} else {…ゲーム終了…}」と分岐していた。
+  // 項目を足すたびに enum・配列・分岐の 3 か所を直す必要があったため、
+  // 「項目の見た目（ラベル・名前）と、決定したときの処理」を 1 つのコマンドオブジェクトにまとめた（Command パターン）。
+  // 決定処理は MenuCommand の仮想関数 Execute を基底の参照経由で呼ぶだけで、項目ごとの分岐を書かない。
+  // コマンドは入れ子クラスなので、本体の private メンバ（遷移先・飛び込み演出など）へ friend 無しで触れる。
+
+  /// @brief メニュー項目 1 つぶんのコマンド（基底）
+  class MenuCommand {
+  public:
+    virtual ~MenuCommand() = default;
+
+    /// @brief 画面に出すラベル（3D 文字）
+    /// @return UTF-8 文字列
+    virtual const char *Label() const = 0;
+
+    /// @brief 3D 文字エンティティの名前
+    /// @return エンティティ名
+    virtual const char *EntityName() const = 0;
+
+    /// @brief インスペクタに出す短い名前
+    /// @return 名前
+    virtual const char *DebugName() const = 0;
+
+    /// @brief 決定されたときの処理を行う
+    /// @param owner メニューを持つタイトル画面
+    virtual void Execute(TitleScreenScript &owner) const = 0;
+  };
+
+  /// @brief 「スタート」：遷移表の行き先へ（演出が dive なら飛び込み演出を挟む）
+  class StartCommand final : public MenuCommand {
+  public:
+    /// @copydoc MenuCommand::Label
+    const char *Label() const override { return "スタート"; }
+    /// @copydoc MenuCommand::EntityName
+    const char *EntityName() const override { return "TitleMenu_Start"; }
+    /// @copydoc MenuCommand::DebugName
+    const char *DebugName() const override { return "Start"; }
+
+    /// @copydoc MenuCommand::Execute
+    void Execute(TitleScreenScript &owner) const override {
+      SceneContext *sc = owner.GetSceneContext();
+      if (sc && !sc->isPlaying()) return; // 編集モードでは飛ばない（RequestSceneChange と同じ）
+
+      // 行き先と演出は遷移表で引く。演出が dive のときだけ飛び込み演出を挟む
+      std::string transition;
+      if (!owner.LookupTransition(kTriggerStart, owner.startTarget_, transition) || owner.startTarget_.empty()) {
+        Log::Print("[TitleScreenScript] scene flow has no target for 'start'");
+        return;
+      }
+      if (owner.dive.enabled && transition == SceneTransitions::kDive && owner.BeginDive()) {
+        // 遷移要求は沈みきったあと UpdateDive が出す
+        owner.decided_ = true;
+        Log::Print("[TitleScreenScript] start -> dive -> " + owner.startTarget_);
+      } else if (owner.RequestSceneChange(owner.startTarget_)) {
+        owner.decided_ = true;
+        Log::Print("[TitleScreenScript] start -> " + owner.startTarget_);
+      } else {
+        Log::Print("[TitleScreenScript] scene change refused: " + owner.startTarget_);
+      }
+    }
+  };
+
+  /// @brief 「ゲーム終了」：アプリを終了する（quitEnabled が false ならログのみ）
+  class QuitCommand final : public MenuCommand {
+  public:
+    /// @copydoc MenuCommand::Label
+    const char *Label() const override { return "ゲーム終了"; }
+    /// @copydoc MenuCommand::EntityName
+    const char *EntityName() const override { return "TitleMenu_Quit"; }
+    /// @copydoc MenuCommand::DebugName
+    const char *DebugName() const override { return "Quit"; }
+
+    /// @copydoc MenuCommand::Execute
+    void Execute(TitleScreenScript &owner) const override {
+      if (owner.quitEnabled) {
+        Log::Print("[TitleScreenScript] quit requested");
+        owner.decided_ = true;
+        // App::Run のメッセージループは WM_QUIT で抜けて Term() へ進む
+        PostQuitMessage(0);
+      } else {
+        Log::Print("[TitleScreenScript] quit is disabled (quitEnabled = false)");
+      }
+    }
+  };
+
+  /// @brief メニューのコマンドを上から順に作る（並び順 = 画面の並び = menu_ の添字）
+  /// @return コマンドの並び
+  static std::vector<std::unique_ptr<MenuCommand>> MakeMenuCommands() {
+    std::vector<std::unique_ptr<MenuCommand>> commands;
+    commands.push_back(std::make_unique<StartCommand>());
+    commands.push_back(std::make_unique<QuitCommand>());
+    return commands;
+  }
+
+  /// @brief 「スタート」の添字（見せ用デモが自動で選ぶ項目。MakeMenuCommands の並びと合わせる）
+  static constexpr int kMenuStart = 0;
+
+  /// @brief メニュー項目の数
+  /// @return 項目数
+  int MenuCount() const { return static_cast<int>(menuCommands_.size()); }
+
+  /// @brief 選択中の項目の短い名前（インスペクタ用）
+  /// @return 名前（範囲外なら "?"）
+  const char *SelectedDebugName() const {
+    if (selected_ < 0 || selected_ >= MenuCount()) return "?";
+    return menuCommands_[selected_]->DebugName();
+  }
+
+  // ==================================================================
+  // 起動演出の状態（01_03 State パターン）
+  // ==================================================================
+  // 以前は bool フラグ 2 本（introActive_ / introWaitRise_）の組み合わせで
+  // 「浮上待ち → 浮かび上がり中 → 終わり」を表し、UpdateIntro / FinishIntro / SkipIntro が
+  // フラグを見て分岐していた。1 状態 = 1 クラスに分け、毎フレームの処理とキーで飛ばされたときの反応を
+  // 状態クラスの仮想関数にした。次の状態は状態クラス自身が machine.ChangeState で決める。
+  // 定義をクラスの中に置いているのは、状態クラスのメンバ関数本体から他の状態クラスを完全型として使うため。
+
+  /// @brief 起動演出の状態の基底（IState に「キーで飛ばされたとき」と「演出中か」を足す）
+  class IntroPhase : public IState<TitleScreenScript> {
+  public:
+    /// @brief キーで演出を飛ばすよう求められたとき（既定：何もしない）
+    /// @param owner タイトル画面
+    /// @param machine 起動演出のステートマシン
+    virtual void OnSkip(TitleScreenScript &owner, StateMachine<TitleScreenScript> &machine) {
+      (void)owner;
+      (void)machine;
+    }
+
+    /// @brief 演出中（メニューを操作させない・文字に触らせない）か
+    /// @return 演出中なら true
+    virtual bool IsRunning() const = 0;
+  };
+
+  /// @brief 演出が終わっている（または出さない）状態
+  class IntroIdleState final : public IntroPhase {
+  public:
+    /// @brief 何もしない
+    /// @param owner タイトル画面
+    /// @param machine 起動演出のステートマシン
+    /// @param deltaTime 経過時間（秒）
+    void OnUpdate(TitleScreenScript &owner, StateMachine<TitleScreenScript> &machine, float deltaTime) override {
+      (void)owner;
+      (void)machine;
+      (void)deltaTime;
+    }
+    /// @copydoc IntroPhase::IsRunning
+    bool IsRunning() const override { return false; }
+    /// @brief 状態名
+    /// @return "Done"
+    const char *Name() const override { return "Done"; }
+  };
+
+  /// @brief 浮上（Dive 遷移で入ってきたとき）が終わるのを待っている状態。文字とメニューは隠しておく
+  class IntroWaitRiseState final : public IntroPhase {
+  public:
+    /// @brief 入った瞬間に文字とメニューを隠す（上がってくるカメラが水中の文字を突き抜けないように）
+    /// @param owner タイトル画面
+    /// @param machine 起動演出のステートマシン
+    void OnEnter(TitleScreenScript &owner, StateMachine<TitleScreenScript> &machine) override {
+      (void)machine;
+      owner.SetFloatersVisible(false);
+    }
+
+    /// @brief カメラが上がりきったら文字を出し、浮かび上がりを始める（そのフレームから進める）
+    /// @param owner タイトル画面
+    /// @param machine 起動演出のステートマシン
+    /// @param deltaTime 経過時間（秒）
+    void OnUpdate(TitleScreenScript &owner, StateMachine<TitleScreenScript> &machine, float deltaTime) override {
+      // カメラが上がりきるまで待つ（時間も進めない）
+      if (owner.rise_.IsMoving()) return;
+      owner.SetFloatersVisible(true);
+      // 浮上そのものが「間」になっているので、最初の待ち（フェード明け待ち）は短くする
+      owner.introTime_ = owner.intro.delay * 0.6f;
+      machine.ChangeState<IntroPlayingState>();
+      if (owner.AdvanceIntro(deltaTime)) {
+        owner.SettleIntroFloaters();
+        machine.ChangeState<IntroIdleState>();
+      }
+    }
+
+    /// @brief 飛ばされたら、文字を出して最終状態にそろえる
+    /// @param owner タイトル画面
+    /// @param machine 起動演出のステートマシン
+    void OnSkip(TitleScreenScript &owner, StateMachine<TitleScreenScript> &machine) override {
+      owner.RippleUnbreachedLetters();
+      owner.SetFloatersVisible(true);
+      owner.SettleIntroFloaters();
+      machine.ChangeState<IntroIdleState>();
+    }
+
+    /// @copydoc IntroPhase::IsRunning
+    bool IsRunning() const override { return true; }
+    /// @brief 状態名
+    /// @return "WaitRise"
+    const char *Name() const override { return "WaitRise"; }
+  };
+
+  /// @brief 文字 → メニューの順に水中から浮かび上がっている状態
+  class IntroPlayingState final : public IntroPhase {
+  public:
+    /// @brief 浮かび上がりを進め、最後のメニューが浮かび終わったら終わりの状態へ
+    /// @param owner タイトル画面
+    /// @param machine 起動演出のステートマシン
+    /// @param deltaTime 経過時間（秒）
+    void OnUpdate(TitleScreenScript &owner, StateMachine<TitleScreenScript> &machine, float deltaTime) override {
+      if (owner.AdvanceIntro(deltaTime)) {
+        owner.SettleIntroFloaters();
+        machine.ChangeState<IntroIdleState>();
+      }
+    }
+
+    /// @brief 飛ばされたら、まだ水面を抜けていない文字に波紋だけ出して最終状態にそろえる
+    /// @param owner タイトル画面
+    /// @param machine 起動演出のステートマシン
+    void OnSkip(TitleScreenScript &owner, StateMachine<TitleScreenScript> &machine) override {
+      owner.RippleUnbreachedLetters();
+      owner.SettleIntroFloaters();
+      machine.ChangeState<IntroIdleState>();
+    }
+
+    /// @copydoc IntroPhase::IsRunning
+    bool IsRunning() const override { return true; }
+    /// @brief 状態名
+    /// @return "Playing"
+    const char *Name() const override { return "Playing"; }
+  };
+
+  /// @brief 起動演出の最中か（浮上待ちを含む）
+  /// @return 演出中なら true
+  bool IsIntroActive() const {
+    const IntroPhase *phase = introFsm_.As<IntroPhase>();
+    return phase && phase->IsRunning();
+  }
 
   /// @brief 水面に浮かせる 3D 文字 1 つぶんの状態（タイトル文字・メニュー項目で共通）
+  /// @details このクラスの中だけで使う private な値の束（振る舞いは本体の UpdateFloater などが持つ）。
+  ///          外へは公開しないので struct のままにしている。
   struct Floater {
     std::weak_ptr<Entity> entity;
     RC::Vector3 basePos{};      ///< 静水面上の基準位置（x, 0, z）。z はベースライン
@@ -997,15 +1465,13 @@ private:
     }
     if (!ok || data.vertices.size() < 3) return nullptr;
 
-    auto m = std::make_shared<TitleBlackboard::LetterMask>();
+    // 格子の大きさ・位置を決める（LetterMask は焼いたあと読むだけなので、最後にまとめて渡して作る）
     const float cell = (std::max)(desc.size / 64.0f, 0.005f);
     const int pad = 6;
-    m->cell = cell;
-    m->x0 = info.min.x - static_cast<float>(pad) * cell;
-    m->y0 = info.min.y - static_cast<float>(pad) * cell;
-    m->w = std::clamp(static_cast<int>(std::ceil((info.max.x - info.min.x) / cell)) + pad * 2 + 1, 2, 512);
-    m->h = std::clamp(static_cast<int>(std::ceil((info.max.y - info.min.y) / cell)) + pad * 2 + 1, 2, 512);
-    const int W = m->w, H = m->h;
+    const float maskX0 = info.min.x - static_cast<float>(pad) * cell;
+    const float maskY0 = info.min.y - static_cast<float>(pad) * cell;
+    const int W = std::clamp(static_cast<int>(std::ceil((info.max.x - info.min.x) / cell)) + pad * 2 + 1, 2, 512);
+    const int H = std::clamp(static_cast<int>(std::ceil((info.max.y - info.min.y) / cell)) + pad * 2 + 1, 2, 512);
     std::vector<uint8_t> solid(static_cast<size_t>(W) * H, 0);
 
     // 三角形を塗る（側面は XY に面積が無いので自然に飛ばされる）
@@ -1021,15 +1487,15 @@ private:
       const auto &a = data.vertices[i0].position, &b = data.vertices[i1].position, &c = data.vertices[i2].position;
       const float area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
       if (std::fabs(area) < 1e-9f) continue;
-      const int gx0 = (std::max)(0, static_cast<int>(std::floor(((std::min)({a.x, b.x, c.x}) - m->x0) / cell)));
-      const int gx1 = (std::min)(W - 1, static_cast<int>(std::ceil(((std::max)({a.x, b.x, c.x}) - m->x0) / cell)));
-      const int gy0 = (std::max)(0, static_cast<int>(std::floor(((std::min)({a.y, b.y, c.y}) - m->y0) / cell)));
-      const int gy1 = (std::min)(H - 1, static_cast<int>(std::ceil(((std::max)({a.y, b.y, c.y}) - m->y0) / cell)));
+      const int gx0 = (std::max)(0, static_cast<int>(std::floor(((std::min)({a.x, b.x, c.x}) - maskX0) / cell)));
+      const int gx1 = (std::min)(W - 1, static_cast<int>(std::ceil(((std::max)({a.x, b.x, c.x}) - maskX0) / cell)));
+      const int gy0 = (std::max)(0, static_cast<int>(std::floor(((std::min)({a.y, b.y, c.y}) - maskY0) / cell)));
+      const int gy1 = (std::min)(H - 1, static_cast<int>(std::ceil(((std::max)({a.y, b.y, c.y}) - maskY0) / cell)));
       const float sgn = area > 0.0f ? 1.0f : -1.0f;
       for (int gy = gy0; gy <= gy1; ++gy) {
-        const float py = m->y0 + static_cast<float>(gy) * cell;
+        const float py = maskY0 + static_cast<float>(gy) * cell;
         for (int gx = gx0; gx <= gx1; ++gx) {
-          const float px = m->x0 + static_cast<float>(gx) * cell;
+          const float px = maskX0 + static_cast<float>(gx) * cell;
           const float e0 = ((b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x)) * sgn;
           const float e1 = ((c.x - b.x) * (py - b.y) - (c.y - b.y) * (px - b.x)) * sgn;
           const float e2 = ((a.x - c.x) * (py - c.y) - (a.y - c.y) * (px - c.x)) * sgn;
@@ -1070,11 +1536,11 @@ private:
     };
     const std::vector<float> dIn = chamfer(1);  // 文字の中 → いちばん近い外
     const std::vector<float> dOut = chamfer(0); // 外 → いちばん近い文字
-    m->sdf.resize(static_cast<size_t>(W) * H);
-    for (size_t i = 0; i < m->sdf.size(); ++i) {
-      m->sdf[i] = solid[i] ? -(dIn[i] - 0.5f) * cell : (dOut[i] - 0.5f) * cell;
+    std::vector<float> sdf(static_cast<size_t>(W) * H);
+    for (size_t i = 0; i < sdf.size(); ++i) {
+      sdf[i] = solid[i] ? -(dIn[i] - 0.5f) * cell : (dOut[i] - 0.5f) * cell;
     }
-    return m;
+    return std::make_shared<const TitleBlackboard::LetterMask>(W, H, maskX0, maskY0, cell, std::move(sdf));
   }
 
   /// @brief タイトル文字列を 1 文字ずつ 3D 文字として生成し、letters_ に登録する
@@ -1113,18 +1579,17 @@ private:
 
   /// @brief メニュー項目（スタート／ゲーム終了）を 3D 文字として生成し、menu_ に登録する
   void SpawnMenu() {
-    static const char *kLabels[kMenuCount] = {"スタート", "ゲーム終了"};
-    static const char *kNames[kMenuCount] = {"TitleMenu_Start", "TitleMenu_Quit"};
-
     menu_.clear();
-    menu_.reserve(kMenuCount);
-    for (int i = 0; i < kMenuCount; ++i) {
+    menu_.reserve(menuCommands_.size());
+    for (int i = 0; i < MenuCount(); ++i) {
+      // ラベルとエンティティ名は項目のコマンドが持つ
+      const MenuCommand &command = *menuCommands_[i];
       // 既定：画面中央の下寄りに 2 行。行間は 1.7em
       RC::Vector2 pos{0.0f, -menuSize * (2.6f + 1.7f * static_cast<float>(i))};
       if (i < static_cast<int>(menuPositions.size())) pos = menuPositions[i];
 
       const bool sel = (i == selected_);
-      Floater f = CreateTextFloater(kNames[i], kLabels[i], menuFontPath, menuSize, menuDepth,
+      Floater f = CreateTextFloater(command.EntityName(), command.Label(), menuFontPath, menuSize, menuDepth,
                                     sel ? menuSelectedColor : menuColor, menuOutlineColor,
                                     menuOutlineWidth, pos.x, pos.y, 0.0f, menuShininess, 0.0f);
       if (f.entity.expired()) continue;
@@ -1242,7 +1707,7 @@ private:
     const float dt = (std::max)(deltaTime, 0.0f);
 
     // 出す／隠す（演出中・飛び込み中・浮上中は隠す）。大きさ 0↔1 でふわっと出し入れする
-    const bool want = ring.enabled && !introActive_ && !dive_.IsActive() && !rise_.IsMoving();
+    const bool want = ring.enabled && !IsIntroActive() && !dive_.IsActive() && !rise_.IsMoving();
     ringAppear_ = std::clamp(ringAppear_ + (want ? 4.0f : -6.0f) * dt, 0.0f, 1.0f);
     if (dt == 0.0f && want) ringAppear_ = 1.0f; // 編集モード（時間が止まっている）でも見えるように
 
@@ -1358,8 +1823,8 @@ private:
   }
 
   /// @brief 起動演出を開始する。文字・メニューを水中の初期位置へ沈め、リングを隠す
+  /// @details 浮上待ちの最中に呼び直された（エディタの Replay Intro）ときは浮上待ちのまま続ける。
   void StartIntro() {
-    introActive_ = true;
     introTime_ = 0.0f;
     for (auto &f : letters_) {
       f.introY = -intro.depth;
@@ -1372,6 +1837,8 @@ private:
       f.breached = false;
     }
     ringAppear_ = 0.0f;
+    if (!introFsm_.IsIn<IntroWaitRiseState>()) introFsm_.ChangeState<IntroPlayingState>();
+    introFsm_.ApplyPending(*this);
   }
 
   /// @brief タイトル文字とメニューの表示を切り替える（浮上中に隠す）
@@ -1387,15 +1854,8 @@ private:
 
   /// @brief 起動演出を進める。文字→メニューの順に水中から浮かび上がらせ、水面を抜けた瞬間に飛沫・波紋を出す
   /// @param deltaTime 前フレームからの経過時間（秒）
-  void UpdateIntro(float deltaTime) {
-    // 浮上で入ってきたときは、カメラが上がりきるまで待つ（時間も進めない）
-    if (introWaitRise_) {
-      if (rise_.IsMoving()) return;
-      introWaitRise_ = false;
-      SetFloatersVisible(true);
-      // 浮上そのものが「間」になっているので、最初の待ち（フェード明け待ち）は短くする
-      introTime_ = intro.delay * 0.6f;
-    }
+  /// @return 最後のメニュー項目が浮かび終わった（演出の終わり）なら true。次の状態は呼び出し側の状態クラスが決める
+  bool AdvanceIntro(float deltaTime) {
     if (deltaTime > 0.0f) introTime_ += deltaTime;
     const float t = introTime_;
 
@@ -1427,7 +1887,7 @@ private:
       }
     }
 
-    if (t >= IntroEnd()) FinishIntro();
+    return t >= IntroEnd();
   }
 
   /// @brief 水面を抜けた瞬間の飛沫と波紋を出す
@@ -1450,13 +1910,8 @@ private:
     }
   }
 
-  /// @brief 起動演出を終了し、全ての文字・メニューを最終状態（水面上・等倍・表示）にそろえる
-  void FinishIntro() {
-    introActive_ = false;
-    if (introWaitRise_) {
-      introWaitRise_ = false;
-      SetFloatersVisible(true);
-    }
+  /// @brief 全ての文字・メニューを起動演出の最終状態（水面上・等倍）にそろえる
+  void SettleIntroFloaters() {
     for (auto &f : letters_) {
       f.introY = 0.0f;
       f.introScale = 1.0f;
@@ -1469,8 +1924,14 @@ private:
     }
   }
 
-  /// @brief キーで演出を飛ばす。まだ水面を抜けていないものにも波紋だけ出して「浮かんだ」感を残す
+  /// @brief キーで演出を飛ばす（飛ばし方は今の状態クラスの OnSkip が決める）
   void SkipIntro() {
+    if (IntroPhase *phase = introFsm_.As<IntroPhase>()) phase->OnSkip(*this, introFsm_);
+    introFsm_.ApplyPending(*this);
+  }
+
+  /// @brief まだ水面を抜けていない文字にも波紋だけ出して「浮かんだ」感を残す（演出を飛ばしたとき）
+  void RippleUnbreachedLetters() {
     for (auto &f : letters_) {
       if (!f.breached && intro.rippleStrength != 0.0f) {
         if (auto e = f.entity.lock()) {
@@ -1480,7 +1941,6 @@ private:
         }
       }
     }
-    FinishIntro();
   }
 
   /// @brief メニュー操作に使うキー・ボタンのどれかが押されたか（演出のスキップ判定）
@@ -1503,132 +1963,21 @@ private:
     return false;
   }
 
-  // 水面を抜けた瞬間の泡は 2 種類の GPU パーティクルで作る（どちらも射出数 0 で寝かせておき、抜けた瞬間だけ射出）。
-  // 見た目は炭酸の泡：gpu_particle_bubble パイプライン（BubbleParticle.PS。縁とハイライトだけ白く、
-  // 中は透ける輪）で描く。テクスチャは使わない
-  //   spray : 小さな泡。文字の足元から外へ放射状にゆっくり広がり、少しずつ浮いて消える（シュワッと弾ける）
-  //   foam  : 少し大きめの泡。文字の足元に散らばって、その場でゆらゆらしながら長めに残る
-  // 以前は白い丸を大きく撒いていたため、綿や煙のように見えていた。
-
-  /// @brief 泡のエミッタを 1 つ作る（共通部分）
-  /// @param scene 生成先のシーン
-  /// @param name エンティティ名
-  /// @return 生成したエンティティ（射出数 0 で停止中）。作れなければ nullptr
-  std::shared_ptr<Entity> CreateSplashEmitter(Scene *scene, const std::string &name) {
-    auto e = scene->CreateEntity(name);
-    if (!e) return nullptr;
-    e->SetTag("transient", 1);
-    auto &tr = e->AddComponent<TransformComponent>();
-    tr.position = {0.0f, -200.0f, 0.0f}; // 使うまでは画面外
-    auto &gpu = e->AddComponent<GPUParticleComponent>();
-    if (auto *ps = gpu.particleSystem.get()) {
-      ps->SetParticleType(ParticleType::Default);   // EmitParticle.CS：形状・速度・寿命・色を全部使う
-      ps->SetPipelinePrefix("gpu_particle_bubble");  // 中が透ける泡の輪（飛び込み・浮上の泡と同じ描き方）
-      ps->SetBlendMode(kBlendModeNormal);            // BubbleParticle.PS は乗算済みでない色＋α を返す
-      ps->SetMaxParticles(1024);
-      ps->SetEmitCount(0);
-    }
-    return e;
-  }
-
   /// @brief 起動演出の飛沫用エミッタ（spray / foam）を生成する
   /// @note 既に生成済みなら何もしない
   void SpawnSplashEmitter() {
     Scene *scene = GetScene();
-    if (!scene || !splash_.expired()) return;
-
-    // ---- spray：外へ広がる小さな泡 ----
-    if (auto e = CreateSplashEmitter(scene, "TitleSplashSpray")) {
-      if (auto *ps = e->GetComponent<GPUParticleComponent>()->particleSystem.get()) {
-        // Cone は「真上から coneAngle まで」の範囲にばらけた向きへ、|baseVelocity| の速さで飛ぶ。
-        // 角度を大きく（≒ 72°）取って、ほとんどを横向き＝外へ放射状に広げる。
-        // 出る位置は半径 tan(coneAngle) × shapeRadius の円内（射出のたびに文字の大きさへ合わせる）
-        ps->emitterShape_ = EmitterShape::Cone;
-        ps->coneAngle_ = 1.25f;
-        ps->shapeRadius_ = 0.5f;
-        ps->baseVelocity_ = {0.0f, 0.04f, 0.0f}; // 1 フレームあたり 0.04 ≒ 2.4 m/s（ゆっくり広がる）
-        ps->velocityVariance_ = 0.02f;
-        // 負の重力で少しずつ浮く（velocity.y -= gravity * dt。1 フレームあたり）
-        ps->gravity_ = -0.02f;
-        ps->minLifeTime_ = 0.5f;
-        ps->maxLifeTime_ = 1.1f;
-        ps->minScale_ = 0.06f;
-        ps->maxScale_ = 0.18f;
-        // ほんのり水色の泡。消えるときは α だけ落とす（通常ブレンドなので RGB は残してよい）
-        ps->startColor_ = {0.85f, 0.97f, 1.0f, 0.9f};
-        ps->endColor_ = {0.85f, 0.97f, 1.0f, 0.0f};
-      }
-      scene->InitDynamicEntityRuntime(*e);
-      splash_ = e;
-    }
-
-    // ---- foam：足元に散らばって残る、少し大きめの泡 ----
-    if (auto e = CreateSplashEmitter(scene, "TitleSplashFoam")) {
-      if (auto *ps = e->GetComponent<GPUParticleComponent>()->particleSystem.get()) {
-        ps->emitterShape_ = EmitterShape::Box;
-        ps->shapeBoxSize_ = {2.0f, 0.05f, 2.0f};
-        ps->baseVelocity_ = {0.0f, 0.0f, 0.0f};
-        ps->velocityVariance_ = 0.012f; // その場でゆらゆら
-        ps->gravity_ = 0.0f;
-        ps->minLifeTime_ = 0.8f;
-        ps->maxLifeTime_ = 1.8f;
-        ps->minScale_ = 0.12f;
-        ps->maxScale_ = 0.32f;
-        ps->startColor_ = {0.85f, 0.97f, 1.0f, 0.8f};
-        ps->endColor_ = {0.85f, 0.97f, 1.0f, 0.0f};
-      }
-      scene->InitDynamicEntityRuntime(*e);
-      foam_ = e;
-    }
+    if (!scene || splashSpray_.IsSpawned()) return;
+    for (SplashLayer *layer : SplashLayers()) layer->Spawn(scene);
   }
 
+  /// @brief 泡のエミッタを基底の型でまとめて返す（生成・射出・停止・破棄を同じ手順で回すため）
+  /// @return spray, foam の順
+  std::array<SplashLayer *, 2> SplashLayers() { return {&splashSpray_, &splashFoam_}; }
 
-  /// @brief エミッタ 1 つの射出数を設定する
-  /// @param w 対象のエミッタエンティティ（消えていれば何もしない）
-  /// @param count 1 フレームあたりの射出数（0 で止める）
-  static void SetEmission(const std::weak_ptr<Entity> &w, uint32_t count) {
-    auto e = w.lock();
-    if (!e) return;
-    if (auto *gpu = e->GetComponent<GPUParticleComponent>()) {
-      if (gpu->particleSystem) gpu->particleSystem->SetEmitCount(count);
-    }
-  }
-
-  /// @brief 両方のエミッタの射出数をまとめて設定する（0 で止める）
-  /// @param sprayCount spray（小さな泡）の 1 フレームあたりの射出数
-  /// @param foamCount foam（大きめの泡）の 1 フレームあたりの射出数
-  /// @param count 両方に同じ値を設定する場合の射出数（1 引数版）
-  void SetSplashEmission(uint32_t sprayCount, uint32_t foamCount) {
-    SetEmission(splash_, sprayCount);
-    SetEmission(foam_, foamCount);
-  }
-  void SetSplashEmission(uint32_t count) { SetSplashEmission(count, count); }
-
-  /// @brief エミッタを文字の位置へ動かし、文字の大きさに合わせて射出範囲を変える
-  /// @param w 対象のエミッタエンティティ
-  /// @param x 射出位置のワールド X 座標
-  /// @param y 射出位置のワールド Y 座標
-  /// @param z 射出位置のワールド Z 座標
-  /// @param width 文字の幅（m）
-  /// @param length 文字の高さ（真上から見た Z 方向の長さ, m）
-  /// @param cone true なら Cone 形状として半径を、false なら Box 形状として大きさを合わせる
-  static void PlaceEmitter(const std::weak_ptr<Entity> &w, float x, float y, float z, float width, float length,
-                           bool cone) {
-    auto e = w.lock();
-    if (!e) return;
-    if (auto *tr = e->GetComponent<TransformComponent>()) tr->position = {x, y, z};
-    auto *gpu = e->GetComponent<GPUParticleComponent>();
-    auto *ps = gpu ? gpu->particleSystem.get() : nullptr;
-    if (!ps) return;
-    // 位置はシーン側が毎フレーム Transform から写すが、同じフレームに射出されるよう直接も書く
-    ps->emitterPosition_ = {x, y, z};
-    if (cone) {
-      // 出る位置の半径 = tan(coneAngle) × shapeRadius。文字の半分くらいの円から出す
-      const float r = 0.35f * (std::max)((std::min)(width, length), 0.5f);
-      ps->shapeRadius_ = r / (std::max)(std::tan(ps->coneAngle_), 0.1f);
-    } else {
-      ps->shapeBoxSize_ = {(std::max)(width, 0.5f), 0.05f, (std::max)(length, 0.5f)};
-    }
+  /// @brief 両方のエミッタの射出を止める
+  void StopSplash() {
+    for (SplashLayer *layer : SplashLayers()) layer->Stop();
   }
 
   /// @brief 指定位置で飛沫（spray と foam）を射出する
@@ -1639,10 +1988,9 @@ private:
   /// @param width 文字の幅（真上から見た X 方向の大きさ, m）
   /// @param length 文字の高さ（真上から見た Z 方向の大きさ, m）
   void EmitSplash(float x, float y, float z, int count, float width = 2.0f, float length = 2.0f) {
-    if (count <= 0 || splash_.expired()) return;
-    PlaceEmitter(splash_, x, y, z, width, length, /*cone=*/true);
-    PlaceEmitter(foam_, x, 0.05f, z, width * 1.1f, length * 1.1f, /*cone=*/false);
-    SetSplashEmission(static_cast<uint32_t>(count), static_cast<uint32_t>((std::max)(count / 2, 1)));
+    if (count <= 0 || !splashSpray_.IsSpawned()) return;
+    // 高さ・大きさ・粒の数の換算は種類ごとに違う（SplashLayer の派生が決める）
+    for (SplashLayer *layer : SplashLayers()) layer->Burst(x, y, z, count, width, length);
     // 2 フレーム続ける。スクリプトは DataDrivenScene の GPUParticle 更新（定数バッファへ emitCount を
     // 書く）より後に走るので、1 フレームで止めると CB 側の emitCount が 0 のまま Dispatch され、
     // 1 粒も出ない。次のフレームの更新で CB に載ってから止める
@@ -1720,8 +2068,8 @@ private:
     const float dt = (std::max)(deltaTime, 0.0f);
     for (size_t i = 0; i < letters_.size(); ++i) {
       Floater &f = letters_[i];
-      if (i < bb.letterPush.size()) {
-        RC::Vector3 &p = bb.letterPush[i];
+      RC::Vector3 p{0.0f, 0.0f, 0.0f};
+      if (bb.ConsumeLetterPush(i, p)) {
         if (dt > 0.0f && (p.x != 0.0f || p.z != 0.0f)) {
           f.push.x += p.x;
           f.push.z += p.z;
@@ -1729,11 +2077,10 @@ private:
           f.pushVel.x = p.x / dt * 0.25f;
           f.pushVel.z = p.z / dt * 0.25f;
         }
-        p = {0.0f, 0.0f, 0.0f};
       }
-      if (i < bb.letterShake.size()) {
-        f.shake = (std::max)(f.shake, (std::min)(bb.letterShake[i], kShakeMax));
-        bb.letterShake[i] = 0.0f;
+      float shake = 0.0f;
+      if (bb.ConsumeLetterShake(i, shake)) {
+        f.shake = (std::max)(f.shake, (std::min)(shake, kShakeMax));
       }
       if (dt <= 0.0f) continue;
       // ばね：x'' = -k x - c x'
@@ -1757,19 +2104,17 @@ private:
   /// @details 船・漂流物・タコが文字に触れるために使う。起動演出・飛び込み・浮上の最中は
   ///          lettersInteractive = false にして触らせない（文字が水中にいる／カメラが動いている）。
   void PublishLetters() {
-    TitleBlackboard::State &bb = TitleBlackboard::Get();
-    // 決定後（遷移演出中）も触らせない
-    bb.lettersInteractive =
-        !introActive_ && !introWaitRise_ && !decided_ && !dive_.IsActive() && !rise_.IsActive();
-    if (bb.letterPush.size() != letters_.size()) bb.letterPush.assign(letters_.size(), RC::Vector3{0.0f, 0.0f, 0.0f});
-    if (bb.letterShake.size() != letters_.size()) bb.letterShake.assign(letters_.size(), 0.0f);
-    PublishFloaters(letters_, bb.letters);
-    PublishFloaters(menu_, bb.menu);
+    // 決定後（遷移演出中）も触らせない。浮上待ちも IsIntroActive に含まれる
+    const bool interactive = !IsIntroActive() && !decided_ && !dive_.IsActive() && !rise_.IsActive();
+    // 掲示板の中身は private なので、手元の写し（前フレームの値を引き継ぐ）を更新してから丸ごと渡す
+    PublishFloaters(letters_, publishedLetters_);
+    PublishFloaters(menu_, publishedMenu_);
+    TitleBlackboard::Get().PublishLetters(publishedLetters_, publishedMenu_, interactive);
   }
 
   /// @brief Floater の並びを掲示板用の姿勢（真上から見た足元の長方形）へ写す
   /// @param src 文字・メニュー項目
-  /// @param dst 書き込み先（src と同じ数にそろえる）
+  /// @param dst 書き込み先（src と同じ数にそろえる。非表示の項目は visible 以外を前の値のまま残す）
   static void PublishFloaters(const std::vector<Floater> &src, std::vector<TitleBlackboard::Letter> &dst) {
     dst.resize(src.size());
     for (size_t i = 0; i < src.size(); ++i) {
@@ -1924,7 +2269,7 @@ private:
   /// @brief 選択を切り替える（跳ねる演出・リング・波紋込み）
   /// @param index 新しく選択するメニュー項目の番号（範囲外・現在と同じなら何もしない）
   void SetSelected(int index) {
-    if (index < 0 || index >= kMenuCount || index == selected_) return;
+    if (index < 0 || index >= MenuCount() || index == selected_) return;
     selected_ = index;
     pulseTimer_ = 0.0f;
     // 切り替えた瞬間だけ少し大きくして「跳ねる」感じを出す
@@ -1997,7 +2342,7 @@ private:
     }
     if (move != 0) {
       mouseMode_ = false; // キー／パッドで動かしたら、マウスを再び動かすまでホバーで上書きしない
-      SetSelected((selected_ + move + kMenuCount) % kMenuCount);
+      SetSelected((selected_ + move + MenuCount()) % MenuCount());
     }
 
     // マウス：動かしたときだけカーソル下の項目を選ぶ（止まっているあいだはキー操作を邪魔しない）
@@ -2037,37 +2382,9 @@ private:
     }
     if (!confirm) return;
 
-    // 選択中の項目に応じて、シーン遷移（スタート）かアプリ終了（ゲーム終了）を行う
-    if (selected_ == kMenuStart) {
-      SceneContext *sc = GetSceneContext();
-      if (sc && !sc->isPlaying()) return; // 編集モードでは飛ばない（RequestSceneChange と同じ）
-
-      // 行き先と演出は遷移表で引く。演出が dive のときだけ飛び込み演出を挟む
-      std::string transition;
-      if (!LookupTransition(kTriggerStart, startTarget_, transition) || startTarget_.empty()) {
-        Log::Print("[TitleScreenScript] scene flow has no target for 'start'");
-        return;
-      }
-      if (dive.enabled && transition == SceneTransitions::kDive && BeginDive()) {
-        // 遷移要求は沈みきったあと UpdateDive が出す
-        decided_ = true;
-        Log::Print("[TitleScreenScript] start -> dive -> " + startTarget_);
-      } else if (RequestSceneChange(startTarget_)) {
-        decided_ = true;
-        Log::Print("[TitleScreenScript] start -> " + startTarget_);
-      } else {
-        Log::Print("[TitleScreenScript] scene change refused: " + startTarget_);
-      }
-    } else {
-      if (quitEnabled) {
-        Log::Print("[TitleScreenScript] quit requested");
-        decided_ = true;
-        // App::Run のメッセージループは WM_QUIT で抜けて Term() へ進む
-        PostQuitMessage(0);
-      } else {
-        Log::Print("[TitleScreenScript] quit is disabled (quitEnabled = false)");
-      }
-    }
+    // 選択中の項目のコマンドを実行する（スタート：シーン遷移／ゲーム終了：アプリ終了）。
+    // 項目ごとの分岐は書かず、基底 MenuCommand の参照経由で呼ぶ（Command パターン）
+    if (selected_ >= 0 && selected_ < MenuCount()) menuCommands_[selected_]->Execute(*this);
   }
 
   // ------------------------------------------------------------------
@@ -2141,12 +2458,15 @@ private:
   /// @param screenW 画面幅（ピクセル）
   /// @param screenH 画面高さ（ピクセル）
   void DrawHint(float screenW, float screenH) {
-    // マウスで操作しているときはマウス用の案内に切り替える
-    const char *text = (mouseEnabled && mouseMode_)
-                           ? (mouseConfirmButton == 1   ? "マウスで選択　　右クリック 決定"
-                              : mouseConfirmButton == 0 ? "マウスで選択　　クリック 決定"
-                                                        : "マウスで選択　　ホイールクリック 決定")
-                           : "↑↓ 選択　　SPACE 決定";
+    // マウスで操作しているときはマウス用の案内に切り替える。
+    // 決定ボタンごとの文言は分岐を重ねず表で引く（0 = 左 / 1 = 右 / それ以外 = 中）
+    static constexpr const char *kMouseHints[3] = {
+        "マウスで選択　　クリック 決定",
+        "マウスで選択　　右クリック 決定",
+        "マウスで選択　　ホイールクリック 決定",
+    };
+    const int hintIndex = (mouseConfirmButton == 0 || mouseConfirmButton == 1) ? mouseConfirmButton : 2;
+    const char *text = (mouseEnabled && mouseMode_) ? kMouseHints[hintIndex] : "↑↓ 選択　　SPACE 決定";
     const float lineH = RC::GetFontLineHeight(hintFont_);
     const RC::Vector2 pos{screenW * 0.5f, screenH - lineH - 28.0f};
     // 水面の模様の上でも読めるよう、横いっぱいの半透明の帯を先に敷く
@@ -2173,6 +2493,9 @@ private:
 
   std::vector<Floater> letters_;
   std::vector<Floater> menu_;
+  std::vector<std::unique_ptr<MenuCommand>> menuCommands_ = MakeMenuCommands(); ///< メニュー項目のコマンド（menu_ と同じ並び）
+  std::vector<TitleBlackboard::Letter> publishedLetters_; ///< 掲示板へ渡す文字の姿勢（前フレームの値を引き継ぐ写し）
+  std::vector<TitleBlackboard::Letter> publishedMenu_;    ///< 掲示板へ渡すメニューの姿勢（同上）
 
   // 選択中メニューの目印
   std::vector<std::weak_ptr<Entity>> rings_;
@@ -2184,11 +2507,10 @@ private:
   float ringRippleTimer_ = 0.0f;
 
   // 起動演出
-  bool introActive_ = false;
-  bool introWaitRise_ = false;   ///< 浮上が終わるまで演出を待っている（そのあいだ文字とメニューは非表示）
+  StateMachine<TitleScreenScript> introFsm_; ///< 起動演出の状態（浮上待ち → 浮かび上がり → 終わり）
   float introTime_ = 0.0f;
-  std::weak_ptr<Entity> splash_; ///< 飛沫（外へ弾ける水滴）のエミッタ
-  std::weak_ptr<Entity> foam_;   ///< 足元に広がる白い泡のエミッタ
+  SpraySplashLayer splashSpray_; ///< 飛沫（外へ弾ける小さな泡）のエミッタ
+  FoamSplashLayer splashFoam_;   ///< 足元に広がる泡のエミッタ
   int splashFramesLeft_ = 0;     ///< 射出を止めるまでのフレーム数
   int hintFont_ = -1;
   int selected_ = kMenuStart;
@@ -2198,6 +2520,9 @@ private:
   bool mousePrevValid_ = false;  ///< prevMouse が有効か（初回フレームを「動いた」と誤判定しない）
   float prevMouseX_ = 0.0f, prevMouseY_ = 0.0f;
   int hovered_ = -1;             ///< カーソル下のメニュー項目（無ければ -1）
+  // 決定済みか（スタート／ゲーム終了を選んだ、または飛び込み後の遷移が通った）。
+  // 「未決定 / 決定済み」の 2 値だけで、立ち上げ・取り消しはメニューのコマンド・飛び込みの失敗・
+  // インスペクタのカメラリセットと別々の場所から来るので、State パターンにはせず bool のままにしている。
   bool decided_ = false;
   float demoT_ = 0.0f; ///< 見せ用デモ：メニューを操作できるようになってからの経過（TransitionDemo）
   bool readbackOwned_ = false; ///< 波紋の読み戻しを自分が有効にしたか（OnDestroy で戻す）

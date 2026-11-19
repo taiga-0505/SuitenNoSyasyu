@@ -15,6 +15,13 @@ void RailShooterGameMode::OnSceneEnter(Scene& scene, SceneContext& ctx) {
     if (StageProgress::IsPlayScene(sceneName)) {
         GameSession::Get().BeginRun();
         StageProgress::Get().SetCurrentScene(sceneName);
+
+        // 敵の撃破を購読し、リザルトの「撃破数」を数える（Observer）。
+        // 再入場で OnSceneEnter が再び呼ばれても、代入で古い購読は解除されるので二重に数えない。
+        enemyDefeatedConnection_ = GameEvents::EnemyDefeated().Subscribe(
+            [](const EnemyDefeatedInfo&) { GameSession::Get().AddEnemyDefeated(); });
+    } else {
+        enemyDefeatedConnection_.Disconnect();
     }
 }
 

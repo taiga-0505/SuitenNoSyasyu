@@ -53,19 +53,6 @@
 ///   "playingOnly"    : true なら再生中だけ（エディタで編集中は出さない）
 class TitleMouseRippleScript : public ScriptableEntity {
 public:
-  bool enabled = true;
-  float radius = 0.018f;
-  float strength = 0.07f;
-  bool pushDown = true;
-  float speedRef = 10.0f;
-  float minStrengthRatio = 0.3f;
-  float spacing = 0.5f;
-  int maxPerFrame = 10;
-  bool clickEnabled = true;
-  float clickRadius = 0.035f;
-  float clickStrength = 0.3f;
-  bool playingOnly = false;
-
   /// @brief 設定項目を JSON に書き出す
   /// @return 設定項目を格納した JSON
   nlohmann::json Serialize() override {
@@ -138,8 +125,7 @@ protected:
   void OnUpdate(float deltaTime) override {
     // 無効時・入力が無いとき・再生中限定で非再生時は、軌跡を切って何もしない
     TitleBlackboard::State &bb = TitleBlackboard::Get();
-    bb.cursorValid = false;
-    bb.cursorClicked = false;
+    bb.InvalidateCursor();
     SceneContext *ctx = GetSceneContext();
     if (!enabled || !ctx || !ctx->input) {
       prevValid_ = false;
@@ -184,10 +170,7 @@ protected:
       const float k = (std::min)(1.0f, dt * 12.0f);
       smoothVel_.x += (raw.x - smoothVel_.x) * k;
       smoothVel_.z += (raw.z - smoothVel_.z) * k;
-      bb.cursorValid = true;
-      bb.cursorPos = {hx, FindWaterY(), hz};
-      bb.cursorVel = smoothVel_;
-      bb.cursorClicked = ctx->input->IsMouseTrigger(0);
+      bb.SetCursor({hx, FindWaterY(), hz}, smoothVel_, ctx->input->IsMouseTrigger(0));
     }
 
     // ---- クリック：1 発大きめ ----
@@ -228,14 +211,25 @@ protected:
   /// @brief 破棄時に前フレームの交点を無効化する
   void OnDestroy() override {
     prevValid_ = false;
-    TitleBlackboard::State &bb = TitleBlackboard::Get();
-    bb.cursorValid = false;
-    bb.cursorClicked = false;
-    bb.cursorVel = {0.0f, 0.0f, 0.0f};
+    TitleBlackboard::Get().ResetCursor();
   }
 
 private:
   static constexpr float kMinMove = 0.02f; ///< これ未満の動き（m）は「止まっている」扱い
+
+  // ---- 設定値（シーン JSON / インスペクタから変える。外からは触らせない）----
+  bool enabled = true;            ///< false で何もしない
+  float radius = 0.018f;          ///< 波源の半径（UV 空間。0.01 = 1m）
+  float strength = 0.07f;         ///< 波源 1 つの高さ（m）
+  bool pushDown = true;           ///< true で水面を押し下げる。false で持ち上げる
+  float speedRef = 10.0f;         ///< この速さ（m/s）で strength 満額になる
+  float minStrengthRatio = 0.3f;  ///< ゆっくり動かしたときの下限（strength に掛かる割合）
+  float spacing = 0.5f;           ///< 軌跡に沿って波源を置く間隔（m）
+  int maxPerFrame = 10;           ///< 1 フレームに入れる波源の上限
+  bool clickEnabled = true;       ///< 左クリックで大きめの波紋を出すか
+  float clickRadius = 0.035f;     ///< クリックの波紋の半径（UV）
+  float clickStrength = 0.3f;     ///< クリックの波紋の強さ（m）
+  bool playingOnly = false;       ///< true なら再生中だけ動く
 
   /// @brief 画面座標から水面（y = 水面の高さ）との交点を求める
   /// @param mx マウスの画面 X 座標（ピクセル）

@@ -16,6 +16,11 @@
 ///
 ///          保存先は AppConfig.json / EditorConfig.json と同じ Resources/Setting/（作業ディレクトリ = project/ 基準）。
 ///          ファイルが無ければ既定値のまま起動する。
+///
+///          Singleton にしている理由: 設定ファイルは 1 つで、どのシーンのどのスクリプトから読んでも
+///          同じ値でなければならない（ポーズで変えた感度が次のシーンでも効く）ため、
+///          インスタンスを 1 つに限定してアクセス点を Get() にまとめている。
+///          値はすべて private にし、読み書きは下の Getter / Setter を通す（カプセル化）。
 class GameSettings {
 public:
   /// @brief 唯一のインスタンスを取得する
@@ -25,21 +30,9 @@ public:
     return instance;
   }
 
-  // --- 操作 ---
-  float mouseSensitivity = 1.0f;      ///< マウス感度の倍率（kSensitivityMin〜kSensitivityMax）
-  float controllerSensitivity = 1.0f; ///< 右スティック感度の倍率
-  bool invertY = false;               ///< 上下反転
-
-  // --- 視野角 ---
-  /// @brief 垂直方向の視野角（度）。CameraComponent::fovY はラジアンなので使う側で変換する
-  /// @details 既定の 26 度は Game.json のカメラに入っている 0.45 rad とほぼ同じ
-  ///          （＝設定を触らなければ今までと同じ見え方）。16:9 では水平 約 44 度。
-  float fovDeg = 26.0f;
-
-  // --- 音量（0.0〜1.0） ---
-  float masterVolume = 1.0f; ///< 全体音量
-  float bgmVolume = 1.0f;    ///< BGM バスの音量
-  float seVolume = 1.0f;     ///< SE バスの音量
+  // Singleton なのでコピー・代入はさせない
+  GameSettings(const GameSettings &) = delete;
+  GameSettings &operator=(const GameSettings &) = delete;
 
   static constexpr float kSensitivityMin = 0.1f;
   static constexpr float kSensitivityMax = 3.0f;
@@ -49,18 +42,70 @@ public:
   static constexpr float kFovMax = 60.0f;         ///< 視野角の上限（度）。垂直 60 度 ≒ 水平 94 度
   static constexpr float kFovStep = 1.0f;         ///< 設定画面で左右キー 1 回ぶん（度）
 
+  // ------------------------------------------------------------------
+  // 読み取り
+  // ------------------------------------------------------------------
+
+  /// @brief マウス感度の倍率を取得する
+  /// @return 倍率（kSensitivityMin〜kSensitivityMax）
+  float MouseSensitivity() const { return mouseSensitivity_; }
+  /// @brief 右スティック感度の倍率を取得する
+  /// @return 倍率（kSensitivityMin〜kSensitivityMax）
+  float ControllerSensitivity() const { return controllerSensitivity_; }
+  /// @brief 上下反転が有効か
+  /// @return 反転するなら true
+  bool InvertY() const { return invertY_; }
+  /// @brief 垂直方向の視野角（度）を取得する
+  /// @return 視野角（度）。CameraComponent::fovY はラジアンなので FovRadians() を使う
+  float FovDeg() const { return fovDeg_; }
+  /// @brief 全体音量を取得する
+  /// @return 0.0〜1.0
+  float MasterVolume() const { return masterVolume_; }
+  /// @brief BGM バスの音量を取得する
+  /// @return 0.0〜1.0
+  float BgmVolume() const { return bgmVolume_; }
+  /// @brief SE バスの音量を取得する
+  /// @return 0.0〜1.0
+  float SeVolume() const { return seVolume_; }
+
   /// @brief 視野角をラジアンで返す（CameraComponent::fovY に入れる値）
   /// @return fovDeg をラジアンに変換した値
-  float FovRadians() const { return fovDeg * (3.14159265358979f / 180.0f); }
+  float FovRadians() const { return fovDeg_ * (3.14159265358979f / 180.0f); }
+
+  // ------------------------------------------------------------------
+  // 書き込み（範囲への丸めは Clamp() / Apply() でまとめて行う）
+  // ------------------------------------------------------------------
+
+  /// @brief マウス感度の倍率を設定する
+  /// @param v 倍率
+  void SetMouseSensitivity(float v) { mouseSensitivity_ = v; }
+  /// @brief 右スティック感度の倍率を設定する
+  /// @param v 倍率
+  void SetControllerSensitivity(float v) { controllerSensitivity_ = v; }
+  /// @brief 上下反転を設定する
+  /// @param v 反転するなら true
+  void SetInvertY(bool v) { invertY_ = v; }
+  /// @brief 垂直方向の視野角（度）を設定する
+  /// @param v 視野角（度）
+  void SetFovDeg(float v) { fovDeg_ = v; }
+  /// @brief 全体音量を設定する（AudioEngine へ流すには Apply() を呼ぶ）
+  /// @param v 0.0〜1.0
+  void SetMasterVolume(float v) { masterVolume_ = v; }
+  /// @brief BGM バスの音量を設定する（AudioEngine へ流すには Apply() を呼ぶ）
+  /// @param v 0.0〜1.0
+  void SetBgmVolume(float v) { bgmVolume_ = v; }
+  /// @brief SE バスの音量を設定する（AudioEngine へ流すには Apply() を呼ぶ）
+  /// @param v 0.0〜1.0
+  void SetSeVolume(float v) { seVolume_ = v; }
 
   /// @brief 値を有効範囲へ丸める
   void Clamp() {
-    mouseSensitivity = std::clamp(mouseSensitivity, kSensitivityMin, kSensitivityMax);
-    controllerSensitivity = std::clamp(controllerSensitivity, kSensitivityMin, kSensitivityMax);
-    fovDeg = std::clamp(fovDeg, kFovMin, kFovMax);
-    masterVolume = std::clamp(masterVolume, 0.0f, 1.0f);
-    bgmVolume = std::clamp(bgmVolume, 0.0f, 1.0f);
-    seVolume = std::clamp(seVolume, 0.0f, 1.0f);
+    mouseSensitivity_ = std::clamp(mouseSensitivity_, kSensitivityMin, kSensitivityMax);
+    controllerSensitivity_ = std::clamp(controllerSensitivity_, kSensitivityMin, kSensitivityMax);
+    fovDeg_ = std::clamp(fovDeg_, kFovMin, kFovMax);
+    masterVolume_ = std::clamp(masterVolume_, 0.0f, 1.0f);
+    bgmVolume_ = std::clamp(bgmVolume_, 0.0f, 1.0f);
+    seVolume_ = std::clamp(seVolume_, 0.0f, 1.0f);
   }
 
   /// @brief 音量を AudioEngine へ反映する
@@ -69,20 +114,20 @@ public:
   void Apply() {
     Clamp();
     auto &audio = AudioEngine::Get();
-    audio.SetMasterVolume(masterVolume);
-    audio.SetBusVolume(AudioBus::BGM, bgmVolume);
-    audio.SetBusVolume(AudioBus::SE, seVolume);
+    audio.SetMasterVolume(masterVolume_);
+    audio.SetBusVolume(AudioBus::BGM, bgmVolume_);
+    audio.SetBusVolume(AudioBus::SE, seVolume_);
   }
 
   /// @brief 既定値に戻す（保存はしない）
   void ResetToDefault() {
-    mouseSensitivity = 1.0f;
-    controllerSensitivity = 1.0f;
-    invertY = false;
-    fovDeg = 26.0f;
-    masterVolume = 1.0f;
-    bgmVolume = 1.0f;
-    seVolume = 1.0f;
+    mouseSensitivity_ = 1.0f;
+    controllerSensitivity_ = 1.0f;
+    invertY_ = false;
+    fovDeg_ = 26.0f;
+    masterVolume_ = 1.0f;
+    bgmVolume_ = 1.0f;
+    seVolume_ = 1.0f;
   }
 
   /// @brief ファイルから読み込む（無ければ既定値のまま）。起動時に一度呼べばよい
@@ -133,13 +178,13 @@ public:
   /// @return 全設定項目を持つ JSON オブジェクト
   nlohmann::json ToJson() const {
     return {
-        {"mouseSensitivity", mouseSensitivity},
-        {"controllerSensitivity", controllerSensitivity},
-        {"invertY", invertY},
-        {"fovDeg", fovDeg},
-        {"masterVolume", masterVolume},
-        {"bgmVolume", bgmVolume},
-        {"seVolume", seVolume},
+        {"mouseSensitivity", mouseSensitivity_},
+        {"controllerSensitivity", controllerSensitivity_},
+        {"invertY", invertY_},
+        {"fovDeg", fovDeg_},
+        {"masterVolume", masterVolume_},
+        {"bgmVolume", bgmVolume_},
+        {"seVolume", seVolume_},
     };
   }
 
@@ -147,13 +192,13 @@ public:
   /// @param j 読み込む JSON（含まれていないキーは現在の値のまま）
   /// @note 範囲チェックはしないので、呼んだ後に Clamp() すること。
   void FromJson(const nlohmann::json &j) {
-    if (j.contains("mouseSensitivity")) mouseSensitivity = j["mouseSensitivity"].get<float>();
-    if (j.contains("controllerSensitivity")) controllerSensitivity = j["controllerSensitivity"].get<float>();
-    if (j.contains("invertY")) invertY = j["invertY"].get<bool>();
-    if (j.contains("fovDeg")) fovDeg = j["fovDeg"].get<float>();
-    if (j.contains("masterVolume")) masterVolume = j["masterVolume"].get<float>();
-    if (j.contains("bgmVolume")) bgmVolume = j["bgmVolume"].get<float>();
-    if (j.contains("seVolume")) seVolume = j["seVolume"].get<float>();
+    if (j.contains("mouseSensitivity")) mouseSensitivity_ = j["mouseSensitivity"].get<float>();
+    if (j.contains("controllerSensitivity")) controllerSensitivity_ = j["controllerSensitivity"].get<float>();
+    if (j.contains("invertY")) invertY_ = j["invertY"].get<bool>();
+    if (j.contains("fovDeg")) fovDeg_ = j["fovDeg"].get<float>();
+    if (j.contains("masterVolume")) masterVolume_ = j["masterVolume"].get<float>();
+    if (j.contains("bgmVolume")) bgmVolume_ = j["bgmVolume"].get<float>();
+    if (j.contains("seVolume")) seVolume_ = j["seVolume"].get<float>();
   }
 
 private:
@@ -161,4 +206,20 @@ private:
 
   static constexpr const char *kPath = Chaso::kGameSettingsPath; ///< Resources/Setting/GameSettings.json
   bool loaded_ = false;
+
+  // --- 操作 ---
+  float mouseSensitivity_ = 1.0f;      ///< マウス感度の倍率（kSensitivityMin〜kSensitivityMax）
+  float controllerSensitivity_ = 1.0f; ///< 右スティック感度の倍率
+  bool invertY_ = false;               ///< 上下反転
+
+  // --- 視野角 ---
+  /// @brief 垂直方向の視野角（度）。CameraComponent::fovY はラジアンなので使う側で変換する
+  /// @details 既定の 26 度は Game.json のカメラに入っている 0.45 rad とほぼ同じ
+  ///          （＝設定を触らなければ今までと同じ見え方）。16:9 では水平 約 44 度。
+  float fovDeg_ = 26.0f;
+
+  // --- 音量（0.0〜1.0） ---
+  float masterVolume_ = 1.0f; ///< 全体音量
+  float bgmVolume_ = 1.0f;    ///< BGM バスの音量
+  float seVolume_ = 1.0f;     ///< SE バスの音量
 };

@@ -4,6 +4,7 @@
 #include "Framework/App.h"
 #include "RenderCommon.h"
 #include "SceneManager.h"
+#include "Game/Framework/ScreenFx.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cmath>
@@ -41,36 +42,11 @@
 ///     閉じきったところから Result の「深海からの浮上」へ継ぎ目なくつながる。
 ///   ・遷移の幕（Dissolve）が掛かっている間は、ColorGrade / VisionBleed を積んだり血を最後へ移したりしない
 ///     （幕の後ろへ回ると、幕の色まで灰色になったり血が幕の上に出たりするため）。
-struct DeathScreenFx {
-  // ---- 調整値（DeathSinkScript の JSON キー "screenFx"） ----
-  bool blood = true;            ///< レンズの血を出すか
-  float bloodLevel = 0.7f;      ///< 瀕死の血の強さ（BloodOverlay の lowHealth）
-  float bloodFlashTime = 0.6f;  ///< 被弾の瞬間の赤（hitFlash）が引くまで（秒）
-  float bloodMinShow = 0.35f;   ///< 水に入っても、最低この秒数は血を見せる
-  float bloodWashTime = 0.8f;   ///< 水に入ってから血が洗い流されるまで（秒）
-  bool desaturate = true;       ///< 色を抜くか
-  float saturationTo = 0.15f;   ///< 最終的な彩度（1 で素通し、0 で白黒）
-  float desaturateTime = 2.6f;  ///< 力尽きてから saturationTo になるまで（秒）
-  bool blink = true;            ///< 瞬きするか（false なら沈みきった時点ですぐ遷移）
-  float blinkDuration = 0.0f;   ///< 沈み始めてから瞼が閉じきるまで（秒）。0 以下なら暗くなりきる時刻に自動で合わせる
-  float blinkMin = 1.2f;        ///< 自動のときの下限（秒。すでに深いところで力尽きたとき用）
-
-  bool bleed = true;            ///< 視界の滲みを出すか
-  float bleedOnHit = 0.15f;     ///< 力尽きた直後の滲み（0〜1）
-  float bleedEnd = 0.8f;        ///< 瞼が閉じきる頃の滲み（0〜1）
-  float bleedLidGain = 0.3f;    ///< 瞼の閉じ具合 1 あたりに上乗せする滲み
-  float bleedPigment = 0.5f;    ///< 濡れた領域の色ムラ（水彩の濃淡）の強さ（0〜1）
-  bool doubleVision = true;     ///< 瞼が開き直るときに二重に見せるか
-  float ghostMax = 0.018f;      ///< 二重像の最大のずれ（UV。画面幅に対する割合）
-  float ghostGain = 2.2f;       ///< 瞼が開いた量 1 あたりに足す二重像の強さ
-  float ghostSettle = 0.45f;    ///< 二重像が 1 枚に戻る速さ（時定数。秒）
-
-  bool lightFade = true;        ///< 沈むにつれて水面の光を遠ざけるか
-  float shaftIntensityTo = 0.2f;  ///< 閉じきる頃の光柱の強さ（基準に対する倍率）
-  float shaftDensityMul = 3.0f;   ///< 閉じきる頃の深さ減衰（基準に対する倍率。大きいほど光が浅い層だけに残る）
-  float shaftContrastMul = 1.8f;  ///< 閉じきる頃の光柱の断面コントラスト（基準に対する倍率。大きいほど細い）
-  float causticsTo = 0.0f;        ///< 閉じきる頃の床の網目の強さ（基準に対する倍率）
-
+///
+///   画面演出の共通インタフェース ScreenFx を実装する（Update / Clear / IsActive）。
+///   調整値は外から直接書き換えさせず、JSON（ToJson / FromJson）とインスペクタ（DrawImGui）だけで変える。
+class DeathScreenFx : public ScreenFx {
+public:
   /// @brief 演出を開始する（力尽きた瞬間に 1 回呼ぶ）
   /// @param pp        対象の PostProcess（nullptr なら状態だけ進める）
   /// @param withBlood 血を出すか（遷移の見せ用デモでは false）
@@ -114,7 +90,7 @@ struct DeathScreenFx {
   /// @param pp         反映先の PostProcess（nullptr なら時間だけ進める）
   /// @param dt         経過時間（秒）
   /// @param underwater カメラが水中にいるか（血を洗い流し始める・水面の光の基準を取るきっかけ）
-  void Update(PostProcess *pp, float dt, bool underwater) {
+  void Update(PostProcess *pp, float dt, bool underwater) override {
     if (!rt_.active) return;
     rt_.t += dt;
     if (rt_.blinking) rt_.blinkT += dt;
@@ -218,7 +194,7 @@ struct DeathScreenFx {
 
   /// @brief 全部元に戻す（シーンを抜けるとき・作り直すとき）
   /// @param pp 反映先の PostProcess（nullptr なら内部状態だけ消す）
-  void Clear(PostProcess *pp) {
+  void Clear(PostProcess *pp) override {
     if (pp) {
       if (rt_.bloodTouched) {
         pp->SetBloodOverlayHitFlash(0.0f);
@@ -238,6 +214,10 @@ struct DeathScreenFx {
     }
     rt_ = Runtime{};
   }
+
+  /// @brief 演出中か（Begin してから Clear するまで）
+  /// @return 動作中なら true
+  bool IsActive() const override { return rt_.active; }
 
   /// @brief 調整値を JSON に変換する
   /// @return 調整値を持つ JSON オブジェクト
@@ -338,6 +318,35 @@ struct DeathScreenFx {
 #endif
 
 private:
+  // ---- 調整値（DeathSinkScript の JSON キー "screenFx"） ----
+  bool blood = true;            ///< レンズの血を出すか
+  float bloodLevel = 0.7f;      ///< 瀕死の血の強さ（BloodOverlay の lowHealth）
+  float bloodFlashTime = 0.6f;  ///< 被弾の瞬間の赤（hitFlash）が引くまで（秒）
+  float bloodMinShow = 0.35f;   ///< 水に入っても、最低この秒数は血を見せる
+  float bloodWashTime = 0.8f;   ///< 水に入ってから血が洗い流されるまで（秒）
+  bool desaturate = true;       ///< 色を抜くか
+  float saturationTo = 0.15f;   ///< 最終的な彩度（1 で素通し、0 で白黒）
+  float desaturateTime = 2.6f;  ///< 力尽きてから saturationTo になるまで（秒）
+  bool blink = true;            ///< 瞬きするか（false なら沈みきった時点ですぐ遷移）
+  float blinkDuration = 0.0f;   ///< 沈み始めてから瞼が閉じきるまで（秒）。0 以下なら暗くなりきる時刻に自動で合わせる
+  float blinkMin = 1.2f;        ///< 自動のときの下限（秒。すでに深いところで力尽きたとき用）
+
+  bool bleed = true;            ///< 視界の滲みを出すか
+  float bleedOnHit = 0.15f;     ///< 力尽きた直後の滲み（0〜1）
+  float bleedEnd = 0.8f;        ///< 瞼が閉じきる頃の滲み（0〜1）
+  float bleedLidGain = 0.3f;    ///< 瞼の閉じ具合 1 あたりに上乗せする滲み
+  float bleedPigment = 0.5f;    ///< 濡れた領域の色ムラ（水彩の濃淡）の強さ（0〜1）
+  bool doubleVision = true;     ///< 瞼が開き直るときに二重に見せるか
+  float ghostMax = 0.018f;      ///< 二重像の最大のずれ（UV。画面幅に対する割合）
+  float ghostGain = 2.2f;       ///< 瞼が開いた量 1 あたりに足す二重像の強さ
+  float ghostSettle = 0.45f;    ///< 二重像が 1 枚に戻る速さ（時定数。秒）
+
+  bool lightFade = true;        ///< 沈むにつれて水面の光を遠ざけるか
+  float shaftIntensityTo = 0.2f;  ///< 閉じきる頃の光柱の強さ（基準に対する倍率）
+  float shaftDensityMul = 3.0f;   ///< 閉じきる頃の深さ減衰（基準に対する倍率。大きいほど光が浅い層だけに残る）
+  float shaftContrastMul = 1.8f;  ///< 閉じきる頃の光柱の断面コントラスト（基準に対する倍率。大きいほど細い）
+  float causticsTo = 0.0f;        ///< 閉じきる頃の床の網目の強さ（基準に対する倍率）
+
   /// @brief 実行中の状態（調整値とは別にまとめて初期化する）
   struct Runtime {
     bool active = false;

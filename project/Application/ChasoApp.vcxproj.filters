@@ -170,6 +170,24 @@
     <ClInclude Include="..\Application\Game\Framework\GameSession.h">
       <Filter>Game\Framework</Filter>
     </ClInclude>
+    <ClInclude Include="..\Application\Game\Framework\StateMachine.h">
+      <Filter>Game\Framework</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Application\Game\Framework\GameEvents.h">
+      <Filter>Game\Framework</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Application\Game\Framework\EntityPool.h">
+      <Filter>Game\Framework</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Application\Game\Framework\PlayerMotionTracker.h">
+      <Filter>Game\Framework</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Application\Game\Framework\ScreenFx.h">
+      <Filter>Game\Framework</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Application\Game\Framework\StageDemo.h">
+      <Filter>Game\Framework</Filter>
+    </ClInclude>
     <ClInclude Include="..\Application\Game\Framework\StageProgress.h">
       <Filter>Game\Framework</Filter>
     </ClInclude>

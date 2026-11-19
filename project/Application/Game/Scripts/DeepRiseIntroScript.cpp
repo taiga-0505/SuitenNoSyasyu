@@ -13,6 +13,7 @@
 #include "Game/Framework/GameModeBase.h"
 #include "Game/Framework/StageProgress.h"
 #include "Game/Framework/SharkChaseCutscene.h"
+#include "Game/Framework/StateMachine.h"
 #include "Scene.h"
 
 #if RC_ENABLE_IMGUI
@@ -81,26 +82,20 @@
 ///                           2.  浮上        : 戻った位置から goal へ riseDuration で浮上（ステージ名カードは
 ///                                             ここから出す）。以降は通常と同じ。
 ///                         intro_playing はカットシーンの間も立てたまま（レール・入力・HUD は止まったまま）。
+///
+///   実装（State パターン）:
+///     以前は chasing_ / playing_ / finished_ の 3 つの bool の組み合わせで「待機 / サメ追跡 / 浮上 / 完了」を
+///     表していた（ありえない組み合わせも作れてしまう）。状態 1 つ = 状態クラス 1 つ
+///     （IdleState / SharkChaseState / RiseState / FinishedState）に分け、
+///     次の状態は状態クラス自身が StateMachine::ChangeState で決めるようにした。
+///     ステージ名カードと GAME START の表示は浮上と並行して時間で消えるだけなので、状態には含めない。
 class DeepRiseIntroScript : public ScriptableEntity {
 public:
-  bool alwaysPlay = false;
-  float riseDepth = 26.0f;
-  float riseDuration = 3.2f;
-  float riseEase = 2.2f;
-  float risePitchStart = -0.35f;
-  bool bubbles = true;
-  bool showStartText = true;
-  std::string startText = "GAME START";
-  float startTextDuration = 1.4f;
-  float startBandAlpha = 0.72f; ///< 文字の後ろに敷く画面幅の暗い帯の濃さ（0 で無し）
-  std::string startFontPath = "Resources/fonts/Kiwi_Maru/KiwiMaru-Medium.ttf";
-  float startFontSize = 72.0f;
-  bool showStageCard = true;
-  float cardDelay = 0.2f;   ///< 浮上が始まってから出始めるまで
-  float cardFadeIn = 0.6f;  ///< 下から浮かび上がりながら現れる時間
-  float cardHold = 0.9f;    ///< 出きったまま見せる時間
-  float cardFadeOut = 0.45f;///< 上へ抜けながら消える時間
-  SharkChaseParams sharkChase; ///< 浮上前のサメ追跡カットシーン（既定は無効）
+  /// @brief 待機状態で作る
+  DeepRiseIntroScript() {
+    fsm_.ChangeState<IdleState>();
+    fsm_.ApplyPending(*this);
+  }
 
   /// @brief 設定項目を JSON に書き出す
   /// @return 設定項目を格納した JSON
@@ -163,9 +158,7 @@ public:
 #if RC_ENABLE_IMGUI
   /// @brief インスペクタに浮上・ステージ名カードの状態と各パラメータ、再生し直すボタンを表示する
   void OnImGui() override {
-    ImGui::Text("State: %s  t=%.2f / %.2f",
-                chasing_ ? "shark chase" : (playing_ ? "rising" : (finished_ ? "finished" : "idle")), t_,
-                riseDuration);
+    ImGui::Text("State: %s  t=%.2f / %.2f", fsm_.CurrentName(), t_, riseDuration);
     ImGui::Text("Chase: %s", chase_.PhaseName());
     ImGui::Checkbox("Always Play", &alwaysPlay);
     ImGui::DragFloat("Rise Depth (m)", &riseDepth, 0.5f, 1.0f, 200.0f);
@@ -186,7 +179,7 @@ public:
     sharkChase.DrawImGui();
     if (ImGui::Button("Replay")) {
       // 元の位置に戻してからやり直す（レールが動いたあとなら現在地からの浮上になる）
-      if (playing_ || chasing_) RestoreCamera();
+      if (fsm_.IsIn<RiseState>() || fsm_.IsIn<SharkChaseState>()) RestoreCamera();
       Begin();
     }
   }
@@ -231,27 +224,20 @@ protected:
     paused_ = (deltaTime <= 0.0f);
     if (deltaTime <= 0.0f) return;
 
-    // サメ追跡カットシーン：カメラを握っているあいだは浮上を始めない。
-    // 返してもらったら、その位置（タコの頭）から浮上する。沈むサメ・墨はその後も動かして片付ける
-    if (chase_.IsActive()) {
-      auto *tr = GetComponent<TransformComponent>();
-      chase_.Update(deltaTime, chasing_ ? tr : nullptr);
-      if (chasing_) {
-        if (tr) UpdateBubbleEmitterAt(chase_.OctopusPos());
-        if (!chase_.IsDirecting()) {
-          chasing_ = false;
-          BeginRise(true);
-        }
-      }
-    } else if (chasing_) {
-      // 念のため（カットシーンが途中で片付けられた）：今の位置から浮上へ
-      chasing_ = false;
-      BeginRise(true);
+    // サメ追跡カットシーンがカメラを返したあとも、沈むサメ・墨は動かして片付ける
+    // （カメラを握っている間の更新は SharkChaseState が行う）
+    if (!fsm_.IsIn<SharkChaseState>() && chase_.IsActive()) {
+      chase_.Update(deltaTime, nullptr);
     }
 
-    if (playing_) {
-      UpdateRise(deltaTime);
+    // 追跡 / 浮上の進行と次の状態の決定は、現在の状態クラスに任せる。
+    // 追跡から浮上へ切り替わったフレームは、同じフレームで浮上も 1 歩進める（以前の実装と同じタイミング）
+    const bool wasChasing = fsm_.IsIn<SharkChaseState>();
+    fsm_.Update(*this, deltaTime);
+    if (wasChasing && fsm_.IsIn<RiseState>()) {
+      fsm_.Update(*this, deltaTime);
     }
+
     if (cardActive_) {
       cardTime_ += deltaTime;
       if (cardTime_ >= CardTotal()) cardActive_ = false;
@@ -266,7 +252,10 @@ protected:
   /// @brief 輪郭の除外矩形・タグ・泡エンティティ・フォントを後片付けする
   void OnDestroy() override {
     chase_.Cleanup();
-    chasing_ = false;
+    if (fsm_.IsIn<SharkChaseState>()) {
+      fsm_.ChangeState<IdleState>();
+      fsm_.ApplyPending(*this);
+    }
     ClearOutlineExclusion();
     if (Entity *self = GetEntity()) self->ClearTag(kTagIntroPlaying);
     if (auto e = bubbles_.lock()) e->Destroy();
@@ -476,9 +465,7 @@ private:
     startPos_ = {goalPos_.x, goalPos_.y - riseDepth, goalPos_.z};
     startRot_ = {risePitchStart, goalRot_.y, goalRot_.z};
     t_ = 0.0f;
-    finished_ = false;
     chase_.Cleanup();
-    chasing_ = false;
 
     if (Entity *self = GetEntity()) self->SetTag(kTagIntroPlaying, 1);
 
@@ -495,10 +482,10 @@ private:
     // サメ追跡カットシーン：先にそちらを再生し、カメラを返してもらってから浮上する
     if (sharkChase.enabled) {
       if (Scene *scene = GetScene()) {
-        playing_ = false;
         cardActive_ = false;
         chase_.Begin(scene, GetSceneContext(), sharkChase, goalPos_, startRot_, *tr);
-        chasing_ = true;
+        fsm_.ChangeState<SharkChaseState>();
+        fsm_.ApplyPending(*this);
         // 泡はタコのまわりに湧かせる（水面に近づいたら UpdateBubbleEmitterAt が止める）
         bubbleEmitting_ = false;
         if (bubbles) {
@@ -511,19 +498,21 @@ private:
       }
     }
 
-    BeginRise();
+    if (BeginRise()) {
+      fsm_.ChangeState<RiseState>();
+      fsm_.ApplyPending(*this);
+    }
   }
 
-  /// @brief 浮上を始める
+  /// @brief 浮上を始める（状態の切り替えは呼び出し側が行う）
   /// @param fromCurrent true ならカメラの今の位置（カットシーンが返したタコの頭）から、
   ///                    false なら startPos_（goal の真下 riseDepth）から
-  void BeginRise(bool fromCurrent = false) {
+  /// @return 始められたら true（カメラの Transform が無ければ false）
+  bool BeginRise(bool fromCurrent = false) {
     auto *tr = GetComponent<TransformComponent>();
-    if (!tr) return;
+    if (!tr) return false;
     if (fromCurrent) startPos_ = tr->position;
     t_ = 0.0f;
-    playing_ = true;
-    finished_ = false;
 
     tr->position = startPos_;
     tr->rotation = startRot_;
@@ -544,6 +533,7 @@ private:
       SetBubbleEmission(0);
     }
     Log::Print("[DeepRiseIntroScript] rise begin (depth " + std::to_string(riseDepth) + "m)");
+    return true;
   }
 
   /// @brief GAME START の帯に登録した輪郭の除外矩形を外す
@@ -563,11 +553,12 @@ private:
     }
   }
 
-  /// @brief 浮上を 1 フレーム進め、泡の射出を制御し、終わったら Finish する
+  /// @brief 浮上を 1 フレーム進め、泡の射出を制御する
   /// @param dt 前フレームからの経過時間（秒）
-  void UpdateRise(float dt) {
+  /// @return 浮上しきったら true（呼び出し側の RiseState が Finish して FinishedState へ進む）
+  bool UpdateRise(float dt) {
     auto *tr = GetComponent<TransformComponent>();
-    if (!tr) return;
+    if (!tr) return false;
 
     // 位置は EaseOutPow で「速く出て水面手前で減速」させる
     t_ += dt;
@@ -588,20 +579,16 @@ private:
     }
     UpdateBubbleEmitter(*tr);
 
-    if (u >= 1.0f) {
-      Finish();
-    }
+    return u >= 1.0f;
   }
 
-  /// @brief 浮上を終える。カメラを目標へ合わせ、タグと泡を止めて GAME START を出す
+  /// @brief 浮上を終える。カメラを目標へ合わせ、タグと泡を止めて GAME START を出す（状態の切り替えは RiseState が行う）
   void Finish() {
     auto *tr = GetComponent<TransformComponent>();
     if (tr) {
       tr->position = goalPos_;
       tr->rotation = goalRot_;
     }
-    playing_ = false;
-    finished_ = true;
     if (Entity *self = GetEntity()) self->ClearTag(kTagIntroPlaying);
     SetBubbleEmission(0);
     bubbleEmitting_ = false;
@@ -695,11 +682,84 @@ private:
     tr->position = {center.x, y, center.z};
   }
 
+  // ---- 設定項目（JSON / インスペクタから変える。外からは触らせない）----
+  bool alwaysPlay = false;
+  float riseDepth = 26.0f;
+  float riseDuration = 3.2f;
+  float riseEase = 2.2f;
+  float risePitchStart = -0.35f;
+  bool bubbles = true;
+  bool showStartText = true;
+  std::string startText = "GAME START";
+  float startTextDuration = 1.4f;
+  float startBandAlpha = 0.72f; ///< 文字の後ろに敷く画面幅の暗い帯の濃さ（0 で無し）
+  std::string startFontPath = "Resources/fonts/Kiwi_Maru/KiwiMaru-Medium.ttf";
+  float startFontSize = 72.0f;
+  bool showStageCard = true;
+  float cardDelay = 0.2f;   ///< 浮上が始まってから出始めるまで
+  float cardFadeIn = 0.6f;  ///< 下から浮かび上がりながら現れる時間
+  float cardHold = 0.9f;    ///< 出きったまま見せる時間
+  float cardFadeOut = 0.45f;///< 上へ抜けながら消える時間
+  SharkChaseParams sharkChase; ///< 浮上前のサメ追跡カットシーン（既定は無効）
+
+  // ---- 状態クラス（private な入れ子クラス。次の状態は各状態が ChangeState で決める）----
+
+  /// @brief 待機（再生していない / 浮上の準備ができなかった）。何もしない
+  class IdleState : public IState<DeepRiseIntroScript> {
+  public:
+    /// @brief 何もしない
+    void OnUpdate(DeepRiseIntroScript &, StateMachine<DeepRiseIntroScript> &, float) override {}
+    /// @brief 状態名
+    const char *Name() const override { return "idle"; }
+  };
+
+  /// @brief サメ追跡カットシーンがカメラを握っている（浮上はまだ始めない）
+  class SharkChaseState : public IState<DeepRiseIntroScript> {
+  public:
+    /// @brief カットシーンを進め、カメラを返してもらったら（または途中で片付けられたら）今の位置から Rise へ
+    void OnUpdate(DeepRiseIntroScript &o, StateMachine<DeepRiseIntroScript> &m, float dt) override {
+      auto *tr = o.GetComponent<TransformComponent>();
+      if (o.chase_.IsActive()) {
+        o.chase_.Update(dt, tr);
+        if (tr) o.UpdateBubbleEmitterAt(o.chase_.OctopusPos());
+        if (o.chase_.IsDirecting()) return;
+      }
+      // 返してもらった位置（タコの頭）から浮上する。念のため、カットシーンが途中で片付けられた場合も同じ
+      if (o.BeginRise(true)) {
+        m.ChangeState<RiseState>();
+      } else {
+        m.ChangeState<IdleState>();
+      }
+    }
+    /// @brief 状態名
+    const char *Name() const override { return "shark chase"; }
+  };
+
+  /// @brief 深海から水面へ浮上している
+  class RiseState : public IState<DeepRiseIntroScript> {
+  public:
+    /// @brief 浮上を進め、浮上しきったら GAME START を出して Finished へ
+    void OnUpdate(DeepRiseIntroScript &o, StateMachine<DeepRiseIntroScript> &m, float dt) override {
+      if (!o.UpdateRise(dt)) return;
+      o.Finish();
+      m.ChangeState<FinishedState>();
+    }
+    /// @brief 状態名
+    const char *Name() const override { return "rising"; }
+  };
+
+  /// @brief 浮上が終わり、ゲームが始まった。何もしない
+  class FinishedState : public IState<DeepRiseIntroScript> {
+  public:
+    /// @brief 何もしない
+    void OnUpdate(DeepRiseIntroScript &, StateMachine<DeepRiseIntroScript> &, float) override {}
+    /// @brief 状態名
+    const char *Name() const override { return "finished"; }
+  };
+
   // ---- 状態 ----
+  StateMachine<DeepRiseIntroScript> fsm_; ///< 待機 / サメ追跡 / 浮上 / 完了
   SharkChaseCutscene chase_; ///< 浮上前のサメ追跡カットシーン
-  bool chasing_ = false;     ///< カットシーンがカメラを握っている
-  bool playing_ = false;
-  bool finished_ = false;
   float t_ = 0.0f;
   RC::Vector3 startPos_{};
   RC::Vector3 goalPos_{};

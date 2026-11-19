@@ -68,64 +68,94 @@
 //   reflectRange = 反射がどこまで届くか。見え方のチューニング値（自由に決めてよい）
 // D-06（水面メッシュの LOD）が入って頂点が細かくなれば reflectRange は下げられる。
 
+namespace {
+
+// ---------------------------------------------------------------------
+// 水際の半径の求め方（形状ごとのポリモーフィズム / Strategy）
+// ---------------------------------------------------------------------
+// 形状ごとに素のメッシュの大きさが違うので、半径の出し方も違う。
+// 以前は ComputeRadius の中で PrimitiveType を if で見て式を切り替えていたが、
+// 「形状ごとの半径の式」をクラスに分け、ComputeRadius は式の中身を知らずに呼ぶだけにした。
+// 形状を足すときは派生クラスを足して For() の対応に 1 行加えればよい。
+
+/// @brief 障害物の水際の大きさ（XZ 断面を円で近似したときの半径）の求め方
+class ObstacleFootprint {
+public:
+  virtual ~ObstacleFootprint() = default;
+
+  /// @brief Transform の XZ スケールから円の半径を求める
+  /// @param sx X 方向のスケールの絶対値
+  /// @param sz Z 方向のスケールの絶対値
+  /// @return 半径(m)（radiusScale / minRadius を掛ける前の素の値）
+  virtual float Radius(float sx, float sz) const = 0;
+
+  /// @brief メッシュの形状に合う求め方を返す
+  /// @param pm 対象の PrimitiveMeshComponent（無ければ nullptr）
+  /// @return 求め方（状態を持たないので共有のインスタンスを返す）
+  static const ObstacleFootprint &For(const PrimitiveMeshComponent *pm);
+};
+
+/// @brief 球・円柱：素の半径が 1.0 なので、そのまま scale が半径になる
+class RoundFootprint final : public ObstacleFootprint {
+public:
+  /// @brief XZ で潰れている場合は大きいほうに合わせる
+  /// @param sx X 方向のスケールの絶対値
+  /// @param sz Z 方向のスケールの絶対値
+  /// @return max(sx, sz)
+  float Radius(float sx, float sz) const override { return (std::max)(sx, sz); }
+};
+
+/// @brief 箱（およびそれ以外）：GenerateBox(1,1,1) は ±0.5 なので XZ の半分は scale*0.5
+class BoxFootprint final : public ObstacleFootprint {
+public:
+  /// @brief XZ 断面の外接円（対角線の半分）
+  /// @details 内接円にすると角から波が突き抜けて見えるため、外接を既定にしている。
+  /// @param sx X 方向のスケールの絶対値
+  /// @param sz Z 方向のスケールの絶対値
+  /// @return 0.5 * sqrt(sx^2 + sz^2)
+  float Radius(float sx, float sz) const override { return 0.5f * std::sqrt(sx * sx + sz * sz); }
+};
+
+const ObstacleFootprint &ObstacleFootprint::For(const PrimitiveMeshComponent *pm) {
+  static const RoundFootprint kRound{};
+  static const BoxFootprint kBox{};
+  if (pm && (pm->type == PrimitiveType::Sphere || pm->type == PrimitiveType::Cylinder)) {
+    return kRound;
+  }
+  return kBox;
+}
+
+} // namespace
+
 /// @brief 水面の障害物リストをシーンから集めてシェーダへ渡すスクリプト
 class WaterObstacleScript : public ScriptableEntity {
 public:
-  // --- 選び方 ---
-  /// @brief `is_terrain` のうち水面をまたぐものを自動で拾うか
-  /// @details false にすると `water_obstacle` タグが 1 のものだけになる。
-  bool autoDetect = true;
-  /// @brief 自動判定で使うタグ名
-  std::string terrainTag = "is_terrain";
-  /// @brief 水面をまたぐ判定の余裕(m)。波の高さぶん見ておく
-  float crossMargin = 0.5f;
-
-  // --- 半径 ---
-  /// @brief 求めた半径に掛ける倍率。見た目を見ながら詰めるための逃げ道
-  float radiusScale = 1.0f;
-  /// @brief 半径の下限(m)。極端に小さい岩で反射が消えるのを防ぐ
-  float minRadius = 0.5f;
-
-  // --- 反射のチューニング（シェーダの gObstacleCount.y / .z） ---
-  /// @brief 反射の強さ（1.0 で入射波と同じ振幅）
-  /// @warning **0 にしても反射は消えない。** シェーダも CPU 側の WaterSurface も
-  ///          `(値 > 0) ? 値 : 1.0` というフォールバックを持っているため、
-  ///          0 を渡すと 1.0（完全反射）に化ける（技術的負債 D-14）。
-  ///          そのため下限を kMinReflect で切ってある。反射を消したいときは
-  ///          障害物そのものを外すこと。
-  float reflectStrength = 1.0f;
-  /// @brief 反射の到達範囲（障害物半径に対する倍率）
-  /// @details 同じ理由で 0 は使えない。下限は kMinReflect。
-  float reflectRange = 3.0f;
-
-  bool debugDraw = true; ///< 採用した障害物の円をギズモ描画する
-
   /// @brief 障害物の選び方・半径・反射の設定を JSON に書き出す
   /// @return 設定項目を格納した JSON
   nlohmann::json Serialize() override {
     return {
-        {"autoDetect", autoDetect},
-        {"terrainTag", terrainTag},
-        {"crossMargin", crossMargin},
-        {"radiusScale", radiusScale},
-        {"minRadius", minRadius},
-        {"reflectStrength", reflectStrength},
-        {"reflectRange", reflectRange},
-        {"debugDraw", debugDraw},
+        {"autoDetect", autoDetect_},
+        {"terrainTag", terrainTag_},
+        {"crossMargin", crossMargin_},
+        {"radiusScale", radiusScale_},
+        {"minRadius", minRadius_},
+        {"reflectStrength", reflectStrength_},
+        {"reflectRange", reflectRange_},
+        {"debugDraw", debugDraw_},
     };
   }
 
   /// @brief JSON から障害物の選び方・半径・反射の設定を読み込む
   /// @param j 読み込み元の JSON（存在するキーだけ反映する）
   void Deserialize(const nlohmann::json &j) override {
-    if (j.contains("autoDetect")) autoDetect = j["autoDetect"].get<bool>();
-    if (j.contains("terrainTag")) terrainTag = j["terrainTag"].get<std::string>();
-    if (j.contains("crossMargin")) crossMargin = j["crossMargin"].get<float>();
-    if (j.contains("radiusScale")) radiusScale = j["radiusScale"].get<float>();
-    if (j.contains("minRadius")) minRadius = j["minRadius"].get<float>();
-    if (j.contains("reflectStrength")) reflectStrength = j["reflectStrength"].get<float>();
-    if (j.contains("reflectRange")) reflectRange = j["reflectRange"].get<float>();
-    if (j.contains("debugDraw")) debugDraw = j["debugDraw"].get<bool>();
+    if (j.contains("autoDetect")) autoDetect_ = j["autoDetect"].get<bool>();
+    if (j.contains("terrainTag")) terrainTag_ = j["terrainTag"].get<std::string>();
+    if (j.contains("crossMargin")) crossMargin_ = j["crossMargin"].get<float>();
+    if (j.contains("radiusScale")) radiusScale_ = j["radiusScale"].get<float>();
+    if (j.contains("minRadius")) minRadius_ = j["minRadius"].get<float>();
+    if (j.contains("reflectStrength")) reflectStrength_ = j["reflectStrength"].get<float>();
+    if (j.contains("reflectRange")) reflectRange_ = j["reflectRange"].get<float>();
+    if (j.contains("debugDraw")) debugDraw_ = j["debugDraw"].get<bool>();
   }
 
 protected:
@@ -138,8 +168,8 @@ protected:
     RC::SetWaterObstacles(picked_.empty() ? nullptr : picked_.data(),
                           static_cast<int>(picked_.size()));
     // 0 を渡すとシェーダ側のフォールバックで 1.0 / 3.0 に化けるので下限を切る（D-14）
-    RC::SetWaterReflectParams((std::max)(reflectStrength, kMinReflect),
-                              (std::max)(reflectRange, kMinReflect));
+    RC::SetWaterReflectParams((std::max)(reflectStrength_, kMinReflect),
+                              (std::max)(reflectRange_, kMinReflect));
   }
 
   /// @brief 水面シェーダへ渡している障害物リストを空にする
@@ -152,7 +182,7 @@ protected:
 public:
   /// @brief 採用した障害物の円と、反射の届く範囲の円を水面の高さに描く
   void OnDebugRender() override {
-    if (!debugDraw) return;
+    if (!debugDraw_) return;
     const float waterY = WaterHeight();
     const RC::Vector4 col = {0.2f, 0.9f, 1.0f, 1.0f};
 
@@ -161,7 +191,7 @@ public:
       // 岩の実寸とどれだけ合っているかを目で見て確かめられるようにする。
       DrawCircleXZ({o.x, waterY, o.z}, o.w, col, 32);
       // 反射波が届く外周。ここまでが波の跳ね返りに使われる
-      DrawCircleXZ({o.x, waterY, o.z}, o.w * reflectRange,
+      DrawCircleXZ({o.x, waterY, o.z}, o.w * reflectRange_,
                    {col.x, col.y, col.z, 0.3f}, 32);
     }
   }
@@ -169,20 +199,20 @@ public:
 #if RC_ENABLE_IMGUI
   /// @brief 選び方・半径・反射の設定 UI と、採用した障害物の一覧を表示する
   void OnImGui() override {
-    ImGui::Checkbox("Auto Detect", &autoDetect);
+    ImGui::Checkbox("Auto Detect", &autoDetect_);
     {
       char buf[64] = {};
-      std::snprintf(buf, sizeof(buf), "%s", terrainTag.c_str());
-      if (ImGui::InputText("Terrain Tag", buf, sizeof(buf))) terrainTag = buf;
+      std::snprintf(buf, sizeof(buf), "%s", terrainTag_.c_str());
+      if (ImGui::InputText("Terrain Tag", buf, sizeof(buf))) terrainTag_ = buf;
     }
-    ImGui::DragFloat("Cross Margin", &crossMargin, 0.05f, 0.0f, 10.0f);
-    ImGui::DragFloat("Radius Scale", &radiusScale, 0.01f, 0.05f, 5.0f);
-    ImGui::DragFloat("Min Radius", &minRadius, 0.05f, 0.0f, 20.0f);
+    ImGui::DragFloat("Cross Margin", &crossMargin_, 0.05f, 0.0f, 10.0f);
+    ImGui::DragFloat("Radius Scale", &radiusScale_, 0.01f, 0.05f, 5.0f);
+    ImGui::DragFloat("Min Radius", &minRadius_, 0.05f, 0.0f, 20.0f);
     ImGui::Separator();
     // 下限を 0 にしない。0 はシェーダ側で 1.0 に化けて逆に最大反射になる（D-14）
-    ImGui::DragFloat("Reflect Strength", &reflectStrength, 0.02f, kMinReflect, 3.0f);
-    ImGui::DragFloat("Reflect Range", &reflectRange, 0.05f, kMinReflect, 12.0f);
-    ImGui::Checkbox("Debug Draw", &debugDraw);
+    ImGui::DragFloat("Reflect Strength", &reflectStrength_, 0.02f, kMinReflect, 3.0f);
+    ImGui::DragFloat("Reflect Range", &reflectRange_, 0.05f, kMinReflect, 12.0f);
+    ImGui::Checkbox("Debug Draw", &debugDraw_);
 
     ImGui::Separator();
     // 採用結果の一覧
@@ -220,13 +250,13 @@ private:
     if (e.HasTag("water_obstacle")) {
       return e.GetTagInt("water_obstacle", 0) != 0;
     }
-    if (!autoDetect) return false;
-    if (e.GetTagInt(terrainTag, 0) != 1) return false;
+    if (!autoDetect_) return false;
+    if (e.GetTagInt(terrainTag_, 0) != 1) return false;
 
     // 上下の範囲が水面をまたぐか。
     // PrimitiveMesh は 1 辺 1 の箱を Transform でスケールする作りなので、
     // 高さ方向の半分は scale.y * 0.5 になる。
-    const float halfY = std::fabs(tr.scale.y) * 0.5f + crossMargin;
+    const float halfY = std::fabs(tr.scale.y) * 0.5f + crossMargin_;
     const float lo = tr.position.y - halfY;
     const float hi = tr.position.y + halfY;
     return (lo <= waterY) && (waterY <= hi);
@@ -240,7 +270,7 @@ private:
   ///          タグ `water_obstacle_radius`（10 倍した整数）があればそれを優先する。
   /// @param e 対象エンティティ
   /// @param tr その Transform
-  /// @return 水際での半径(m)。radiusScale を掛けて minRadius で下限を切った値（タグ指定時はその値）
+  /// @return 水際での半径(m)。radiusScale_ を掛けて minRadius_ で下限を切った値（タグ指定時はその値）
   float ComputeRadius(Entity &e, const TransformComponent &tr) const {
     // タグで半径が固定されていればそれを優先する（10 倍した整数で持っているので 0.1 を掛ける）
     if (e.HasTag("water_obstacle_radius")) {
@@ -251,19 +281,12 @@ private:
     const float sx = std::fabs(tr.scale.x);
     const float sz = std::fabs(tr.scale.z);
 
-    float r;
+    // 形状ごとの式は ObstacleFootprint の派生クラスに任せる
     const auto *pm = e.GetComponent<PrimitiveMeshComponent>();
-    if (pm && (pm->type == PrimitiveType::Sphere || pm->type == PrimitiveType::Cylinder)) {
-      // 素の半径が 1.0 のメッシュ。XZ で潰れている場合は大きいほうに合わせる
-      r = (std::max)(sx, sz);
-    } else {
-      // 箱（およびそれ以外）。XZ 断面の外接円。
-      // 内接円にすると角から波が突き抜けて見えるため、外接を既定にしている。
-      r = 0.5f * std::sqrt(sx * sx + sz * sz);
-    }
+    float r = ObstacleFootprint::For(pm).Radius(sx, sz);
 
-    r *= radiusScale;
-    return (std::max)(r, minRadius);
+    r *= radiusScale_;
+    return (std::max)(r, minRadius_);
   }
 
   /// @brief シーンを走査して障害物リストを作る
@@ -359,7 +382,36 @@ private:
   /// @brief 反射パラメータの下限。0 を渡すとシェーダ側で 1.0 / 3.0 に化けるため（D-14）
   static constexpr float kMinReflect = 0.01f;
 
-  std::vector<RC::Vector4> picked_;      ///< 今フレームに採用した障害物
+  // --- 選び方 ---
+  /// @brief `is_terrain` のうち水面をまたぐものを自動で拾うか
+  /// @details false にすると `water_obstacle` タグが 1 のものだけになる。
+  bool autoDetect_ = true;
+  /// @brief 自動判定で使うタグ名
+  std::string terrainTag_ = "is_terrain";
+  /// @brief 水面をまたぐ判定の余裕(m)。波の高さぶん見ておく
+  float crossMargin_ = 0.5f;
+
+  // --- 半径 ---
+  /// @brief 求めた半径に掛ける倍率。見た目を見ながら詰めるための逃げ道
+  float radiusScale_ = 1.0f;
+  /// @brief 半径の下限(m)。極端に小さい岩で反射が消えるのを防ぐ
+  float minRadius_ = 0.5f;
+
+  // --- 反射のチューニング（シェーダの gObstacleCount.y / .z） ---
+  /// @brief 反射の強さ（1.0 で入射波と同じ振幅）
+  /// @warning **0 にしても反射は消えない。** シェーダも CPU 側の WaterSurface も
+  ///          `(値 > 0) ? 値 : 1.0` というフォールバックを持っているため、
+  ///          0 を渡すと 1.0（完全反射）に化ける（技術的負債 D-14）。
+  ///          そのため下限を kMinReflect で切ってある。反射を消したいときは
+  ///          障害物そのものを外すこと。
+  float reflectStrength_ = 1.0f;
+  /// @brief 反射の到達範囲（障害物半径に対する倍率）
+  /// @details 同じ理由で 0 は使えない。下限は kMinReflect。
+  float reflectRange_ = 3.0f;
+
+  bool debugDraw_ = true; ///< 採用した障害物の円をギズモ描画する
+
+  std::vector<RC::Vector4> picked_;     ///< 今フレームに採用した障害物
   std::vector<std::string> pickedNames_; ///< 同上の名前（ImGui 表示用）
   int skipped_ = 0;                      ///< 上限を超えて捨てた数
 };

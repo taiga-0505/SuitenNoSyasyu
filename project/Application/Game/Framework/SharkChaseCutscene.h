@@ -11,6 +11,7 @@
 #include "RenderCommon.h"
 #include "Scene.h"
 #include "Game/Framework/PartPose.h"
+#include "Game/Framework/StateMachine.h"
 
 #include <nlohmann/json.hpp>
 
@@ -294,10 +295,15 @@ struct SharkChaseParams {
 ///            Update(dt, &cam) : 毎フレーム。IsDirecting() のあいだはカメラを書き換える。
 ///                               Done 後も nullptr で呼び続けると、沈むサメを最後まで動かして片付ける
 ///            Cleanup()        : 途中でやめる・シーン終了時に全部消す
+///
+///          段階（Chase / Turn / Shoot / Merge / Done）は以前は enum + switch で、
+///          段階による違い（カメラの構図・手持ちの揺れ・サメの突進・タコの表示など）が
+///          あちこちの if に散らばっていた。State パターン（StateMachine.h）にして、
+///            ・段階ごとの更新と「次の段階へ進む条件」は各状態クラスが持つ（次の状態は状態自身が決める）
+///            ・段階による違いは PhaseState の仮想関数で問い合わせる（ポリモーフィズム）
+///          ようにした。未再生（Idle）は「状態が無い」で表す。
 class SharkChaseCutscene {
 public:
-  enum class Phase { Idle, Chase, Turn, Shoot, Merge, Done };
-
   ~SharkChaseCutscene() = default;
 
   /// @brief 再生を始める
@@ -308,92 +314,19 @@ public:
   /// @param endCamRot 一人称に戻ったときのカメラの向き（浮上の開始の向き）
   /// @param cam       カメラの Transform（最初の構図を書き込む）
   void Begin(Scene *scene, SceneContext *ctx, const SharkChaseParams &p, const RC::Vector3 &goalPos,
-             const RC::Vector3 &endCamRot, TransformComponent &cam) {
-    Cleanup();
-    scene_ = scene;
-    ctx_ = ctx;
-    p_ = p;
-    p_.shotCount = std::clamp(p_.shotCount, 1, SharkChaseParams::kMaxShots);
-    endRot_ = endCamRot;
-
-    // ゴールの向き（ヨー）で x 右 / z 前 を決める
-    yaw_ = endCamRot.y;
-    F_ = {std::sin(yaw_), 0.0f, std::cos(yaw_)};
-    R_ = {std::cos(yaw_), 0.0f, -std::sin(yaw_)};
-    start_ = FromGoal(goalPos, p_.startOffset);
-    end_ = FromGoal(goalPos, p_.endOffset);
-    RC::Vector3 d = Sub(end_, start_);
-    const float len = Len(d);
-    travelDir_ = (len > 1e-4f) ? Scale(d, 1.0f / len) : F_;
-    speed_ = len / (std::max)(p_.chaseDuration, 1e-3f);
-
-    // 状態
-    phase_ = Phase::Chase;
-    t_ = 0.0f;
-    time_ = 0.0f;
-    octPos_ = start_;
-    octYaw_ = yaw_ + PartPose::kPi; // 外套膜を先に泳ぐ（顔は後ろ）
-    octPitchUp_ = kSwimPitch;
-    splay_ = 0.06f;
-    legAxisTarget_ = WorldToBody(Scale(travelDir_, -1.0f));
-    legAxis_ = legAxisTarget_;
-    waveAmt_ = 0.12f;
-    jetPulse_ = 0.0f;
-    squashJet_ = 0.0f;
-    lastJet_ = 0;
-    recoil_ = 0.0f;
-    recoilVel_ = 0.0f;
-    lookSide_ = 0.0f;
-    octVisible_ = true;
-    sharkPos_ = Sub(start_, Scale(travelDir_, p_.sharkStartGap));
-    sharkYaw_ = yaw_;
-    sharkPitchUp_ = 0.0f;
-    sharkRoll_ = 0.0f;
-    sharkAlive_ = true;
-    sharkDeadT_ = 0.0f;
-    sinkVel_ = 0.0f;
-    flashTimer_ = 0.0f;
-    knock_ = {0, 0, 0};
-    knockVel_ = {0, 0, 0};
-    shotsFired_ = 0;
-    hitsLanded_ = 0;
-    killTime_ = -1.0f;
-    shake_ = 0.0f;
-    built_ = 0;
-
-    // 効果音
-    seShot_ = LoadSe(p_.seShot);
-    seHit_ = LoadSe(p_.seHit);
-    seKill_ = LoadSe(p_.seKill);
-
-    SpawnShark();
-    BuildSome();
-
-    // カメラ：最初の構図へそのまま置く
-    RC::Vector3 pos, look;
-    DesiredCamera(pos, look);
-    camPos_ = pos;
-    camLook_ = look;
-    WriteCamera(cam, camPos_, LookRot(camPos_, camLook_, 0.0f));
-    Log::Print("[SharkChaseCutscene] begin");
-  }
+             const RC::Vector3 &endCamRot, TransformComponent &cam);
 
   /// @brief 1 フレーム進める
   /// @param dt  経過秒（0 以下なら何もしない）
   /// @param cam カメラ。IsDirecting() のあいだだけ書き換える（nullptr 可）
   void Update(float dt, TransformComponent *cam) {
-    if (phase_ == Phase::Idle || dt <= 0.0f) return;
+    if (!fsm_.HasState() || dt <= 0.0f) return;
     time_ += dt;
     t_ += dt;
     BuildSome();
 
-    switch (phase_) {
-    case Phase::Chase: UpdateChase(); break;
-    case Phase::Turn: UpdateTurn(); break;
-    case Phase::Shoot: UpdateShoot(dt); break;
-    case Phase::Merge: UpdateMerge(); break;
-    default: break;
-    }
+    // 段階ごとの更新（遷移も状態クラスが決める）
+    fsm_.Update(*this, dt);
 
     // 足の向きの基準軸は段階の切り替わりでなめらかに追わせる
     {
@@ -407,42 +340,36 @@ public:
     PoseOctopus();
     PoseShark();
 
-    if (cam && phase_ != Phase::Done) UpdateCamera(dt, *cam);
-    if (phase_ == Phase::Merge && mergeDone_) {
-      Enter(Phase::Done);
-      PoseOctopus(); // タコを隠す
-      Log::Print("[SharkChaseCutscene] handed camera back");
-    }
+    if (cam && IsDirecting()) UpdateCamera(dt, *cam);
+    // カメラを書いたあとの遷移（Merge → Done はカメラを最終位置へ書いてから移る）
+    if (PhaseState *state = CurrentPhase()) state->OnCameraWritten(*this, fsm_);
+    fsm_.ApplyPending(*this);
 
     // 演出が終わり、サメも消えたら後片付け
-    if (phase_ == Phase::Done && sharkEntity_.expired()) {
+    const PhaseState *state = CurrentPhase();
+    if (state && state->IsFinished(*this)) {
       Cleanup();
     }
   }
 
   /// @brief カメラを握っているか（Chase〜Merge のあいだ）
+  /// @return カメラを書き換える段階なら true
   bool IsDirecting() const {
-    return phase_ == Phase::Chase || phase_ == Phase::Turn || phase_ == Phase::Shoot || phase_ == Phase::Merge;
+    const PhaseState *state = CurrentPhase();
+    return state && state->DirectsCamera();
   }
 
   /// @brief 再生中か（演出後の後片付け待ちも含む）
-  bool IsActive() const { return phase_ != Phase::Idle; }
+  /// @return 状態があれば true
+  bool IsActive() const { return fsm_.HasState(); }
 
   /// @brief 泡を湧かせる基準位置（タコの位置）
+  /// @return タコのワールド位置
   const RC::Vector3 &OctopusPos() const { return octPos_; }
 
   /// @brief 今の段階の名前（ImGui 表示用）
-  const char *PhaseName() const {
-    switch (phase_) {
-    case Phase::Idle: return "idle";
-    case Phase::Chase: return "chase";
-    case Phase::Turn: return "turn";
-    case Phase::Shoot: return "shoot";
-    case Phase::Merge: return "merge";
-    case Phase::Done: return "done";
-    }
-    return "?";
-  }
+  /// @return "idle" / "chase" / "turn" / "shoot" / "merge" / "done"
+  const char *PhaseName() const { return fsm_.HasState() ? fsm_.CurrentName() : "idle"; }
 
   /// @brief 作ったエンティティと効果音をすべて片付けて Idle に戻す
   void Cleanup() {
@@ -461,10 +388,85 @@ public:
     UnloadSe(seHit_);
     UnloadSe(seKill_);
     built_ = 0;
-    phase_ = Phase::Idle;
+    fsm_ = StateMachine<SharkChaseCutscene>{}; // 状態を空に＝Idle（状態の更新の外からしか呼ばれない）
   }
 
 private:
+  // ------------------------------------------------------------------
+  // 段階（State パターン）
+  // ------------------------------------------------------------------
+  class ChaseState; ///< 追われている
+  class TurnState;  ///< 振り向いて構える
+  class ShootState; ///< 水の弾を撃つ
+  class MergeState; ///< カメラがタコの頭へ寄って一人称へ
+  class DoneState;  ///< カメラは返した。沈むサメが消えるのを待つ
+
+  /// @brief このカットシーンの状態の共通基底
+  /// @details 段階による違いを仮想関数で問い合わせる。既定値は「Chase〜Merge の多数派」に合わせ、
+  ///          違う段階だけが override する。本体は今の状態が何かを知らずに呼ぶだけでよい。
+  class PhaseState : public IState<SharkChaseCutscene> {
+  public:
+    /// @brief カメラを握っているか
+    /// @return 既定は true（Done だけ false）
+    virtual bool DirectsCamera() const { return true; }
+    /// @brief 後片付けしてよいか（Update の最後に毎フレーム問い合わせる）
+    /// @param owner 本体
+    /// @return 既定は false（Done でサメが消えたら true）
+    virtual bool IsFinished(const SharkChaseCutscene &owner) const {
+      (void)owner;
+      return false;
+    }
+    /// @brief タコを表示するか
+    /// @param owner 本体
+    /// @return 既定は true
+    virtual bool ShowsOctopus(const SharkChaseCutscene &owner) const {
+      (void)owner;
+      return true;
+    }
+    /// @brief サメが突進してくる段階か
+    /// @return 既定は false（Shoot だけ true）
+    virtual bool SharkCharges() const { return false; }
+    /// @brief 追跡の構図（横から 2 匹を収める）を使うか
+    /// @return 既定は false（Chase だけ true。それ以外は肩越し／真横引き）
+    virtual bool UsesChaseFraming() const { return false; }
+    /// @brief 手持ちカメラの揺れの大きさ
+    /// @return 既定は 0
+    virtual float CameraHandheld() const { return 0.0f; }
+    /// @brief カメラのロール
+    /// @param time 開始からの秒数
+    /// @return ロール角（rad）。既定は 0
+    virtual float CameraRoll(float time) const {
+      (void)time;
+      return 0.0f;
+    }
+    /// @brief カメラの追従の速さの倍率
+    /// @return 既定は 1
+    virtual float CameraFollowScale() const { return 1.0f; }
+    /// @brief カメラを書く（既定は狙いの構図へなめらかに追従する。Merge は頭へ寄る専用の動き）
+    /// @param owner 本体
+    /// @param dt    経過秒
+    /// @param cam   カメラの Transform
+    /// @param shake 揺れのオフセット
+    virtual void DriveCamera(SharkChaseCutscene &owner, float dt, TransformComponent &cam,
+                             const RC::Vector3 &shake) const {
+      owner.FollowCamera(dt, cam, shake, CameraFollowScale(), CameraRoll(owner.time_));
+    }
+    /// @brief カメラを書いたあとに呼ばれる（カメラの書き込みを待ってから遷移したい段階が使う）
+    /// @param owner   本体
+    /// @param machine 遷移の予約に使うステートマシン
+    virtual void OnCameraWritten(SharkChaseCutscene &owner, StateMachine<SharkChaseCutscene> &machine) {
+      (void)owner;
+      (void)machine;
+    }
+  };
+
+  /// @brief 今の状態を PhaseState として取得する
+  /// @return 今の状態（Idle なら nullptr）
+  PhaseState *CurrentPhase() { return fsm_.As<PhaseState>(); }
+  /// @brief 今の状態を PhaseState として取得する（const 版）
+  /// @return 今の状態（Idle なら nullptr）
+  const PhaseState *CurrentPhase() const { return fsm_.As<PhaseState>(); }
+
   using Mat3 = PartPose::Mat3;
 
   // ---- 部位の並び（octParts_ の添字）----
@@ -768,7 +770,8 @@ private:
   ///            そのあと惰性で減速しながら足をゆるく開き、外套膜をふくらませて水を吸う。これを繰り返す。
   ///          ・進み方 s(u) = u - a·sin(2πNu)/(2πN)（N 回噴く）。速さは 1 - a·cos(2πNu) で、
   ///            始まり・終わりは一番遅い（滑空）ところ、噴くのは u = (k + 0.5)/N。端点は直線のときと同じ。
-  void UpdateChase() {
+  /// @return 追われる時間が終わったら true（次は Turn）
+  bool UpdateChase() {
     using namespace PartPose;
     const float u = std::clamp(t_ / (std::max)(p_.chaseDuration, 1e-3f), 0.0f, 1.0f);
     const int N = (std::max)(1, static_cast<int>(std::lround(p_.chaseDuration * p_.jetRate)));
@@ -799,16 +802,12 @@ private:
     sharkPos_ = Sub(LerpV(start_, end_, u), Scale(travelDir_, gap));
     sharkPos_ = Add(sharkPos_, Scale(R_, 0.5f * std::sin(time_ * kTwoPi * 1.1f)));
 
-    if (u >= 1.0f) {
-      turnFromYaw_ = octYaw_;
-      turnFromPitch_ = octPitchUp_;
-      turnFromSplay_ = splay_;
-      Enter(Phase::Turn);
-    }
+    return u >= 1.0f; // 振り向き始めの向きなどは TurnState::OnEnter で覚える
   }
 
   /// @brief 構える：泳ぎを止め、体を起こしてサメへ向け、足をスカートのように下へ広げる。サメは噛みつきに来る
-  void UpdateTurn() {
+  /// @return 振り向きが終わったら true（次は Shoot）
+  bool UpdateTurn() {
     const float T = (std::max)(p_.turnDuration, 1e-3f);
     const float u = std::clamp(t_ / T, 0.0f, 1.0f);
     const float e = Smooth01(u);
@@ -835,15 +834,13 @@ private:
     const float gap = p_.sharkEndGap + (p_.sharkLungeGap - p_.sharkEndGap) * Smooth01(u);
     sharkPos_ = Sub(octPos_, Scale(travelDir_, gap));
 
-    if (u >= 1.0f) {
-      sharkHold_ = sharkPos_;
-      octHold_ = octPos_;
-      Enter(Phase::Shoot);
-    }
+    return u >= 1.0f; // 撃つあいだの基準位置は ShootState::OnEnter で覚える
   }
 
   /// @brief 水の弾を撃つ：shotInterval おきに発射。全部当たったら倒れ、killHold 後に Merge へ
-  void UpdateShoot(float dt) {
+  /// @param dt 経過秒（使わない）
+  /// @return 倒してから killHold 秒たったら true（次は Merge）
+  bool UpdateShoot(float dt) {
     (void)dt;
     octPos_ = Sub(octHold_, Scale(ToShark(), 0.12f * (std::max)(recoil_, 0.0f)));
     const RC::Vector3 d = ToShark();
@@ -863,15 +860,8 @@ private:
 
     const float timeout = static_cast<float>(p_.shotCount) * p_.shotInterval + p_.shotTravel + 1.0f;
     if (sharkAlive_ && t_ > timeout) Kill(); // 念のため（弾が作れなかった等）
-    if (!sharkAlive_ && killTime_ >= 0.0f && t_ >= killTime_ + p_.killHold) {
-      mergeFromYaw_ = octYaw_;
-      mergeFromPitch_ = octPitchUp_;
-      mergeFromSplay_ = splay_;
-      mergeFromPos_ = octPos_;
-      mergeCamFrom_ = camPos_;
-      mergeRotFrom_ = camRot_;
-      Enter(Phase::Merge);
-    }
+    // 寄り始めの向きなどは MergeState::OnEnter で覚える
+    return !sharkAlive_ && killTime_ >= 0.0f && t_ >= killTime_ + p_.killHold;
   }
 
   /// @brief 前へ向き直り、カメラがタコの頭へ寄る
@@ -888,15 +878,8 @@ private:
     legAxisTarget_ = LegAxisRest();
     splay_ = mergeFromSplay_ + (0.35f - mergeFromSplay_) * e;
     waveAmt_ = 0.3f;
-    // Done へはカメラを最終位置へ書いたあと（Update の最後）で移る
+    // Done へはカメラを最終位置へ書いたあと（MergeState::OnCameraWritten）で移る
     if (u >= 1.0f) mergeDone_ = true;
-  }
-
-  void Enter(Phase p) {
-    phase_ = p;
-    t_ = 0.0f;
-    if (p == Phase::Turn) turnDiff_ = 0.0f;
-    if (p == Phase::Merge) mergeDone_ = false;
   }
 
   // ------------------------------------------------------------------
@@ -1025,7 +1008,9 @@ private:
       knockVel_ = Add(knockVel_, Scale(knock_, -90.0f * dt));
       knockVel_ = Scale(knockVel_, std::exp(-9.0f * dt));
       knock_ = Add(knock_, Scale(knockVel_, dt));
-      if (phase_ == Phase::Shoot) {
+      const PhaseState *state = CurrentPhase();
+      const bool charging = state && state->SharkCharges();
+      if (charging) {
         // 突進：タコへ向かって進む（当たるたびに鈍る。sharkMinGap より近づかない）
         const RC::Vector3 toOct = Sub(octPos_, sharkHold_);
         const float dist = Len(toOct);
@@ -1039,7 +1024,7 @@ private:
       }
       // タコの方を向き、尾を振る
       const RC::Vector3 d = Norm(Sub(octPos_, sharkPos_), travelDir_);
-      const float wag = (phase_ == Phase::Shoot ? 0.05f : 0.12f) * std::sin(time_ * PartPose::kTwoPi * 2.4f);
+      const float wag = (charging ? 0.05f : 0.12f) * std::sin(time_ * PartPose::kTwoPi * 2.4f);
       sharkYaw_ = std::atan2(d.x, d.z) + wag;
       sharkPitchUp_ = std::asin(std::clamp(d.y, -1.0f, 1.0f));
       sharkRoll_ = 0.0f;
@@ -1093,8 +1078,8 @@ private:
   /// @brief 胴・顔・目・足の姿勢を書く
   void PoseOctopus() {
     using namespace PartPose;
-    const bool show = octVisible_ && phase_ != Phase::Done &&
-                      !(phase_ == Phase::Merge && t_ / (std::max)(p_.mergeDuration, 1e-3f) > 0.72f);
+    const PhaseState *state = CurrentPhase();
+    const bool show = octVisible_ && (state ? state->ShowsOctopus(*this) : true);
     if (auto m = octModel_.lock()) {
       SetActive(octModel_, show);
       if (show) PoseOctopusModel(*m);
@@ -1249,7 +1234,8 @@ private:
   /// @brief 今の段階で狙いたいカメラの位置と注視点
   void DesiredCamera(RC::Vector3 &pos, RC::Vector3 &look) const {
     const RC::Vector3 up = {0.0f, 1.0f, 0.0f};
-    if (phase_ == Phase::Chase) {
+    const PhaseState *state = CurrentPhase();
+    if (state && state->UsesChaseFraming()) {
       // 横から 2 匹を収める（タコ寄りの点を見る）
       const RC::Vector3 mid = LerpV(octPos_, sharkPos_, 0.35f);
       pos = Add(Add(Add(mid, Scale(R_, p_.camSide)), Scale(up, p_.camHeight)), Scale(F_, p_.camLead));
@@ -1279,36 +1265,53 @@ private:
     }
   }
 
+  /// @brief 揺れを減衰させ、今の段階のやり方でカメラを書く
+  /// @details 段階による違い（手持ちの揺れ・追従の速さ・ロール・Merge の寄り）は PhaseState に問い合わせる。
+  /// @param dt  経過秒
+  /// @param cam カメラの Transform
   void UpdateCamera(float dt, TransformComponent &cam) {
-    using namespace PartPose;
+    const PhaseState *state = CurrentPhase();
     shake_ *= std::exp(-7.0f * dt);
-    const float handheld = (phase_ == Phase::Chase) ? 0.035f : 0.0f;
+    const float handheld = state ? state->CameraHandheld() : 0.0f;
     const float amp = shake_ + handheld;
     const RC::Vector3 shake = Add(Scale(R_, amp * std::sin(time_ * 53.0f)),
                                   {0.0f, amp * std::sin(time_ * 61.0f + 1.3f), 0.0f});
-
-    if (phase_ == Phase::Merge) {
-      // タコの頭へ寄りながら、浮上開始の向きへ回す
-      const float u = std::clamp(t_ / (std::max)(p_.mergeDuration, 1e-3f), 0.0f, 1.0f);
-      const float e = Smooth01(u);
-      const RC::Vector3 head = Add(octPos_, {0.0f, 0.3f * p_.octopusScale, 0.0f});
-      const RC::Vector3 pos = LerpV(mergeCamFrom_, head, e);
-      const RC::Vector3 rot = {mergeRotFrom_.x + (endRot_.x - mergeRotFrom_.x) * e,
-                               LerpAngle(mergeRotFrom_.y, endRot_.y, e),
-                               mergeRotFrom_.z + (endRot_.z - mergeRotFrom_.z) * e};
-      camPos_ = pos;
-      camRot_ = rot;
-      WriteCamera(cam, Add(pos, Scale(shake, 1.0f - e)), rot);
-      return;
+    if (state) {
+      state->DriveCamera(*this, dt, cam, shake);
+    } else {
+      FollowCamera(dt, cam, shake, 1.0f, 0.0f);
     }
+  }
 
+  /// @brief Merge のカメラ：タコの頭へ寄りながら、浮上開始の向きへ回す
+  /// @param cam   カメラの Transform
+  /// @param shake 揺れのオフセット（寄るにつれて弱める）
+  void MergeCamera(TransformComponent &cam, const RC::Vector3 &shake) {
+    const float u = std::clamp(t_ / (std::max)(p_.mergeDuration, 1e-3f), 0.0f, 1.0f);
+    const float e = Smooth01(u);
+    const RC::Vector3 head = Add(octPos_, {0.0f, 0.3f * p_.octopusScale, 0.0f});
+    const RC::Vector3 pos = LerpV(mergeCamFrom_, head, e);
+    const RC::Vector3 rot = {mergeRotFrom_.x + (endRot_.x - mergeRotFrom_.x) * e,
+                             LerpAngle(mergeRotFrom_.y, endRot_.y, e),
+                             mergeRotFrom_.z + (endRot_.z - mergeRotFrom_.z) * e};
+    camPos_ = pos;
+    camRot_ = rot;
+    WriteCamera(cam, Add(pos, Scale(shake, 1.0f - e)), rot);
+  }
+
+  /// @brief Chase / Turn / Shoot のカメラ：狙いの構図へなめらかに追従する
+  /// @param dt          経過秒
+  /// @param cam         カメラの Transform
+  /// @param shake       揺れのオフセット
+  /// @param followScale 追従の速さの倍率
+  /// @param roll        カメラのロール（rad）
+  void FollowCamera(float dt, TransformComponent &cam, const RC::Vector3 &shake, float followScale, float roll) {
     RC::Vector3 want, wantLook;
     DesiredCamera(want, wantLook);
-    const float follow = p_.camFollow * (phase_ == Phase::Turn ? 1.4f : 1.0f);
+    const float follow = p_.camFollow * followScale;
     const float a = 1.0f - std::exp(-follow * dt);
     camPos_ = LerpV(camPos_, want, a);
     camLook_ = LerpV(camLook_, wantLook, (std::min)(1.0f, a * 1.6f));
-    const float roll = (phase_ == Phase::Chase) ? 0.05f * std::sin(time_ * 2.1f) : 0.0f;
     camRot_ = LookRot(camPos_, camLook_, roll);
     WriteCamera(cam, Add(camPos_, shake), camRot_);
   }
@@ -1319,7 +1322,7 @@ private:
   Scene *scene_ = nullptr;
   SceneContext *ctx_ = nullptr;
   SharkChaseParams p_;
-  Phase phase_ = Phase::Idle;
+  StateMachine<SharkChaseCutscene> fsm_; ///< 段階のステートマシン（状態が無い＝Idle）
   float t_ = 0.0f;    ///< 今の段階に入ってからの秒数
   float time_ = 0.0f; ///< 開始からの秒数（揺れ用）
 
@@ -1391,3 +1394,201 @@ private:
   // 効果音
   int seShot_ = -1, seHit_ = -1, seKill_ = -1;
 };
+
+// ============================================================================
+// SharkChaseCutscene の状態クラス
+//   遷移先を先に定義する（Done ← Merge ← Shoot ← Turn ← Chase）。
+//   各状態は「入った瞬間に覚えること（OnEnter）」「毎フレームの更新と次へ進む条件（OnUpdate）」
+//   「段階による違い（PhaseState の仮想関数）」を持つ。
+// ============================================================================
+
+/// @brief Done：カメラは浮上側へ返した。沈むサメが消えたら後片付けしてよい
+class SharkChaseCutscene::DoneState final : public SharkChaseCutscene::PhaseState {
+public:
+  void OnEnter(SharkChaseCutscene &owner, StateMachine<SharkChaseCutscene> &machine) override {
+    (void)machine;
+    owner.t_ = 0.0f;
+    owner.PoseOctopus(); // タコを隠す
+    Log::Print("[SharkChaseCutscene] handed camera back");
+  }
+  void OnUpdate(SharkChaseCutscene &owner, StateMachine<SharkChaseCutscene> &machine, float deltaTime) override {
+    (void)owner;
+    (void)machine;
+    (void)deltaTime;
+  }
+  const char *Name() const override { return "done"; }
+  bool DirectsCamera() const override { return false; }
+  bool ShowsOctopus(const SharkChaseCutscene &owner) const override {
+    (void)owner;
+    return false;
+  }
+  bool IsFinished(const SharkChaseCutscene &owner) const override { return owner.sharkEntity_.expired(); }
+};
+
+/// @brief Merge：タコが前へ向き直り、カメラがタコの頭へ寄って一人称へ
+class SharkChaseCutscene::MergeState final : public SharkChaseCutscene::PhaseState {
+public:
+  /// @brief 寄り始めの向き・足の開き・位置・カメラを覚える
+  void OnEnter(SharkChaseCutscene &owner, StateMachine<SharkChaseCutscene> &machine) override {
+    (void)machine;
+    owner.mergeFromYaw_ = owner.octYaw_;
+    owner.mergeFromPitch_ = owner.octPitchUp_;
+    owner.mergeFromSplay_ = owner.splay_;
+    owner.mergeFromPos_ = owner.octPos_;
+    owner.mergeCamFrom_ = owner.camPos_;
+    owner.mergeRotFrom_ = owner.camRot_;
+    owner.t_ = 0.0f;
+    owner.mergeDone_ = false;
+  }
+  void OnUpdate(SharkChaseCutscene &owner, StateMachine<SharkChaseCutscene> &machine, float deltaTime) override {
+    (void)machine;
+    (void)deltaTime;
+    owner.UpdateMerge();
+  }
+  const char *Name() const override { return "merge"; }
+  /// @brief 頭へ寄りきる手前（72%）でタコを隠す（カメラが体の中に入らないように）
+  bool ShowsOctopus(const SharkChaseCutscene &owner) const override {
+    return !(owner.t_ / (std::max)(owner.p_.mergeDuration, 1e-3f) > 0.72f);
+  }
+  void DriveCamera(SharkChaseCutscene &owner, float dt, TransformComponent &cam,
+                   const RC::Vector3 &shake) const override {
+    (void)dt;
+    owner.MergeCamera(cam, shake);
+  }
+  /// @brief Done へはカメラを最終位置へ書いたあとで移る
+  void OnCameraWritten(SharkChaseCutscene &owner, StateMachine<SharkChaseCutscene> &machine) override {
+    if (owner.mergeDone_) machine.ChangeState<DoneState>();
+  }
+};
+
+/// @brief Shoot：水の弾を撃つ。サメは突進してくる
+class SharkChaseCutscene::ShootState final : public SharkChaseCutscene::PhaseState {
+public:
+  /// @brief 撃つあいだの基準位置（サメの突進の起点・タコの反動の起点）を覚える
+  void OnEnter(SharkChaseCutscene &owner, StateMachine<SharkChaseCutscene> &machine) override {
+    (void)machine;
+    owner.sharkHold_ = owner.sharkPos_;
+    owner.octHold_ = owner.octPos_;
+    owner.t_ = 0.0f;
+  }
+  void OnUpdate(SharkChaseCutscene &owner, StateMachine<SharkChaseCutscene> &machine, float deltaTime) override {
+    if (owner.UpdateShoot(deltaTime)) machine.ChangeState<MergeState>();
+  }
+  const char *Name() const override { return "shoot"; }
+  bool SharkCharges() const override { return true; }
+};
+
+/// @brief Turn：泳ぎを止めて振り向き、足を広げて構える
+class SharkChaseCutscene::TurnState final : public SharkChaseCutscene::PhaseState {
+public:
+  /// @brief 振り向き始めの向き・傾き・足の開きを覚える（サメの方の向きは最初の更新で決める）
+  void OnEnter(SharkChaseCutscene &owner, StateMachine<SharkChaseCutscene> &machine) override {
+    (void)machine;
+    owner.turnFromYaw_ = owner.octYaw_;
+    owner.turnFromPitch_ = owner.octPitchUp_;
+    owner.turnFromSplay_ = owner.splay_;
+    owner.t_ = 0.0f;
+    owner.turnDiff_ = 0.0f;
+  }
+  void OnUpdate(SharkChaseCutscene &owner, StateMachine<SharkChaseCutscene> &machine, float deltaTime) override {
+    (void)deltaTime;
+    if (owner.UpdateTurn()) machine.ChangeState<ShootState>();
+  }
+  const char *Name() const override { return "turn"; }
+  /// @brief 振り向きは構図が大きく変わるので、カメラをきびきび追わせる
+  float CameraFollowScale() const override { return 1.4f; }
+};
+
+/// @brief Chase：タコがジェット推進で逃げ、サメが追う。カメラは横から 2 匹を収める
+class SharkChaseCutscene::ChaseState final : public SharkChaseCutscene::PhaseState {
+public:
+  void OnEnter(SharkChaseCutscene &owner, StateMachine<SharkChaseCutscene> &machine) override {
+    (void)machine;
+    owner.t_ = 0.0f;
+  }
+  void OnUpdate(SharkChaseCutscene &owner, StateMachine<SharkChaseCutscene> &machine, float deltaTime) override {
+    (void)deltaTime;
+    if (owner.UpdateChase()) machine.ChangeState<TurnState>();
+  }
+  const char *Name() const override { return "chase"; }
+  bool UsesChaseFraming() const override { return true; }
+  /// @brief 追われている緊迫感を出す手持ちの揺れ
+  float CameraHandheld() const override { return 0.035f; }
+  /// @brief 追われている間だけ、ゆっくりロールさせる
+  float CameraRoll(float time) const override { return 0.05f * std::sin(time * 2.1f); }
+};
+
+// ---- SharkChaseCutscene のうち、具体的な状態クラスを使う関数（状態クラスが完全型になってから定義する）----
+
+inline void SharkChaseCutscene::Begin(Scene *scene, SceneContext *ctx, const SharkChaseParams &p,
+                                      const RC::Vector3 &goalPos, const RC::Vector3 &endCamRot,
+                                      TransformComponent &cam) {
+  Cleanup();
+  scene_ = scene;
+  ctx_ = ctx;
+  p_ = p;
+  p_.shotCount = std::clamp(p_.shotCount, 1, SharkChaseParams::kMaxShots);
+  endRot_ = endCamRot;
+
+  // ゴールの向き（ヨー）で x 右 / z 前 を決める
+  yaw_ = endCamRot.y;
+  F_ = {std::sin(yaw_), 0.0f, std::cos(yaw_)};
+  R_ = {std::cos(yaw_), 0.0f, -std::sin(yaw_)};
+  start_ = FromGoal(goalPos, p_.startOffset);
+  end_ = FromGoal(goalPos, p_.endOffset);
+  RC::Vector3 d = Sub(end_, start_);
+  const float len = Len(d);
+  travelDir_ = (len > 1e-4f) ? Scale(d, 1.0f / len) : F_;
+  speed_ = len / (std::max)(p_.chaseDuration, 1e-3f);
+
+  // 状態（最初は Chase。すぐ切り替えて、このあとの DesiredCamera が Chase の構図を使えるようにする）
+  fsm_.ChangeState<ChaseState>();
+  fsm_.ApplyPending(*this);
+  t_ = 0.0f;
+  time_ = 0.0f;
+  octPos_ = start_;
+  octYaw_ = yaw_ + PartPose::kPi; // 外套膜を先に泳ぐ（顔は後ろ）
+  octPitchUp_ = kSwimPitch;
+  splay_ = 0.06f;
+  legAxisTarget_ = WorldToBody(Scale(travelDir_, -1.0f));
+  legAxis_ = legAxisTarget_;
+  waveAmt_ = 0.12f;
+  jetPulse_ = 0.0f;
+  squashJet_ = 0.0f;
+  lastJet_ = 0;
+  recoil_ = 0.0f;
+  recoilVel_ = 0.0f;
+  lookSide_ = 0.0f;
+  octVisible_ = true;
+  sharkPos_ = Sub(start_, Scale(travelDir_, p_.sharkStartGap));
+  sharkYaw_ = yaw_;
+  sharkPitchUp_ = 0.0f;
+  sharkRoll_ = 0.0f;
+  sharkAlive_ = true;
+  sharkDeadT_ = 0.0f;
+  sinkVel_ = 0.0f;
+  flashTimer_ = 0.0f;
+  knock_ = {0, 0, 0};
+  knockVel_ = {0, 0, 0};
+  shotsFired_ = 0;
+  hitsLanded_ = 0;
+  killTime_ = -1.0f;
+  shake_ = 0.0f;
+  built_ = 0;
+
+  // 効果音
+  seShot_ = LoadSe(p_.seShot);
+  seHit_ = LoadSe(p_.seHit);
+  seKill_ = LoadSe(p_.seKill);
+
+  SpawnShark();
+  BuildSome();
+
+  // カメラ：最初の構図へそのまま置く
+  RC::Vector3 pos, look;
+  DesiredCamera(pos, look);
+  camPos_ = pos;
+  camLook_ = look;
+  WriteCamera(cam, camPos_, LookRot(camPos_, camLook_, 0.0f));
+  Log::Print("[SharkChaseCutscene] begin");
+}

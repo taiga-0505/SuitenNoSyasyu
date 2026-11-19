@@ -25,6 +25,11 @@
 ///
 ///   保存先は project/StageProgress.json（セーブデータなので Resources/Setting/ には置かない。.gitignore 済み）。
 ///   ファイルが無ければ「ステージ 1 だけ解放」で始まる。
+///
+///   Singleton にしている理由: セーブデータ（解放・クリア・ベスト記録）はゲーム全体で 1 つであり、
+///   GameMode・セレクト・リザルト・クリア演出というシーンの異なる利用者が同じ進行を見る必要があるため。
+///   進行の値はすべて private で、書き換えは MarkCleared / SetCurrentScene などの意味のある操作に限定している。
+///   ステージ構成（Info）は static な読み取り専用データなので、インスタンスを経由せずに引ける。
 class StageProgress {
 public:
   /// @brief ステージ数
@@ -80,6 +85,10 @@ public:
     return instance;
   }
 
+  // Singleton なのでコピー・代入はさせない
+  StageProgress(const StageProgress &) = delete;
+  StageProgress &operator=(const StageProgress &) = delete;
+
   // ------------------------------------------------------------------
   // 現在のプレイ
   // ------------------------------------------------------------------
@@ -110,10 +119,11 @@ public:
   /// @return 現在のステージが最終面なら true
   bool IsFinalStage() const { return current_ == kStageCount - 1; }
 
-  /// @brief セレクト画面で最後にカーソルを置いていたステージ（戻ってきたときの初期位置）の取得・設定
-  /// @param index 設定するステージ番号（0〜kStageCount-1 に丸める）
+  /// @brief セレクト画面で最後にカーソルを置いていたステージ（戻ってきたときの初期位置）を取得する
   /// @return 記録しているステージ番号
   int LastSelected() const { return std::clamp(lastSelected_, 0, kStageCount - 1); }
+  /// @brief セレクト画面で最後にカーソルを置いていたステージを記録する
+  /// @param index 設定するステージ番号（0〜kStageCount-1 に丸める）
   void SetLastSelected(int index) { lastSelected_ = std::clamp(index, 0, kStageCount - 1); }
 
   // ------------------------------------------------------------------
@@ -189,10 +199,11 @@ public:
     Save();
   }
 
-  /// @brief 全ステージを解放済み扱いにするフラグの設定・取得（保存はしない。デバッグ用）
+  /// @brief 全ステージを解放済み扱いにするフラグを設定する（保存はしない。デバッグ用）
   /// @param v true で全解放扱い
-  /// @return 全解放扱いなら true
   void SetUnlockAll(bool v) { unlockAll_ = v; }
+  /// @brief 全ステージを解放済み扱いにしているか（デバッグ用）
+  /// @return 全解放扱いなら true
   bool UnlockAll() const { return unlockAll_; }
 
   // ------------------------------------------------------------------

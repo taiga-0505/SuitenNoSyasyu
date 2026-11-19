@@ -14,6 +14,7 @@
 #include "Framework/App.h"
 #include "Scene.h"
 #include "Game/Framework/PartPose.h"
+#include "Game/Framework/StateMachine.h"
 #include "Game/Framework/TitleBlackboard.h"
 
 #if RC_ENABLE_IMGUI
@@ -54,10 +55,14 @@
 //       Diving   … 水面で身をすくめ、泡の帯（水面シェーダが水面すぐ下の物を白く塗る深さ）を一気に抜けて、
 //                   その下を外套膜を先に・足を束ねてジェット推進で泳ぎ去る
 //     驚くと墨（黒い円盤が広がって薄れる）を吐き、急いで潜る。
-//   - 飛び込み・浮上・起動演出の最中（TitleBlackboard::lettersInteractive = false）は潜って隠れる。
+//   - 飛び込み・浮上・起動演出の最中（TitleBlackboard::State::LettersInteractive() が false）は潜って隠れる。
 //   - エンティティは最初の数十フレームで少しずつ作り（1 フレームに作りすぎると止まる）、
 //     出番が来たら SetActive で表示を切り替えて使い回す。"transient" タグ付きでシーン保存に残らない。
 //   - 編集モード（再生していない）では何もしない。
+//   - 上のふるまいは State パターン（StateMachine.h）で 1 状態 = 1 クラスに分けている。
+//     以前は enum + switch で、「潜れ」と言われたときの反応（文字の上なら先に滑り降りる、
+//     潜っている最中なら無視する…）も状態を if で並べて判定していた。状態ごとに違う反応は
+//     状態クラスの仮想関数（OnDiveRequested / IsOnLetter など）にし、次の状態も状態クラス自身が決める。
 //
 //   ※ エンジンの描画は Transform の親子を解決しないので、部位のワールド姿勢は自前で合成して書く
 //     （TitleAmbientScript と同じ PartPose を使う）。
@@ -101,6 +106,11 @@ inline float Lerp(float a, float b, float t) { return a + (b - a) * t; }
 /// @details JSON (scriptDataList) で設定できる項目は Serialize の中身を参照。
 class TitleOctopusScript : public ScriptableEntity {
 public:
+  /// @brief 状態を「隠れている」で始める（OnCreate 前にインスペクタへ出しても状態名が出るように）
+  TitleOctopusScript();
+
+private:
+  // 設定値はシーン JSON（Serialize / Deserialize）とインスペクタ（OnImGui）からだけ触るので外へは公開しない
   // ---- 全体 ----
   bool enabled = true;
   float scale = 0.85f;         ///< 大きさ（1 で胴の幅 ≒ 1m、足を広げて差し渡し ≒ 2.6m）
@@ -139,6 +149,7 @@ public:
   float inkLife = 2.5f;            ///< 消えるまでの秒数
   RC::Vector4 inkColor = {0.04f, 0.03f, 0.07f, 0.85f};
 
+public:
   /// @brief 全設定を JSON にする
   /// @return JSON オブジェクト
   nlohmann::json Serialize() override {
@@ -211,8 +222,9 @@ public:
 #if RC_ENABLE_IMGUI
   /// @brief 状態の表示・設定の編集・その場で動かすボタン
   void OnImGui() override {
-    ImGui::Text("State: %s  (%.1fs)  parts %d / %d", StateName(state_), stateT_, static_cast<int>(parts_.size()),
-                kPartCount);
+    const OctopusState *cur = CurrentState();
+    ImGui::Text("State: %s  (%.1fs)  parts %d / %d", fsm_.CurrentName(), cur ? cur->Elapsed() : 0.0f,
+                static_cast<int>(parts_.size()), kPartCount);
     ImGui::TextDisabled("Model: %s", modelPath.empty() ? "(primitives)" : modelPath.c_str());
     ImGui::Text("Next in %.1fs", (std::max)(0.0f, timer_));
     ImGui::Checkbox("Enabled", &enabled);
@@ -258,7 +270,8 @@ protected:
     std::random_device rd;
     rng_.seed(rd());
     timer_ = firstDelay;
-    state_ = State::Hidden;
+    fsm_.ChangeState<HiddenState>();
+    fsm_.ApplyPending(*this);
     // 墨：単位立方体を薄く潰して丸い透かしテクスチャを貼り、水面より後に半透明で描く（OnRender3D）
     inkModel_ = RC::LoadModel(kInkModelPath);
     inkTex_ = RC::LoadTex(kInkTexPath);
@@ -320,21 +333,20 @@ protected:
 
     const TitleBlackboard::State &bb = TitleBlackboard::Get();
     if (debugRequest_ != 0) HandleDebugRequest(scene);
+    // 状態の外（デバッグボタン・下の強制潜行）から予約した遷移はすぐに切り替え、
+    // 続く判定と状態の更新が新しい状態を見るようにする（以前の「その場で state_ を書き換える」と同じ順序）
+    fsm_.ApplyPending(*this);
 
     // 無効にされた・文字に触れられない（起動演出・飛び込み・浮上の最中）なら潜って隠れる
-    const bool allowed = enabled && bb.lettersInteractive;
-    if (!allowed && state_ != State::Hidden && state_ != State::Diving) BeginDive(true);
+    // （隠れている・潜っている最中なら、その状態の OnDiveRequested が何もしない）
+    const bool allowed = enabled && bb.LettersInteractive();
+    allowed_ = allowed;
+    if (!allowed) RequestDive(fsm_, true);
+    fsm_.ApplyPending(*this);
 
-    switch (state_) {
-    case State::Hidden: UpdateHidden(scene, dt, allowed); break;
-    case State::Rising: UpdateRising(dt); break;
-    case State::Peeking: UpdatePeeking(dt); break;
-    case State::Climbing: UpdateClimbing(dt); break;
-    case State::Clinging: UpdateClinging(dt); break;
-    case State::Leaving: UpdateLeaving(dt); break;
-    case State::Diving: UpdateDiving(dt); break;
-    }
-    if (state_ != State::Hidden) Pose(dt);
+    // 今の状態の OnUpdate をポリモーフィズムで呼ぶ（次の状態は状態クラス自身が決める）
+    fsm_.Update(*this, dt);
+    if (IsShown()) Pose(dt);
   }
 
   /// @brief 作った部位とフォルダを破棄する
@@ -354,9 +366,7 @@ protected:
 
 private:
   using Mat3 = PartPose::Mat3;
-
-  /// @brief ふるまいの状態
-  enum class State { Hidden, Rising, Peeking, Climbing, Clinging, Leaving, Diving };
+  using Machine = StateMachine<TitleOctopusScript>; ///< ふるまいのステートマシン
 
   /// @brief 部位 1 つ（エンティティと、胴に対する置き方）
   /// @details モデルで描くときは entity を持たず、joint（モデルの骨）へ姿勢を書き込む。
@@ -405,22 +415,6 @@ private:
     if (!j.contains(key) || !j[key].is_array() || j[key].size() < 4) return;
     const auto &c = j[key];
     out = {c[0].get<float>(), c[1].get<float>(), c[2].get<float>(), c[3].get<float>()};
-  }
-
-  /// @brief 状態の表示名
-  /// @param s 状態
-  /// @return 名前
-  static const char *StateName(State s) {
-    switch (s) {
-    case State::Hidden: return "Hidden";
-    case State::Rising: return "Rising";
-    case State::Peeking: return "Peeking";
-    case State::Climbing: return "Climbing";
-    case State::Clinging: return "Clinging";
-    case State::Leaving: return "Leaving";
-    case State::Diving: return "Diving";
-    }
-    return "?";
   }
 
   // ------------------------------------------------------------------
@@ -499,10 +493,10 @@ private:
     const TitleBlackboard::State &bb = TitleBlackboard::Get();
     RC::Vector3 n{};
     float depth = 0.0f;
-    for (const auto &L : bb.letters) {
+    for (const auto &L : bb.Letters()) {
       if (L.visible && TitleBlackboard::CircleVsLetter(L, x, z, r, n, depth)) return true;
     }
-    for (const auto &L : bb.menu) {
+    for (const auto &L : bb.Menu()) {
       if (L.visible && TitleBlackboard::CircleVsLetter(L, x, z, r, n, depth)) return true;
     }
     return false;
@@ -536,6 +530,8 @@ private:
       std::shared_ptr<Entity> e;
       // 大きさは scale 1 のとき（球は半径、円柱は半径 × 高さ）。+Z が顔の前、+Y が上
       // joint / restRot は octopus.glb の骨（scripts/modelgen/models.py の build_octopus と対応）
+      // ※ この switch は部位ごとの「データ（大きさ・骨の名前・色）」を埋めるだけで、振る舞いは分岐しない。
+      //   作った後の部位はすべて同じ PlacePart で扱うので、部位ごとの派生クラスにはせずデータで表す。
       switch (i) {
       case kMantle:
         if (!useModel) e = MakePrimitive(scene, "TitleOctopus_Mantle", PrimitiveType::Sphere, bodyColor);
@@ -702,39 +698,14 @@ private:
   }
 
   // ------------------------------------------------------------------
-  // 状態ごとの更新
+  // 出現（Hidden から次の状態へ）
   // ------------------------------------------------------------------
 
-  /// @brief 状態を切り替える（経過時間を 0 に戻す）
-  /// @param s 次の状態
-  /// @param duration その状態の長さ（秒。使わない状態は 0）
-  void Enter(State s, float duration = 0.0f) {
-    state_ = s;
-    stateT_ = 0.0f;
-    stateDur_ = duration;
-  }
-
-  /// @brief 隠れているあいだ：待ち時間が明けたら、顔を出すか文字にしがみつくかを選んで出る
-  /// @param scene 対象のシーン
-  /// @param dt 経過秒
-  /// @param allowed 出てよいか
-  void UpdateHidden(Scene *scene, float dt, bool allowed) {
-    SetVisible(false);
-    if (!allowed) {
-      timer_ = (std::max)(timer_, firstDelay); // 操作できるようになってから firstDelay 待つ
-      return;
-    }
-    timer_ -= dt;
-    if (timer_ > 0.0f) return;
-    const bool wantCling = Rand01() < clingChance;
-    if ((wantCling && TryStartCling(scene)) || TryStartPeek(scene) || (!wantCling && TryStartCling(scene))) return;
-    timer_ = 1.0f; // 出られる場所が無かった：少し待ってやり直す
-  }
-
-  /// @brief 文字・メニューの無い水面を選んで浮かび上がり始める
+  /// @brief 文字・メニューの無い水面を選んで浮かび上がり始める（Rising へ）
+  /// @param machine 遷移を予約するステートマシン
   /// @param scene 対象のシーン
   /// @return 始められたら true
-  bool TryStartPeek(Scene *scene) {
+  bool TryStartPeek(Machine &machine, Scene *scene) {
     float cx, cz, hw, hh;
     if (!ViewRect(scene, cx, cz, hw, hh)) return false;
     const float margin = 2.5f * scale + 1.0f;
@@ -744,8 +715,8 @@ private:
       const float z = cz + Rand(-1.0f, 1.0f) * (std::max)(hh - margin, 0.5f);
       if (NearLetters(x, z, 1.6f * scale)) continue;
       // カーソルの真下には出ない（出た瞬間に驚いてしまう）
-      if (bb.cursorValid) {
-        const float dx = x - bb.cursorPos.x, dz = z - bb.cursorPos.z;
+      if (bb.CursorValid()) {
+        const float dx = x - bb.CursorPos().x, dz = z - bb.CursorPos().z;
         if (dx * dx + dz * dz < (startleRadius + 1.5f) * (startleRadius + 1.5f)) continue;
       }
       pos_ = {x, 0.0f, z};
@@ -754,32 +725,32 @@ private:
       sink_ = DeepSink() + kRiseExtra / scale; // 泡の帯より深い所から（水越しにぼんやり見える）
       deep_ = true;
       jet_ = 0.6f;
-      breached_ = false;
       cursorStill_ = 0.0f;
       SetVisible(true);
-      Enter(State::Rising, kRiseDeepTime + kRisePopTime);
+      machine.ChangeState<RisingState>();
       return true;
     }
     return false;
   }
 
-  /// @brief しがみつく文字と縁を選び、縁の外の水面からよじ登り始める
+  /// @brief しがみつく文字と縁を選び、縁の外の水面からよじ登り始める（Climbing へ）
+  /// @param machine 遷移を予約するステートマシン
   /// @param scene 対象のシーン
   /// @return 始められたら true
-  bool TryStartCling(Scene *scene) {
+  bool TryStartCling(Machine &machine, Scene *scene) {
     const TitleBlackboard::State &bb = TitleBlackboard::Get();
-    if (bb.letters.empty()) return false;
+    if (bb.Letters().empty()) return false;
     float cx, cz, hw, hh;
     if (!ViewRect(scene, cx, cz, hw, hh)) return false;
     std::vector<int> candidates;
-    for (int i = 0; i < static_cast<int>(bb.letters.size()); ++i) {
-      if (bb.letters[i].visible) candidates.push_back(i);
+    for (int i = 0; i < static_cast<int>(bb.Letters().size()); ++i) {
+      if (bb.Letters()[i].visible) candidates.push_back(i);
     }
     if (candidates.empty()) return false;
     for (int tries = 0; tries < 16; ++tries) {
       std::uniform_int_distribution<size_t> pick(0, candidates.size() - 1);
       const int li = candidates[pick(rng_)];
-      const TitleBlackboard::Letter &L = bb.letters[li];
+      const TitleBlackboard::Letter &L = bb.Letters()[li];
       float lx = 0.0f, lz = 0.0f, ox = 0.0f, oz = 0.0f, outDist = 0.0f;
       if (!FindClingSpot(L, lx, lz, ox, oz, outDist)) continue;
       // 縁の外の水面が画面内で、他の文字・メニューにかぶらないか
@@ -788,11 +759,11 @@ private:
       LetterFrame(L, lx, lz, ox, oz, attach, water, outward);
       if (std::fabs(water.x - cx) > hw - 1.0f || std::fabs(water.z - cz) > hh - 1.0f) continue;
       bool blocked = false;
-      for (int k = 0; k < static_cast<int>(bb.letters.size()) && !blocked; ++k) {
-        if (k == li || !bb.letters[k].visible) continue;
+      for (int k = 0; k < static_cast<int>(bb.Letters().size()) && !blocked; ++k) {
+        if (k == li || !bb.Letters()[k].visible) continue;
         RC::Vector3 n{};
         float depth = 0.0f;
-        blocked = TitleBlackboard::CircleVsLetter(bb.letters[k], water.x, water.z, 1.0f * scale, n, depth);
+        blocked = TitleBlackboard::CircleVsLetter(bb.Letters()[k], water.x, water.z, 1.0f * scale, n, depth);
       }
       if (blocked) continue;
       letter_ = li;
@@ -808,7 +779,7 @@ private:
       cursorStill_ = 0.0f;
       SetVisible(true);
       Splash(water.x, water.z, 0.6f);
-      Enter(State::Climbing, kClimbTime);
+      machine.ChangeState<ClimbingState>(kClimbTime);
       return true;
     }
     return false;
@@ -927,233 +898,48 @@ private:
     return ((std::max)(foamDepth, 0.0f) + 0.35f + 0.8f * scale) / (std::max)(scale, 0.05f);
   }
 
-  /// @brief 浮かび上がる：深い所から影が近づき、泡の帯を一気に抜けて水面へ（抜けた瞬間に飛沫と波紋）
-  /// @param dt 経過秒
-  /// @details 泡の帯（水面から foamDepth まで）の中にいると胴が白い塊に見えるので、そこは数フレームで抜ける。
-  void UpdateRising(float dt) {
-    stateT_ += dt;
-    if (stateT_ < kRiseDeepTime) {
-      // 深い所：足をなびかせながら上がってくる（水の色越しに影が濃くなる）
-      const float u = TitleOctopusDetail::Smooth01(stateT_ / kRiseDeepTime);
-      sink_ = DeepSink() + (kRiseExtra / scale) * (1.0f - u);
-      deep_ = true;
-      jet_ = 0.6f * (1.0f - u) + 0.3f;
-      return;
-    }
-    if (!breached_) {
-      // 泡の帯を飛び越えて水面のすぐ下へ。飛沫で境目を隠す
-      breached_ = true;
-      deep_ = false;
-      jet_ = 0.0f;
-      sink_ = 0.3f;
-      legSnap_ = true;
-      Splash(pos_.x, pos_.z, 0.8f);
-      squash_ = 0.6f; // 水を抜けた勢いで縦に伸びる
-    }
-    const float u = std::clamp((stateT_ - kRiseDeepTime) / kRisePopTime, 0.0f, 1.0f);
-    sink_ = 0.3f * (1.0f - TitleOctopusDetail::Smooth01(u));
-    if (u >= 1.0f) Enter(State::Peeking, Rand(peekMin, (std::max)(peekMin, peekMax)));
-  }
+  // ------------------------------------------------------------------
+  // 潜る・降りる・驚く（複数の状態から呼ばれる共通の動作）
+  // ------------------------------------------------------------------
 
-  /// @brief 水面に浮いている：見回す・カーソルを目で追う・寄ってくる・驚く
-  /// @param dt 経過秒
-  void UpdatePeeking(float dt) {
-    stateT_ += dt;
-    const TitleBlackboard::State &bb = TitleBlackboard::Get();
-    float wantYaw = baseYaw_ + 0.7f * std::sin(time_ * 0.45f + baseYaw_);
-    float lookX = std::sin(time_ * 0.9f) * 0.6f, lookZ = 0.8f; // 黒目の向き（胴のローカル xz）
-    if (bb.cursorValid) {
-      const float dx = bb.cursorPos.x - pos_.x, dz = bb.cursorPos.z - pos_.z;
-      const float d = std::sqrt(dx * dx + dz * dz);
-      const float cs = std::sqrt(bb.cursorVel.x * bb.cursorVel.x + bb.cursorVel.z * bb.cursorVel.z);
-      if ((d < startleRadius && cs > startleSpeed) || (bb.cursorClicked && d < clickStartleRadius)) {
-        Startle();
-        return;
-      }
-      if (d < lookRadius && d > 1e-3f) {
-        wantYaw = std::atan2(dx, dz);
-        LookLocal(dx / d, dz / d, lookX, lookZ);
-        // 近くでじっとしているカーソルには寄っていく（文字やメニューの下へは行かない）
-        cursorStill_ = (cs < 0.6f && d > approachStop) ? cursorStill_ + dt : 0.0f;
-        if (cursorStill_ > approachDelay) {
-          const float step = (std::min)(approachSpeed * dt, d - approachStop);
-          const float nx = pos_.x + dx / d * step, nz = pos_.z + dz / d * step;
-          if (step > 0.0f && !NearLetters(nx, nz, 1.4f * scale)) {
-            pos_.x = nx;
-            pos_.z = nz;
-            swim_ = (std::min)(1.0f, swim_ + dt * 3.0f);
-          }
-        }
-      } else {
-        cursorStill_ = 0.0f;
-      }
-    }
-    TurnTo(wantYaw, dt, 2.5f);
-    lookX_ += (lookX - lookX_) * (std::min)(1.0f, dt * 8.0f);
-    lookZ_ += (lookZ - lookZ_) * (std::min)(1.0f, dt * 8.0f);
-    // ときどき小さな波紋（呼吸）
-    rippleTimer_ -= dt;
-    if (rippleTimer_ <= 0.0f) {
-      RC::AddWaveSourceAtWorld(pos_.x, pos_.z, 0.01f, -0.03f);
-      rippleTimer_ = Rand(0.7f, 1.1f);
-    }
-    if (stateT_ >= stateDur_) BeginDive(false);
-  }
-
-  /// @brief よじ登る：縁の外の水面 → 文字の上（弧を描く）
-  /// @param dt 経過秒
-  void UpdateClimbing(float dt) {
-    stateT_ += dt;
-    const TitleBlackboard::Letter *L = CurrentLetter();
-    if (!L) {
-      BeginDive(true);
-      return;
-    }
-    climb_ = std::clamp(stateT_ / (std::max)(stateDur_, 0.05f), 0.0f, 1.0f);
-    LookAtCursorWhileOnLetter(dt);
-    if (climb_ >= 1.0f) {
-      TitleBlackboard::PushLetter(static_cast<size_t>(letter_), {0.0f, 0.0f, 0.0f}, 0.05f); // 乗った重みでぐらり
-      squash_ = -0.5f; // 着地でつぶれる
-      Enter(State::Clinging, Rand(clingMin, (std::max)(clingMin, clingMax)));
-    }
-  }
-
-  /// @brief しがみついている：文字に乗ったまま、カーソルを目で追う。驚いたら墨を吐いて飛び降りる
-  /// @param dt 経過秒
-  void UpdateClinging(float dt) {
-    stateT_ += dt;
-    const TitleBlackboard::Letter *L = CurrentLetter();
-    if (!L) {
-      BeginLeave(true);
-      return;
-    }
-    climb_ = 1.0f;
-    const TitleBlackboard::State &bb = TitleBlackboard::Get();
-    if (bb.cursorValid) {
-      RC::Vector3 attach, water, outward;
-      LetterFrame(*L, attachLx_, attachLz_, outLx_, outLz_, attach, water, outward);
-      const float dx = bb.cursorPos.x - attach.x, dz = bb.cursorPos.z - attach.z;
-      const float d = std::sqrt(dx * dx + dz * dz);
-      const float cs = std::sqrt(bb.cursorVel.x * bb.cursorVel.x + bb.cursorVel.z * bb.cursorVel.z);
-      if ((d < startleRadius && cs > startleSpeed) || (bb.cursorClicked && d < clickStartleRadius)) {
-        Ink(attach.x, attach.z);
-        BeginLeave(true);
-        return;
-      }
-    }
-    LookAtCursorWhileOnLetter(dt);
-    if (stateT_ >= stateDur_) BeginLeave(false);
-  }
-
-  /// @brief 滑り降りる：文字の上 → 縁の外の水面。降りきったら潜る
-  /// @param dt 経過秒
-  void UpdateLeaving(float dt) {
-    stateT_ += dt;
-    const TitleBlackboard::Letter *L = CurrentLetter();
-    // 降り始めた高さ（leaveFrom_）から 0 へ
-    climb_ = leaveFrom_ * (1.0f - std::clamp(stateT_ / (std::max)(stateDur_, 0.05f), 0.0f, 1.0f));
-    if (!L) climb_ = 0.0f; // 文字が消えた：その場（最後に置いた位置）から潜る
-    if (climb_ <= 0.0f) {
-      // 水面へ着いた：そこから潜る（位置は縁の外の水面。水しぶきは BeginDive が出す）
-      if (L) {
-        RC::Vector3 attach, water, outward;
-        LetterFrame(*L, attachLx_, attachLz_, outLx_, outLz_, attach, water, outward);
-        pos_ = {water.x, 0.0f, water.z};
-      }
-      letter_ = -1;
-      sink_ = 0.0f;
-      BeginDive(fastLeave_);
-    }
-  }
-
-  /// @brief 潜る：水面で身をすくめ → 泡の帯を一気に抜けて深い所へ → 外套膜を先にして泳ぎ去り、水の色に溶けて消える
-  /// @param dt 経過秒
-  /// @details 本物のタコは逃げるとき、漏斗から水を噴いて外套膜を先に、足を後ろへ束ねて進む（ジェット推進）。
-  ///          噴くたびに加速して惰性で減速する、を繰り返す。泳ぐのは泡の帯より下なので白い塊にならず、
-  ///          屈折越しに水の色に染まった影として見える。
-  void UpdateDiving(float dt) {
-    stateT_ += dt;
-    if (!deep_) {
-      // 水面：身をすくめて沈み込む（泡の帯の上端だけ。縁の泡は顔を出しているときと同じ）
-      const float u = std::clamp(stateT_ / (std::max)(plungeDur_, 0.02f), 0.0f, 1.0f);
-      sink_ = TitleOctopusDetail::Lerp(diveFrom_, (std::max)(diveFrom_, 0.3f), TitleOctopusDetail::Smooth01(u));
-      jet_ = 0.5f * u;
-      if (u < 1.0f) return;
-      // 泡の帯を飛び越えて深い所へ。水しぶき・墨で境目を隠す
-      deep_ = true;
-      sink_ = DeepSink();
-      legSnap_ = true;
-      swimVel_ = fleeing_ ? swimSpeed * 1.4f : swimSpeed * 0.25f;
-      if (fleeing_) yaw_ = std::atan2(-fleeDir_.x, -fleeDir_.z); // 外套膜（顔の反対側）を進む向きへ
-      Splash(pos_.x, pos_.z, fleeing_ ? 0.7f : 0.4f);
-      RC::AddWaveSourceAtWorld(pos_.x, pos_.z, 0.02f * scale, -0.12f);
-    }
-    const float swimT = stateT_ - plungeDur_;
-    const float dur = (std::max)(stateDur_ - plungeDur_, 0.1f);
-    const float u = std::clamp(swimT / dur, 0.0f, 1.0f);
-    jet_ = (std::min)(1.0f, jet_ + dt * 4.0f);
-    // さらに沈みながら（水の色に溶けていく）
-    sink_ = DeepSink() + (kSwimSink / scale) * TitleOctopusDetail::Smooth01(u);
-    // ジェット：一定間隔で噴いて加速し、水の抵抗で減速する
-    const float target = fleeing_ ? swimSpeed : swimSpeed * 0.3f;
-    pulseTimer_ -= dt;
-    if (pulseTimer_ <= 0.0f) {
-      swimVel_ = (std::max)(swimVel_, target * 1.6f);
-      squash_ = -0.35f; // 噴く瞬間に外套膜が縮む
-      pulseTimer_ = fleeing_ ? 0.42f : 0.7f;
-    }
-    swimVel_ += (target * 0.5f - swimVel_) * (std::min)(1.0f, dt * 2.5f);
-    // 進む向き：外套膜の向き（顔の反対）
-    const float mx = -std::sin(yaw_), mz = -std::cos(yaw_);
-    pos_.x += mx * swimVel_ * dt;
-    pos_.z += mz * swimVel_ * dt;
-    swim_ = 1.0f;
-    if (u >= 1.0f) {
-      SetVisible(false);
-      Enter(State::Hidden);
-      timer_ = Rand(intervalMin, (std::max)(intervalMin, intervalMax)) * (fleeing_ ? 1.3f : 1.0f);
-      fleeing_ = false;
-      deep_ = false;
-      jet_ = 0.0f;
-    }
-  }
-
-  /// @brief 潜り始める
+  /// @brief 「潜れ」と頼む。どう応じるかは今の状態が決める（OctopusState::OnDiveRequested）
+  /// @param machine 遷移を予約するステートマシン
   /// @param fast 驚いたとき（短い時間で潜る）
-  void BeginDive(bool fast) {
-    if (state_ == State::Clinging || state_ == State::Climbing) {
-      // 文字の上から直接は潜れないので、いったん滑り降りる
-      BeginLeave(fast);
-      return;
-    }
-    if (state_ == State::Leaving) {
-      // 降りている途中：降りきってから潜る（UpdateLeaving が BeginDive を呼ぶ）
-      fastLeave_ = fastLeave_ || fast;
-      if (climb_ > 0.0f) return;
-    }
-    if (state_ == State::Hidden || state_ == State::Diving) return;
+  /// @details 文字の上なら先に滑り降りる・降りている途中なら降りきってから潜る・隠れている／潜っている
+  ///          最中なら何もしない、と状態ごとに反応が違う。以前は if で状態を並べていたのを仮想関数にした。
+  void RequestDive(Machine &machine, bool fast) {
+    if (OctopusState *s = machine.As<OctopusState>()) s->OnDiveRequested(*this, machine, fast);
+  }
+
+  /// @brief 水面（または浮かび上がる途中の深い所）から潜り始める（Diving へ）
+  /// @param machine 遷移を予約するステートマシン
+  /// @param fast 驚いたとき（短い時間で潜る）
+  void StartDive(Machine &machine, bool fast) {
     Splash(pos_.x, pos_.z, fast ? 0.9f : 0.5f);
+    float plungeDur = 0.0f; // 水面で身をすくめて潜り込むまでの秒数
+    float diveFrom = 0.0f;  // 潜り始めたときの sink_（水面から潜るときだけ使う）
+    float swimVel = 0.0f;   // 泳ぎ始めの速さ（深い所から泳ぎ去るときだけ使う）
     if (deep_) {
       // 浮かび上がる途中（まだ深い所）：そのまま泳ぎ去る
-      plungeDur_ = 0.0f;
-      swimVel_ = fast ? swimSpeed : swimSpeed * 0.25f;
+      plungeDur = 0.0f;
+      swimVel = fast ? swimSpeed : swimSpeed * 0.25f;
     } else {
-      plungeDur_ = kPlungeTime * (fast ? kFastFactor : 1.0f);
-      diveFrom_ = sink_;
+      plungeDur = kPlungeTime * (fast ? kFastFactor : 1.0f);
+      diveFrom = sink_;
     }
-    pulseTimer_ = 0.0f;
-    Enter(State::Diving, plungeDur_ + kSwimTime);
+    machine.ChangeState<DivingState>(plungeDur, diveFrom, swimVel);
   }
 
-  /// @brief 文字から降り始める
+  /// @brief 文字から降り始める（Leaving へ）
+  /// @param machine 遷移を予約するステートマシン
   /// @param fast 驚いたとき（飛び降りる）
-  void BeginLeave(bool fast) {
+  void BeginLeave(Machine &machine, bool fast) {
     fastLeave_ = fast;
     if (fast) squash_ = 0.7f;
     // 今の高さ（climb_）から降り始める（よじ登っている途中で降りることもある）
-    leaveFrom_ = std::clamp(climb_, 0.0f, 1.0f);
-    const float dur = kLeaveTime * (fast ? kFastFactor : 1.0f) * (std::max)(leaveFrom_, 0.2f);
-    Enter(State::Leaving, dur);
+    const float leaveFrom = std::clamp(climb_, 0.0f, 1.0f);
+    const float dur = kLeaveTime * (fast ? kFastFactor : 1.0f) * (std::max)(leaveFrom, 0.2f);
+    machine.ChangeState<LeavingState>(dur, leaveFrom);
     if (fast) {
       fleeing_ = true;
       const TitleBlackboard::Letter *L = CurrentLetter();
@@ -1166,12 +952,13 @@ private:
   }
 
   /// @brief 驚く：墨を吐き、身を縮めて、カーソルから離れる向きへ潜って逃げる
-  void Startle() {
+  /// @param machine 遷移を予約するステートマシン
+  void Startle(Machine &machine) {
     const TitleBlackboard::State &bb = TitleBlackboard::Get();
     Ink(pos_.x, pos_.z);
     squash_ = 0.7f;
     fleeing_ = true;
-    float dx = pos_.x - bb.cursorPos.x, dz = pos_.z - bb.cursorPos.z;
+    float dx = pos_.x - bb.CursorPos().x, dz = pos_.z - bb.CursorPos().z;
     const float d = std::sqrt(dx * dx + dz * dz);
     if (d > 1e-3f) {
       dx /= d;
@@ -1182,19 +969,16 @@ private:
     }
     fleeDir_ = {dx, 0.0f, dz};
     yaw_ = std::atan2(dx, dz); // 逃げる向きへ向き直る
-    if (state_ == State::Clinging || state_ == State::Climbing) {
-      BeginLeave(true);
-    } else {
-      BeginDive(true);
-    }
+    // 文字の上（Climbing / Clinging）なら飛び降り、水面なら潜る。どちらになるかは今の状態が決める
+    RequestDive(machine, true);
   }
 
   /// @brief しがみついている文字（無ければ・見えなければ nullptr）
   /// @return 文字
   const TitleBlackboard::Letter *CurrentLetter() const {
     const TitleBlackboard::State &bb = TitleBlackboard::Get();
-    if (letter_ < 0 || letter_ >= static_cast<int>(bb.letters.size())) return nullptr;
-    const TitleBlackboard::Letter &L = bb.letters[letter_];
+    if (letter_ < 0 || letter_ >= static_cast<int>(bb.Letters().size())) return nullptr;
+    const TitleBlackboard::Letter &L = bb.Letters()[letter_];
     return L.visible ? &L : nullptr;
   }
 
@@ -1209,8 +993,8 @@ private:
     float want = inwardYaw + 0.35f * std::sin(time_ * 0.6f);
     float lookX = std::sin(time_ * 1.1f) * 0.5f, lookZ = 0.8f;
     const TitleBlackboard::State &bb = TitleBlackboard::Get();
-    if (bb.cursorValid) {
-      const float dx = bb.cursorPos.x - attach.x, dz = bb.cursorPos.z - attach.z;
+    if (bb.CursorValid()) {
+      const float dx = bb.CursorPos().x - attach.x, dz = bb.CursorPos().z - attach.z;
       const float d = std::sqrt(dx * dx + dz * dz);
       if (d < lookRadius && d > 1e-3f) {
         // 体は内側から ±70° まで。黒目はそのままカーソルへ
@@ -1278,8 +1062,8 @@ private:
     // 吐きつける向き（カーソルがあればそちら）
     float bx = 0.0f, bz = 0.0f;
     const TitleBlackboard::State &bb = TitleBlackboard::Get();
-    if (bb.cursorValid) {
-      const float dx = bb.cursorPos.x - x, dz = bb.cursorPos.z - z;
+    if (bb.CursorValid()) {
+      const float dx = bb.CursorPos().x - x, dz = bb.CursorPos().z - z;
       const float d = std::sqrt(dx * dx + dz * dz);
       if (d > 1e-3f) {
         bx = dx / d;
@@ -1332,13 +1116,14 @@ private:
     RC::Vector3 origin{}; // 足の付け根の高さ（胴のローカル原点）
     Mat3 tilt = Identity();
     const TitleBlackboard::Letter *L = nullptr;
-    const bool onLetterStates = (state_ == State::Climbing || state_ == State::Clinging || state_ == State::Leaving);
+    const OctopusState *curState = CurrentState();
+    const bool onLetterStates = curState && curState->IsOnLetter(); // Climbing / Clinging / Leaving
     if (onLetterStates) L = CurrentLetter();
     if (L) {
       RC::Vector3 attach, water, outward;
       LetterFrame(*L, attachLx_, attachLz_, outLx_, outLz_, attach, water, outward);
       // 驚いて飛び降りるときは外へ大きく跳ぶ
-      const float jumpOut = fastLeave_ && state_ == State::Leaving ? 1.0f : 0.0f;
+      const float jumpOut = fastLeave_ && fsm_.IsIn<LeavingState>() ? 1.0f : 0.0f;
       water.x += outward.x * 0.8f * scale * jumpOut;
       water.z += outward.z * 0.8f * scale * jumpOut;
       const float c = TitleOctopusDetail::Smooth01(climb_);
@@ -1396,7 +1181,7 @@ private:
     // しがみついている間は、着地した瞬間の足の形を文字のローカル座標に固定する（吸盤は滑らない）。
     // 毎フレーム形を探し直すと、曲げる向きの選択が切り替わって足がガクガク跳ねるため。
     // 動くのは先端の小さなうねりだけ。体の向き（カーソルを見る）が変わっても足は動かさない。
-    const bool holdGrip = (state_ == State::Clinging) && L != nullptr;
+    const bool holdGrip = (curState && curState->HoldsGrip()) && L != nullptr; // Clinging
     if (!holdGrip) gripFrozen_ = false;
     const bool freezeNow = holdGrip && !gripFrozen_;
     // 足の節は胴からの相対位置をなめらかに追わせる（判定の切り替わりで 1 フレームだけ跳ねるのを消す）
@@ -1554,20 +1339,435 @@ private:
     const int req = debugRequest_;
     debugRequest_ = 0;
     if (req == 3) {
-      if (state_ == State::Peeking || state_ == State::Clinging || state_ == State::Climbing) {
-        Startle();
+      const OctopusState *cur = CurrentState();
+      if (cur && cur->CanBeStartled()) { // Peeking / Clinging / Climbing
+        Startle(fsm_);
         debugNote_ = "startled";
       } else {
         debugNote_ = "not visible";
       }
       return;
     }
-    if (state_ != State::Hidden) {
+    if (!fsm_.IsIn<HiddenState>()) {
       debugNote_ = "busy (wait until hidden)";
       return;
     }
-    const bool ok = (req == 1) ? TryStartPeek(scene) : TryStartCling(scene);
+    const bool ok = (req == 1) ? TryStartPeek(fsm_, scene) : TryStartCling(fsm_, scene);
     debugNote_ = ok ? "started" : "no place (letters not ready / camera moving?)";
+  }
+
+  // ------------------------------------------------------------------
+  // 状態クラス（State パターン）
+  //   状態 1 つ = クラス 1 つ。毎フレームの処理は OnUpdate、次の状態は machine.ChangeState で自分が決める。
+  //   本体の private メンバへは、入れ子クラスなので friend 無しで触れる。
+  // ------------------------------------------------------------------
+
+  /// @brief タコの状態の基底。経過時間と長さ、状態ごとに答えの変わる問い合わせ（仮想関数）をまとめる
+  class OctopusState : public IState<TitleOctopusScript> {
+  public:
+    /// @brief 状態を作る
+    /// @param duration その状態の長さ（秒。使わない状態は 0）
+    explicit OctopusState(float duration = 0.0f) : duration_(duration) {}
+
+    /// @brief この状態に入ってからの経過秒（インスペクタの表示用）
+    /// @return 経過秒
+    float Elapsed() const { return elapsed_; }
+
+    /// @brief 「潜れ」と頼まれたときの反応。既定は水面からそのまま潜る（Rising / Peeking）
+    /// @param o タコ本体
+    /// @param machine 遷移を予約するステートマシン
+    /// @param fast 驚いたとき（短い時間で潜る）
+    virtual void OnDiveRequested(TitleOctopusScript &o, Machine &machine, bool fast) { o.StartDive(machine, fast); }
+
+    /// @brief 体を描くか（隠れている間だけ false）
+    /// @return 描くなら true
+    virtual bool IsShown() const { return true; }
+
+    /// @brief 文字に乗っている／乗り降りしている状態か（Climbing / Clinging / Leaving）
+    /// @return そうなら true
+    virtual bool IsOnLetter() const { return false; }
+
+    /// @brief 足の形を文字に固定する状態か（Clinging）
+    /// @return そうなら true
+    virtual bool HoldsGrip() const { return false; }
+
+    /// @brief デバッグの Startle ボタンで驚かせられる状態か（Peeking / Clinging / Climbing）
+    /// @return そうなら true
+    virtual bool CanBeStartled() const { return false; }
+
+  protected:
+    /// @brief 経過時間を進める
+    /// @param dt 経過秒
+    void Advance(float dt) { elapsed_ += dt; }
+
+    /// @brief その状態の長さ
+    /// @return 秒
+    float Duration() const { return duration_; }
+
+  private:
+    float elapsed_ = 0.0f;  ///< この状態に入ってからの経過秒
+    float duration_ = 0.0f; ///< その状態の長さ（秒）
+  };
+
+  /// @brief 水中に隠れている（描かない）。待ち時間が明けたら「顔を出す」か「文字にしがみつく」を選ぶ
+  class HiddenState final : public OctopusState {
+  public:
+    /// @brief 待ち時間を数え、明けたら出る場所を選んで Rising / Climbing へ
+    /// @param o タコ本体
+    /// @param machine 遷移を予約するステートマシン
+    /// @param dt 経過秒
+    void OnUpdate(TitleOctopusScript &o, Machine &machine, float dt) override {
+      o.SetVisible(false);
+      if (!o.allowed_) {
+        o.timer_ = (std::max)(o.timer_, o.firstDelay); // 操作できるようになってから firstDelay 待つ
+        return;
+      }
+      o.timer_ -= dt;
+      if (o.timer_ > 0.0f) return;
+      Scene *scene = o.GetScene();
+      const bool wantCling = o.Rand01() < o.clingChance;
+      if ((wantCling && o.TryStartCling(machine, scene)) || o.TryStartPeek(machine, scene) ||
+          (!wantCling && o.TryStartCling(machine, scene))) {
+        return;
+      }
+      o.timer_ = 1.0f; // 出られる場所が無かった：少し待ってやり直す
+    }
+    /// @brief 隠れているので潜りようがない（何もしない）
+    void OnDiveRequested(TitleOctopusScript &, Machine &, bool) override {}
+    /// @brief 隠れているので描かない
+    /// @return false
+    bool IsShown() const override { return false; }
+    /// @brief 状態名
+    /// @return "Hidden"
+    const char *Name() const override { return "Hidden"; }
+  };
+
+  /// @brief 浮かび上がる：深い所から影が近づき、泡の帯を一気に抜けて水面へ（抜けた瞬間に飛沫と波紋）
+  /// @details 泡の帯（水面から foamDepth まで）の中にいると胴が白い塊に見えるので、そこは数フレームで抜ける。
+  class RisingState final : public OctopusState {
+  public:
+    /// @brief 浮かび上がりの長さで作る
+    RisingState() : OctopusState(kRiseDeepTime + kRisePopTime) {}
+    /// @brief 深い所 → 泡の帯を抜ける → 水面。顔を出しきったら Peeking へ
+    /// @param o タコ本体
+    /// @param machine 遷移を予約するステートマシン
+    /// @param dt 経過秒
+    void OnUpdate(TitleOctopusScript &o, Machine &machine, float dt) override {
+      Advance(dt);
+      if (Elapsed() < kRiseDeepTime) {
+        // 深い所：足をなびかせながら上がってくる（水の色越しに影が濃くなる）
+        const float u = TitleOctopusDetail::Smooth01(Elapsed() / kRiseDeepTime);
+        o.sink_ = o.DeepSink() + (kRiseExtra / o.scale) * (1.0f - u);
+        o.deep_ = true;
+        o.jet_ = 0.6f * (1.0f - u) + 0.3f;
+        return;
+      }
+      if (!breached_) {
+        // 泡の帯を飛び越えて水面のすぐ下へ。飛沫で境目を隠す
+        breached_ = true;
+        o.deep_ = false;
+        o.jet_ = 0.0f;
+        o.sink_ = 0.3f;
+        o.legSnap_ = true;
+        o.Splash(o.pos_.x, o.pos_.z, 0.8f);
+        o.squash_ = 0.6f; // 水を抜けた勢いで縦に伸びる
+      }
+      const float u = std::clamp((Elapsed() - kRiseDeepTime) / kRisePopTime, 0.0f, 1.0f);
+      o.sink_ = 0.3f * (1.0f - TitleOctopusDetail::Smooth01(u));
+      if (u >= 1.0f) machine.ChangeState<PeekingState>(o.Rand(o.peekMin, (std::max)(o.peekMin, o.peekMax)));
+    }
+    /// @brief 状態名
+    /// @return "Rising"
+    const char *Name() const override { return "Rising"; }
+
+  private:
+    bool breached_ = false; ///< 浮かび上がりで水面を抜けたか
+  };
+
+  /// @brief 水面に浮いている：見回す・カーソルを目で追う・寄ってくる・驚く
+  class PeekingState final : public OctopusState {
+  public:
+    /// @brief 顔を出している長さで作る
+    /// @param duration 顔を出している秒数
+    explicit PeekingState(float duration) : OctopusState(duration) {}
+    /// @brief カーソルへの反応と見回し。驚いたら・時間が来たら潜る（Diving へ）
+    /// @param o タコ本体
+    /// @param machine 遷移を予約するステートマシン
+    /// @param dt 経過秒
+    void OnUpdate(TitleOctopusScript &o, Machine &machine, float dt) override {
+      Advance(dt);
+      const TitleBlackboard::State &bb = TitleBlackboard::Get();
+      float wantYaw = o.baseYaw_ + 0.7f * std::sin(o.time_ * 0.45f + o.baseYaw_);
+      float lookX = std::sin(o.time_ * 0.9f) * 0.6f, lookZ = 0.8f; // 黒目の向き（胴のローカル xz）
+      if (bb.CursorValid()) {
+        const float dx = bb.CursorPos().x - o.pos_.x, dz = bb.CursorPos().z - o.pos_.z;
+        const float d = std::sqrt(dx * dx + dz * dz);
+        const float cs = std::sqrt(bb.CursorVel().x * bb.CursorVel().x + bb.CursorVel().z * bb.CursorVel().z);
+        if ((d < o.startleRadius && cs > o.startleSpeed) || (bb.CursorClicked() && d < o.clickStartleRadius)) {
+          o.Startle(machine);
+          return;
+        }
+        if (d < o.lookRadius && d > 1e-3f) {
+          wantYaw = std::atan2(dx, dz);
+          o.LookLocal(dx / d, dz / d, lookX, lookZ);
+          // 近くでじっとしているカーソルには寄っていく（文字やメニューの下へは行かない）
+          o.cursorStill_ = (cs < 0.6f && d > o.approachStop) ? o.cursorStill_ + dt : 0.0f;
+          if (o.cursorStill_ > o.approachDelay) {
+            const float step = (std::min)(o.approachSpeed * dt, d - o.approachStop);
+            const float nx = o.pos_.x + dx / d * step, nz = o.pos_.z + dz / d * step;
+            if (step > 0.0f && !NearLetters(nx, nz, 1.4f * o.scale)) {
+              o.pos_.x = nx;
+              o.pos_.z = nz;
+              o.swim_ = (std::min)(1.0f, o.swim_ + dt * 3.0f);
+            }
+          }
+        } else {
+          o.cursorStill_ = 0.0f;
+        }
+      }
+      o.TurnTo(wantYaw, dt, 2.5f);
+      o.lookX_ += (lookX - o.lookX_) * (std::min)(1.0f, dt * 8.0f);
+      o.lookZ_ += (lookZ - o.lookZ_) * (std::min)(1.0f, dt * 8.0f);
+      // ときどき小さな波紋（呼吸）
+      o.rippleTimer_ -= dt;
+      if (o.rippleTimer_ <= 0.0f) {
+        RC::AddWaveSourceAtWorld(o.pos_.x, o.pos_.z, 0.01f, -0.03f);
+        o.rippleTimer_ = o.Rand(0.7f, 1.1f);
+      }
+      if (Elapsed() >= Duration()) o.StartDive(machine, false);
+    }
+    /// @brief 水面にいるので驚かせられる
+    /// @return true
+    bool CanBeStartled() const override { return true; }
+    /// @brief 状態名
+    /// @return "Peeking"
+    const char *Name() const override { return "Peeking"; }
+  };
+
+  /// @brief 文字の上（Climbing / Clinging）の共通の基底。「潜れ」と頼まれたら、まず滑り降りる
+  class OnLetterState : public OctopusState {
+  public:
+    /// @brief 状態の長さで作る
+    /// @param duration その状態の長さ（秒）
+    explicit OnLetterState(float duration) : OctopusState(duration) {}
+    /// @brief 文字の上から直接は潜れないので、いったん滑り降りる（Leaving へ）
+    /// @param o タコ本体
+    /// @param machine 遷移を予約するステートマシン
+    /// @param fast 驚いたとき（飛び降りる）
+    void OnDiveRequested(TitleOctopusScript &o, Machine &machine, bool fast) override { o.BeginLeave(machine, fast); }
+    /// @brief 文字に乗っている
+    /// @return true
+    bool IsOnLetter() const override { return true; }
+    /// @brief 文字の上にいるので驚かせられる
+    /// @return true
+    bool CanBeStartled() const override { return true; }
+  };
+
+  /// @brief よじ登る：縁の外の水面 → 文字の上（弧を描く）
+  class ClimbingState final : public OnLetterState {
+  public:
+    /// @brief よじ登る長さで作る
+    /// @param duration よじ登る秒数
+    explicit ClimbingState(float duration) : OnLetterState(duration) {}
+    /// @brief 登りきったら文字をぐらりと揺らして Clinging へ。文字が消えたら飛び降りる
+    /// @param o タコ本体
+    /// @param machine 遷移を予約するステートマシン
+    /// @param dt 経過秒
+    void OnUpdate(TitleOctopusScript &o, Machine &machine, float dt) override {
+      Advance(dt);
+      const TitleBlackboard::Letter *L = o.CurrentLetter();
+      if (!L) {
+        OnDiveRequested(o, machine, true);
+        return;
+      }
+      o.climb_ = std::clamp(Elapsed() / (std::max)(Duration(), 0.05f), 0.0f, 1.0f);
+      o.LookAtCursorWhileOnLetter(dt);
+      if (o.climb_ >= 1.0f) {
+        TitleBlackboard::PushLetter(static_cast<size_t>(o.letter_), {0.0f, 0.0f, 0.0f}, 0.05f); // 乗った重みでぐらり
+        o.squash_ = -0.5f; // 着地でつぶれる
+        machine.ChangeState<ClingingState>(o.Rand(o.clingMin, (std::max)(o.clingMin, o.clingMax)));
+      }
+    }
+    /// @brief 状態名
+    /// @return "Climbing"
+    const char *Name() const override { return "Climbing"; }
+  };
+
+  /// @brief しがみついている：文字に乗ったまま、カーソルを目で追う。驚いたら墨を吐いて飛び降りる
+  class ClingingState final : public OnLetterState {
+  public:
+    /// @brief しがみつく長さで作る
+    /// @param duration しがみついている秒数
+    explicit ClingingState(float duration) : OnLetterState(duration) {}
+    /// @brief 驚いたら・時間が来たら・文字が消えたら Leaving へ
+    /// @param o タコ本体
+    /// @param machine 遷移を予約するステートマシン
+    /// @param dt 経過秒
+    void OnUpdate(TitleOctopusScript &o, Machine &machine, float dt) override {
+      Advance(dt);
+      const TitleBlackboard::Letter *L = o.CurrentLetter();
+      if (!L) {
+        o.BeginLeave(machine, true);
+        return;
+      }
+      o.climb_ = 1.0f;
+      const TitleBlackboard::State &bb = TitleBlackboard::Get();
+      if (bb.CursorValid()) {
+        RC::Vector3 attach, water, outward;
+        o.LetterFrame(*L, o.attachLx_, o.attachLz_, o.outLx_, o.outLz_, attach, water, outward);
+        const float dx = bb.CursorPos().x - attach.x, dz = bb.CursorPos().z - attach.z;
+        const float d = std::sqrt(dx * dx + dz * dz);
+        const float cs = std::sqrt(bb.CursorVel().x * bb.CursorVel().x + bb.CursorVel().z * bb.CursorVel().z);
+        if ((d < o.startleRadius && cs > o.startleSpeed) || (bb.CursorClicked() && d < o.clickStartleRadius)) {
+          o.Ink(attach.x, attach.z);
+          o.BeginLeave(machine, true);
+          return;
+        }
+      }
+      o.LookAtCursorWhileOnLetter(dt);
+      if (Elapsed() >= Duration()) o.BeginLeave(machine, false);
+    }
+    /// @brief しがみついている間は足の形を文字に固定する
+    /// @return true
+    bool HoldsGrip() const override { return true; }
+    /// @brief 状態名
+    /// @return "Clinging"
+    const char *Name() const override { return "Clinging"; }
+  };
+
+  /// @brief 滑り降りる：文字の上 → 縁の外の水面。降りきったら潜る
+  class LeavingState final : public OctopusState {
+  public:
+    /// @brief 降りる長さと降り始めの高さで作る
+    /// @param duration 降りる秒数
+    /// @param leaveFrom 降り始めたときの climb_
+    LeavingState(float duration, float leaveFrom) : OctopusState(duration), leaveFrom_(leaveFrom) {}
+    /// @brief 降り始めた高さから 0 へ。水面へ着いたら Diving へ
+    /// @param o タコ本体
+    /// @param machine 遷移を予約するステートマシン
+    /// @param dt 経過秒
+    void OnUpdate(TitleOctopusScript &o, Machine &machine, float dt) override {
+      Advance(dt);
+      const TitleBlackboard::Letter *L = o.CurrentLetter();
+      // 降り始めた高さ（leaveFrom_）から 0 へ
+      o.climb_ = leaveFrom_ * (1.0f - std::clamp(Elapsed() / (std::max)(Duration(), 0.05f), 0.0f, 1.0f));
+      if (!L) o.climb_ = 0.0f; // 文字が消えた：その場（最後に置いた位置）から潜る
+      if (o.climb_ <= 0.0f) {
+        // 水面へ着いた：そこから潜る（位置は縁の外の水面。水しぶきは StartDive が出す）
+        if (L) {
+          RC::Vector3 attach, water, outward;
+          o.LetterFrame(*L, o.attachLx_, o.attachLz_, o.outLx_, o.outLz_, attach, water, outward);
+          o.pos_ = {water.x, 0.0f, water.z};
+        }
+        o.letter_ = -1;
+        o.sink_ = 0.0f;
+        OnDiveRequested(o, machine, o.fastLeave_);
+      }
+    }
+    /// @brief 降りている途中：驚いたら急いで降りるよう覚えておき、降りきってから潜る
+    /// @param o タコ本体
+    /// @param machine 遷移を予約するステートマシン
+    /// @param fast 驚いたとき
+    void OnDiveRequested(TitleOctopusScript &o, Machine &machine, bool fast) override {
+      o.fastLeave_ = o.fastLeave_ || fast;
+      if (o.climb_ > 0.0f) return; // 降りきったら OnUpdate がもう一度頼む
+      o.StartDive(machine, fast);
+    }
+    /// @brief 文字から降りている途中
+    /// @return true
+    bool IsOnLetter() const override { return true; }
+    /// @brief 状態名
+    /// @return "Leaving"
+    const char *Name() const override { return "Leaving"; }
+
+  private:
+    float leaveFrom_ = 1.0f; ///< 降り始めたときの climb_
+  };
+
+  /// @brief 潜る：水面で身をすくめ → 泡の帯を一気に抜けて深い所へ → 外套膜を先にして泳ぎ去り、水の色に溶けて消える
+  /// @details 本物のタコは逃げるとき、漏斗から水を噴いて外套膜を先に、足を後ろへ束ねて進む（ジェット推進）。
+  ///          噴くたびに加速して惰性で減速する、を繰り返す。泳ぐのは泡の帯より下なので白い塊にならず、
+  ///          屈折越しに水の色に染まった影として見える。
+  class DivingState final : public OctopusState {
+  public:
+    /// @brief 潜り方を決めて作る
+    /// @param plungeDur 水面で身をすくめて潜り込むまでの秒数（深い所から泳ぎ去るときは 0）
+    /// @param diveFrom 潜り始めたときの sink_
+    /// @param swimVel 泳ぎ始めの速さ（m/s）
+    DivingState(float plungeDur, float diveFrom, float swimVel)
+        : OctopusState(plungeDur + kSwimTime), plungeDur_(plungeDur), diveFrom_(diveFrom), swimVel_(swimVel) {}
+    /// @brief 潜り込み → ジェット推進で泳ぎ去る。見えなくなったら Hidden へ
+    /// @param o タコ本体
+    /// @param machine 遷移を予約するステートマシン
+    /// @param dt 経過秒
+    void OnUpdate(TitleOctopusScript &o, Machine &machine, float dt) override {
+      Advance(dt);
+      if (!o.deep_) {
+        // 水面：身をすくめて沈み込む（泡の帯の上端だけ。縁の泡は顔を出しているときと同じ）
+        const float u = std::clamp(Elapsed() / (std::max)(plungeDur_, 0.02f), 0.0f, 1.0f);
+        o.sink_ = TitleOctopusDetail::Lerp(diveFrom_, (std::max)(diveFrom_, 0.3f), TitleOctopusDetail::Smooth01(u));
+        o.jet_ = 0.5f * u;
+        if (u < 1.0f) return;
+        // 泡の帯を飛び越えて深い所へ。水しぶき・墨で境目を隠す
+        o.deep_ = true;
+        o.sink_ = o.DeepSink();
+        o.legSnap_ = true;
+        swimVel_ = o.fleeing_ ? o.swimSpeed * 1.4f : o.swimSpeed * 0.25f;
+        if (o.fleeing_) o.yaw_ = std::atan2(-o.fleeDir_.x, -o.fleeDir_.z); // 外套膜（顔の反対側）を進む向きへ
+        o.Splash(o.pos_.x, o.pos_.z, o.fleeing_ ? 0.7f : 0.4f);
+        RC::AddWaveSourceAtWorld(o.pos_.x, o.pos_.z, 0.02f * o.scale, -0.12f);
+      }
+      const float swimT = Elapsed() - plungeDur_;
+      const float dur = (std::max)(Duration() - plungeDur_, 0.1f);
+      const float u = std::clamp(swimT / dur, 0.0f, 1.0f);
+      o.jet_ = (std::min)(1.0f, o.jet_ + dt * 4.0f);
+      // さらに沈みながら（水の色に溶けていく）
+      o.sink_ = o.DeepSink() + (kSwimSink / o.scale) * TitleOctopusDetail::Smooth01(u);
+      // ジェット：一定間隔で噴いて加速し、水の抵抗で減速する
+      const float target = o.fleeing_ ? o.swimSpeed : o.swimSpeed * 0.3f;
+      pulseTimer_ -= dt;
+      if (pulseTimer_ <= 0.0f) {
+        swimVel_ = (std::max)(swimVel_, target * 1.6f);
+        o.squash_ = -0.35f; // 噴く瞬間に外套膜が縮む
+        pulseTimer_ = o.fleeing_ ? 0.42f : 0.7f;
+      }
+      swimVel_ += (target * 0.5f - swimVel_) * (std::min)(1.0f, dt * 2.5f);
+      // 進む向き：外套膜の向き（顔の反対）
+      const float mx = -std::sin(o.yaw_), mz = -std::cos(o.yaw_);
+      o.pos_.x += mx * swimVel_ * dt;
+      o.pos_.z += mz * swimVel_ * dt;
+      o.swim_ = 1.0f;
+      if (u >= 1.0f) {
+        o.SetVisible(false);
+        machine.ChangeState<HiddenState>();
+        o.timer_ = o.Rand(o.intervalMin, (std::max)(o.intervalMin, o.intervalMax)) * (o.fleeing_ ? 1.3f : 1.0f);
+        o.fleeing_ = false;
+        o.deep_ = false;
+        o.jet_ = 0.0f;
+      }
+    }
+    /// @brief もう潜っているので何もしない
+    void OnDiveRequested(TitleOctopusScript &, Machine &, bool) override {}
+    /// @brief 状態名
+    /// @return "Diving"
+    const char *Name() const override { return "Diving"; }
+
+  private:
+    float plungeDur_ = 0.2f; ///< 水面で身をすくめて潜り込むまでの秒数
+    float diveFrom_ = 0.0f;  ///< 潜り始めたときの sink_
+    float swimVel_ = 0.0f;   ///< 水中を泳ぐ今の速さ（m/s）
+    float pulseTimer_ = 0.0f; ///< 次に水を噴くまでの秒数
+  };
+
+  /// @brief 今の状態（状態が無ければ nullptr）
+  /// @return 今の状態
+  const OctopusState *CurrentState() const { return fsm_.As<OctopusState>(); }
+
+  /// @brief 体を描く状態か（隠れている間は描かない）
+  /// @return 描くなら true
+  bool IsShown() const {
+    const OctopusState *cur = CurrentState();
+    return cur && cur->IsShown();
   }
 
   // ------------------------------------------------------------------
@@ -1581,9 +1781,8 @@ private:
   std::weak_ptr<Entity> folder_;
   bool visible_ = true; ///< SetVisible の現在値（最初の SetVisible(false) で全部を隠すため true から始める）
 
-  State state_ = State::Hidden;
-  float stateT_ = 0.0f;
-  float stateDur_ = 0.0f;
+  Machine fsm_;              ///< ふるまいの状態（Hidden / Rising / Peeking / Climbing / Clinging / Leaving / Diving）
+  bool allowed_ = false;     ///< このフレーム出てきてよいか（有効かつ文字に触れられる。HiddenState が見る）
   float timer_ = 3.0f;
   float time_ = 0.0f;
   std::mt19937 rng_{20261014u};
@@ -1599,7 +1798,6 @@ private:
   float yaw_ = 0.0f;       ///< 顔の向き（rad）
   float baseYaw_ = 0.0f;   ///< 見回すときの基準の向き
   float sink_ = 1.8f;      ///< 水面からの深さ（m、scale 1。0 で水面）
-  bool breached_ = false;  ///< 浮かび上がりで水面を抜けたか
   float squash_ = 0.0f;    ///< 伸び縮み（正で縦に伸びる）
   float squashVel_ = 0.0f;
   float swim_ = 0.0f;      ///< 泳いでいる強さ（足のうねりを大きくする）
@@ -1612,10 +1810,7 @@ private:
   // 水中（泡の帯より深い所）
   bool deep_ = false;        ///< 泡の帯より深い所にいる（波に乗らない・足を束ねる）
   float jet_ = 0.0f;         ///< 足を後ろへ束ねる強さ（0〜1。ジェット推進の姿勢）
-  float diveFrom_ = 0.0f;    ///< 潜り始めたときの sink_
-  float plungeDur_ = 0.2f;   ///< 水面で身をすくめて潜り込むまでの秒数
-  float swimVel_ = 0.0f;     ///< 水中を泳ぐ今の速さ（m/s）
-  float pulseTimer_ = 0.0f;  ///< 次に水を噴くまでの秒数
+  // 潜り込みの秒数・泳ぐ速さ・噴く間隔は DivingState が持つ
 
   // 足
   /// @brief しがみついている間の足の節 1 つ（文字のローカルに固定した位置）
@@ -1638,7 +1833,6 @@ private:
   float outLz_ = -1.0f;      ///< 外向き（文字のローカル Z）
   float outDist_ = 1.2f;     ///< しがみつく点 → 縁の外の水面の点 の距離（m）
   float climb_ = 0.0f;       ///< 0: 縁の外の水面 / 1: 文字の上
-  float leaveFrom_ = 1.0f;   ///< 降り始めたときの climb_
   bool fastLeave_ = false;   ///< 驚いて飛び降りている
 
   // 墨
@@ -1667,5 +1861,10 @@ private:
   int debugRequest_ = 0;     ///< 1: Peek / 2: Cling / 3: Startle
   std::string debugNote_;
 };
+
+TitleOctopusScript::TitleOctopusScript() {
+  fsm_.ChangeState<HiddenState>();
+  fsm_.ApplyPending(*this);
+}
 
 REGISTER_SCRIPT(TitleOctopusScript)

@@ -29,6 +29,11 @@ namespace TransitionDemo {
 inline constexpr bool kEnabled = true; ///< デモを有効にするか（見せ終わったら false に戻す）
 
 /// @brief デモの種類
+/// @details これは「どちらのデモを流すか」を選ぶコンパイル時の設定値としてだけ使う。
+///          種類ごとの振る舞い（ステージ側の進行）は enum で分岐させず、StageDemo.h の
+///          StageDemo 派生クラス（ClearStageDemo / GameOverStageDemo）に分けてあり、
+///          この値を見るのは Factory Method の CreateStageDemo() だけ。
+///          Title / Select / Result 側は定数（待ち時間など）を読むだけなので、ここに残す。
 enum class Mode {
   Clear,    ///< 終盤のサメを倒してクリア → Result → Select をくり返す
   GameOver, ///< サメの群れに食われて力尽きる → Result → Select をくり返す

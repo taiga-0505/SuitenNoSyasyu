@@ -1,5 +1,6 @@
 #pragma once
 #include "Graphics/PostProcess/PostProcess.h"
+#include "Game/Framework/ScreenFx.h"
 #include <algorithm>
 
 /// @brief 水面を出入りした瞬間に、露出を一瞬だけ跳ねさせる
@@ -14,7 +15,10 @@
 ///          色味が変わらないよう露出以外を素通しの値にしてから使う。終わったら自分で外す。
 ///          Dissolve（遷移の幕）が掛かっている間は何もしない。幕の後ろに ColorGrade を
 ///          積むと、幕の色まで明るさが変わってしまうため。
-struct ExposureFlash {
+///
+///          画面演出の共通インタフェース ScreenFx を実装する（Update / Clear / IsActive）。
+class ExposureFlash : public ScreenFx {
+public:
   static constexpr float kAttack = 0.06f; ///< ピークまでの時間（秒）
 
   /// @brief 露出フラッシュを開始する（kAttack 秒でピークへ上げ、残り時間で 0 へ戻す）
@@ -93,9 +97,18 @@ struct ExposureFlash {
     pp->SetGradeExposureOffset(peakEv_ * k);
   }
 
+  /// @brief ScreenFx としての更新（露出は水中かどうかに関係しないので underwater は使わない）
+  /// @param pp         対象の PostProcess（nullptr なら何もしない）
+  /// @param dt         経過時間（秒）
+  /// @param underwater 使わない
+  void Update(PostProcess *pp, float dt, bool underwater) override {
+    (void)underwater;
+    Update(pp, dt);
+  }
+
   /// @brief 途中で止める（オフセットを 0 に戻し、自分で積んだ ColorGrade は外す）
   /// @param pp 対象の PostProcess（nullptr でも内部状態はリセットする）
-  void Clear(PostProcess *pp) {
+  void Clear(PostProcess *pp) override {
     if (pp && active_) {
       pp->SetGradeExposureOffset(0.0f);
       if (ownsGrade_) pp->RemoveEffect(PostEffectType::ColorGrade);
@@ -106,6 +119,10 @@ struct ExposureFlash {
   /// @brief フラッシュ中（または Hold 中）かどうか
   /// @return 動作中なら true
   bool Active() const { return active_; }
+
+  /// @brief ScreenFx としての動作中判定（Active と同じ）
+  /// @return 動作中なら true
+  bool IsActive() const override { return Active(); }
 
 private:
   /// @brief ColorGrade が無ければ積む（前のシーン＝Title の色味が残っているので素通しへ戻す）

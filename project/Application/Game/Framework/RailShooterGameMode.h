@@ -1,5 +1,6 @@
 #pragma once
 #include "Game/Framework/GameModeBase.h"
+#include "Game/Framework/GameEvents.h"
 
 /// @class RailShooterGameMode
 /// @brief 『水天の射手』のルール（1 プレイの開始・死亡／クリア判定・結果の記録）
@@ -30,4 +31,10 @@ public:
     /// @brief 遷移表のきっかけ名
     static constexpr const char* kTriggerCleared = "cleared";   ///< クリア
     static constexpr const char* kTriggerGameOver = "gameover"; ///< ゲームオーバー
+
+private:
+    /// @brief 敵撃破イベントの購読（Observer）。GameMode が破棄されると自動で解除される
+    /// @details 以前は EnemyBaseScript が GameSession::AddEnemyDefeated() を直接呼んでいた。
+    ///          「撃破数を数える」のはゲームのルール側の関心事なので、GameMode が購読して集計する。
+    EventConnection enemyDefeatedConnection_;
 };

@@ -6,6 +6,7 @@
 #include "Engine/Render/RenderContext.h"
 #include "Framework/App.h"
 #include "Game/Framework/StageProgress.h"
+#include "Game/Framework/StateMachine.h"
 #include "Game/Framework/TransitionDemo.h"
 #include "Game/Framework/UnderwaterLook.h"
 #include "Game/Framework/WaterCameraFx.h"
@@ -20,6 +21,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <utility>
 
 /// @class StageSelectScript
 /// @brief ステージセレクト（航路選択）。5 つの面を「水面の断面図」に並べて選ばせる
@@ -50,39 +52,33 @@
 ///     "dimAlpha" / "panelColor" / "accentColor" / "selectedColor"
 ///     "uiFadeTime"      : 出航を決めてから UI が消えきるまで（秒）
 ///     "dive*" / "rise*" / "underwater" : Result と同じキー
+///
+///   設計（クラス設計の課題として導入したパターン）:
+///     - State パターン: 面を選んでいる / 出航・戻るを決めた後の退出演出（UI フェード → 飛び込み）/
+///       遷移待ち、の 3 状態を StateMachine<StageSelectScript> の状態クラスにした（Result と同じ構成）。
+///       以前は decided_ / leaving_ の bool 2 つの組み合わせで表していた。
+///     - メニュー項目の Command 化はしていない: この画面の選択肢は「5 つの面」で、どれを選んでも
+///       「その面のシーンへ出航する」という同じ処理になり、違いはシーン名（StageProgress::Info のデータ）だけのため。
+///       項目ごとに振る舞いが変わらないものをクラスに分けるより、データ（ステージ表）で持つほうが素直と判断した。
 class StageSelectScript : public ScriptableEntity {
 public:
-  std::string titleText = "航路選択";
-  std::string subtitleText = "STAGE SELECT";
-  std::string fontPath = "Resources/fonts/Kiwi_Maru/KiwiMaru-Medium.ttf";
-
-  float dimAlpha = 0.22f;
-  RC::Vector4 panelColor = {0.05f, 0.06f, 0.09f, 0.78f};
-  RC::Vector4 accentColor = {0.42f, 0.76f, 0.88f, 1.0f};
-  RC::Vector4 selectedColor = {0.12f, 0.27f, 0.50f, 0.96f};
-
-  float uiFadeTime = 0.35f;
-  WaterCameraFx::DiveParams dive;
-  WaterCameraFx::RiseParams rise;
-  UnderwaterLook::Params look;
-
   /// @brief 設定項目を JSON に書き出す
   /// @return 設定項目（演出パラメータ dive / rise / underwater を含む）を格納した JSON
   nlohmann::json Serialize() override {
     auto v4 = [](const RC::Vector4 &c) { return nlohmann::json{c.x, c.y, c.z, c.w}; };
     nlohmann::json j = {
-        {"titleText", titleText},
-        {"subtitleText", subtitleText},
-        {"fontPath", fontPath},
-        {"dimAlpha", dimAlpha},
-        {"panelColor", v4(panelColor)},
-        {"accentColor", v4(accentColor)},
-        {"selectedColor", v4(selectedColor)},
-        {"uiFadeTime", uiFadeTime},
+        {"titleText", titleText_},
+        {"subtitleText", subtitleText_},
+        {"fontPath", fontPath_},
+        {"dimAlpha", dimAlpha_},
+        {"panelColor", v4(panelColor_)},
+        {"accentColor", v4(accentColor_)},
+        {"selectedColor", v4(selectedColor_)},
+        {"uiFadeTime", uiFadeTime_},
     };
-    j["underwater"] = look.ToJson();
-    dive.WriteJson(j);
-    rise.WriteJson(j);
+    j["underwater"] = look_.ToJson();
+    diveParams_.WriteJson(j);
+    riseParams_.WriteJson(j);
     return j;
   }
 
@@ -103,24 +99,25 @@ public:
         out = {c[0].get<float>(), c[1].get<float>(), c[2].get<float>(), c[3].get<float>()};
       }
     };
-    readS("titleText", titleText);
-    readS("subtitleText", subtitleText);
-    readS("fontPath", fontPath);
-    readF("dimAlpha", dimAlpha);
-    readVec4("panelColor", panelColor);
-    readVec4("accentColor", accentColor);
-    readVec4("selectedColor", selectedColor);
-    readF("uiFadeTime", uiFadeTime);
-    if (j.contains("underwater")) look.FromJson(j["underwater"]);
-    dive.ReadJson(j);
-    rise.ReadJson(j);
+    readS("titleText", titleText_);
+    readS("subtitleText", subtitleText_);
+    readS("fontPath", fontPath_);
+    readF("dimAlpha", dimAlpha_);
+    readVec4("panelColor", panelColor_);
+    readVec4("accentColor", accentColor_);
+    readVec4("selectedColor", selectedColor_);
+    readF("uiFadeTime", uiFadeTime_);
+    if (j.contains("underwater")) look_.FromJson(j["underwater"]);
+    diveParams_.ReadJson(j);
+    riseParams_.ReadJson(j);
   }
 
   /// @brief インスペクタに選択状態と各面の進行を表示し、デバッグ用の全解放・進行リセットを操作させる
   void OnImGui() override {
 #if RC_ENABLE_IMGUI
     StageProgress &prog = StageProgress::Get();
-    ImGui::Text("selected=%d  highestUnlocked=%d", selected_ + 1, prog.HighestUnlocked() + 1);
+    ImGui::Text("state=%s  selected=%d  highestUnlocked=%d", fsm_.CurrentName(), selected_ + 1,
+                prog.HighestUnlocked() + 1);
     bool all = prog.UnlockAll();
     if (ImGui::Checkbox("Unlock All (debug, not saved)", &all)) prog.SetUnlockAll(all);
     if (ImGui::Button("Reset Progress")) prog.ResetAll();
@@ -147,8 +144,8 @@ protected:
     fontScale_ = (std::min)(w / kDesignW, h / kDesignH);
     if (fontScale_ <= 0.0f) fontScale_ = 1.0f;
     auto load = [&](float designPx, uint32_t atlas) {
-      const int handle = RC::LoadFont(fontPath, std::round(designPx * fontScale_), atlas);
-      if (handle < 0) Log::Print("[StageSelectScript] failed to load font: " + fontPath);
+      const int handle = RC::LoadFont(fontPath_, std::round(designPx * fontScale_), atlas);
+      if (handle < 0) Log::Print("[StageSelectScript] failed to load font: " + fontPath_);
       return handle;
     };
     headingFont_ = load(kHeadingPx, 1024);
@@ -169,19 +166,19 @@ protected:
 
     if (Input *in = Input::GetInstance()) in->GetGameMousePosition(lastMouseX_, lastMouseY_);
 
-    // 退出状態を初期化し、Title から Dive 遷移で入ったときは UI を隠して深海から浮上させる
-    leaving_ = false;
+    // 面を選ぶ状態から始め、Title から Dive 遷移で入ったときは UI を隠して深海から浮上させる
+    EnterChoosing();
     uiAlpha_ = 1.0f;
     uiFadeIn_ = -1.0f;
     demoT_ = 0.0f;
-    if ((dive.enabled && dive.bubbles) || (rise.enabled && rise.bubbles)) {
+    if ((diveParams_.enabled && diveParams_.bubbles) || (riseParams_.enabled && riseParams_.bubbles)) {
       bubbles_.Spawn(GetScene(), "SelectBubbles");
     }
     if (SceneContext *ctx = GetSceneContext()) {
-      if (rise.enabled && ctx->isPlaying() && ctx->lastTransition == SceneTransition::Dive) {
+      if (riseParams_.enabled && ctx->isPlaying() && ctx->lastTransition == SceneTransition::Dive) {
         Scene *scene = GetScene();
-        if (rise_.Begin(WaterCameraFx::FindMainCamera(scene), WaterCameraFx::FindWaterY(scene), rise,
-                        look, &bubbles_)) {
+        if (rise_.Begin(WaterCameraFx::FindMainCamera(scene), WaterCameraFx::FindWaterY(scene), riseParams_,
+                        look_, &bubbles_)) {
           uiAlpha_ = 0.0f;
           uiFadeIn_ = 0.0f;
         }
@@ -189,7 +186,8 @@ protected:
     }
   }
 
-  /// @brief 演出用タイマー・浮上・UI のフェードインを進め、出航中は退出処理、それ以外は入力を処理する
+  /// @brief 演出用タイマー・浮上・UI のフェードインを進め、その後は現在の状態
+  ///        （面の選択 / 退出演出 / 遷移待ち）に処理を任せる
   /// @param deltaTime 前フレームからの経過時間（秒）
   void OnUpdate(float deltaTime) override {
     if (deltaTime <= 0.0f) return;
@@ -203,19 +201,11 @@ protected:
     if (rise_.IsMoving()) return;
     if (uiFadeIn_ >= 0.0f) {
       uiFadeIn_ += deltaTime;
-      uiAlpha_ = WaterCameraFx::Smooth01(uiFadeIn_ / (std::max)(uiFadeTime, 1e-3f));
+      uiAlpha_ = WaterCameraFx::Smooth01(uiFadeIn_ / (std::max)(uiFadeTime_, 1e-3f));
       if (uiAlpha_ >= 1.0f) { uiAlpha_ = 1.0f; uiFadeIn_ = -1.0f; }
     }
 
-    if (leaving_) {
-      UpdateLeave(deltaTime);
-      return;
-    }
-    if (!decided_) {
-      // 見せ用デモ：UI が出てからの時間を測る（kSelectHold 秒で選択中の面へ自動出航）
-      if (TransitionDemo::kEnabled && uiFadeIn_ < 0.0f) demoT_ += deltaTime;
-      HandleInput();
-    }
+    fsm_.Update(*this, deltaTime);
   }
 
   /// @brief 飛び込み・浮上演出を終わらせ、泡とフォントを解放する
@@ -251,7 +241,7 @@ protected:
     L_.oy = (screenH - kDesignH * L_.s) * 0.5f;
     L_.fs = (fontScale_ > 0.0f) ? (L_.s / fontScale_) : 1.0f;
 
-    if (dimAlpha > 0.0f) UiBox({0.0f, 0.0f}, {screenW, screenH}, {0.02f, 0.03f, 0.06f, dimAlpha});
+    if (dimAlpha_ > 0.0f) UiBox({0.0f, 0.0f}, {screenW, screenH}, {0.02f, 0.03f, 0.06f, dimAlpha_});
 
     DrawHeading();
     DrawChart();
@@ -260,6 +250,13 @@ protected:
   }
 
 private:
+  // ------------------------------------------------------------------
+  // 状態（State パターン。定義はクラスの後ろ）
+  // ------------------------------------------------------------------
+  class ChoosingState; ///< 面を選んでいる
+  class LeavingState;  ///< 出航・戻るを決めた後の退出演出（UI フェード → 飛び込み → dive 遷移の要求）
+  class DecidedState;  ///< 遷移を要求済み（フェード待ち）
+
   // ------------------------------------------------------------------
   // レイアウト（1280x720 基準）
   // ------------------------------------------------------------------
@@ -392,12 +389,12 @@ private:
   /// @param b 下端（基準座標）
   void DrawFrame(float l, float t, float r, float b) const {
     const RC::Vector2 tl = P(l, t), br = P(r, b);
-    UiBox(tl, br, panelColor);
+    UiBox(tl, br, panelColor_);
     const float in1 = S(6.0f);
     UiBox({tl.x + in1, tl.y + in1}, {br.x - in1, br.y - in1}, WithAlpha(kInk, 0.4f), kWire);
     // 四隅に長さ arm の L 字をアクセント色で描く（左上・右上・左下・右下の順に 2 本ずつ）
     const float arm = S(22.0f), th = (std::max)(1.0f, S(2.0f)), o = S(2.0f);
-    const RC::Vector4 c = WithAlpha(accentColor, 0.9f);
+    const RC::Vector4 c = WithAlpha(accentColor_, 0.9f);
     UiLine({tl.x + o, tl.y + o}, {tl.x + o + arm, tl.y + o}, c, th);
     UiLine({tl.x + o, tl.y + o}, {tl.x + o, tl.y + o + arm}, c, th);
     UiLine({br.x - o, tl.y + o}, {br.x - o - arm, tl.y + o}, c, th);
@@ -413,15 +410,15 @@ private:
     const float cx = X(kDesignW * 0.5f);
     const float top = Y(30.0f);
     const float hh = LineH(headingFont_);
-    Text(headingFont_, titleText, cx, top, kInk, TextAlign::Center);
+    Text(headingFont_, titleText_, cx, top, kInk, TextAlign::Center);
     // タイトルの左右に、文字から 28px 離して先端に点の付いた飾り線を引く
-    const float halfW = TextW(headingFont_, titleText) * 0.5f + S(28.0f);
+    const float halfW = TextW(headingFont_, titleText_) * 0.5f + S(28.0f);
     const float ruleY = top + hh * 0.56f, ruleLen = S(150.0f), th = (std::max)(1.0f, S(1.0f));
     UiLine({cx - halfW - ruleLen, ruleY}, {cx - halfW, ruleY}, WithAlpha(kInk, 0.5f), th);
     UiLine({cx + halfW, ruleY}, {cx + halfW + ruleLen, ruleY}, WithAlpha(kInk, 0.5f), th);
     UiCircle({cx - halfW - ruleLen, ruleY}, S(2.5f), WithAlpha(kInk, 0.6f));
     UiCircle({cx + halfW + ruleLen, ruleY}, S(2.5f), WithAlpha(kInk, 0.6f));
-    Text(labelFont_, subtitleText, cx, top + hh - S(2.0f), WithAlpha(kMuted, 0.85f), TextAlign::Center,
+    Text(labelFont_, subtitleText_, cx, top + hh - S(2.0f), WithAlpha(kMuted, 0.85f), TextAlign::Center,
          0.75f);
   }
 
@@ -445,7 +442,7 @@ private:
         const float x0 = l + (r - l) * k / seg, x1 = l + (r - l) * (k + 1) / seg;
         const float y0 = kSurfaceY + 2.0f * std::sin(x0 * 0.05f + time_ * 1.6f);
         const float y1 = kSurfaceY + 2.0f * std::sin(x1 * 0.05f + time_ * 1.6f);
-        UiLine(P(x0, y0), P(x1, y1), WithAlpha(accentColor, 0.75f), th);
+        UiLine(P(x0, y0), P(x1, y1), WithAlpha(accentColor_, 0.75f), th);
       }
       Text(labelFont_, "水面", X(l + 10.0f), Y(kSurfaceY - 26.0f), WithAlpha(kMuted, 0.8f),
            TextAlign::Left, 0.75f);
@@ -460,7 +457,7 @@ private:
       const bool done = prog.IsCleared(i);
       const float th = (std::max)(1.0f, S(done ? 4.0f : 2.0f));
       if (done) {
-        UiLine(P(a.x, a.y), P(c.x, c.y), accentColor, th);
+        UiLine(P(a.x, a.y), P(c.x, c.y), accentColor_, th);
       } else {
         const int dashes = 10;
         for (int k = 0; k < dashes; k += 2) {
@@ -484,14 +481,14 @@ private:
 
       // 選択中の光輪・新しく解放された面の金の輪・丸の外周と中身
       if (sel) {
-        UiCircle(P(c.x, c.y), S(rad + 9.0f + 3.0f * pulse), WithAlpha(accentColor, 0.25f + 0.2f * pulse));
+        UiCircle(P(c.x, c.y), S(rad + 9.0f + 3.0f * pulse), WithAlpha(accentColor_, 0.25f + 0.2f * pulse));
       }
       if (i == highlight_) {
         UiCircle(P(c.x, c.y), S(rad + 16.0f + 6.0f * pulse), WithAlpha(kGold, 0.2f * pulse), kWire);
       }
       UiCircle(P(c.x, c.y), S(rad), unlocked ? kInk : WithAlpha(kDim, 0.9f));
       UiCircle(P(c.x, c.y), S(rad - 3.5f),
-               unlocked ? (sel ? selectedColor : RC::Vector4{panelColor.x, panelColor.y, panelColor.z, 1.0f})
+               unlocked ? (sel ? selectedColor_ : RC::Vector4{panelColor_.x, panelColor_.y, panelColor_.z, 1.0f})
                         : RC::Vector4{0.08f, 0.09f, 0.11f, 1.0f});
 
       // 解放済みなら面の番号、未解放なら錠前
@@ -505,7 +502,7 @@ private:
       // クリア印（右上の金の小丸）
       if (cleared) {
         UiCircle(P(c.x + rad * 0.72f, c.y - rad * 0.72f), S(7.0f), kGold);
-        UiCircle(P(c.x + rad * 0.72f, c.y - rad * 0.72f), S(3.0f), WithAlpha(panelColor, 1.0f));
+        UiCircle(P(c.x + rad * 0.72f, c.y - rad * 0.72f), S(3.0f), WithAlpha(panelColor_, 1.0f));
       }
       // 名前（水上は丸の上、水中は丸の下）
       const StageProgress::StageInfo &info = StageProgress::Info(i);
@@ -584,7 +581,7 @@ private:
 
     // 第 N 面
     const std::string num = "第" + std::to_string(selected_ + 1) + "面";
-    Text(labelFont_, num, left, Y(kInfoT + 22.0f), accentColor);
+    Text(labelFont_, num, left, Y(kInfoT + 22.0f), accentColor_);
 
     // 名前 ＋ 欧文
     const float nameY = Y(kInfoT + 50.0f);
@@ -639,7 +636,8 @@ private:
   // ------------------------------------------------------------------
 
   /// @brief キーボード・ゲームパッド・マウスの入力から選択の移動、出航、タイトルへ戻るを処理する
-  void HandleInput() {
+  /// @param machine 遷移を予約するステートマシン（出航・戻るを決めたら次の状態を予約する）
+  void HandleInput(StateMachine<StageSelectScript> &machine) {
     SceneContext *ctx = GetSceneContext();
     if (!ctx || !ctx->input) return;
     Input *in = ctx->input;
@@ -701,18 +699,14 @@ private:
       // （Title 側は Dive 遷移で入ってくると深海から浮上して始まる）
       std::string backTarget;
       std::string backTransition;
-      if (dive.enabled && LookupTransition(kTriggerBack, backTarget, backTransition) &&
+      if (diveParams_.enabled && LookupTransition(kTriggerBack, backTarget, backTransition) &&
           !backTarget.empty() && backTransition == SceneTransitions::kDive) {
-        decided_ = true;
-        leaving_ = true;
-        leaveTarget_ = backTarget;
-        leaveTime_ = 0.0f;
-        leaveRequested_ = false;
+        StartLeaving(backTarget, machine);
         Log::Print("[StageSelectScript] back -> dive -> " + backTarget);
         return;
       }
       if (RequestTransition(kTriggerBack)) {
-        decided_ = true;
+        MarkDecided(machine);
         Log::Print("[StageSelectScript] back");
       }
       return;
@@ -744,18 +738,14 @@ private:
       Log::Print("[StageSelectScript] scene flow has no target for 'stage'");
       return;
     }
-    // 演出が dive なら UI フェード → 飛び込みを挟んでから遷移する（UpdateLeave へ）
-    if (dive.enabled && transition == SceneTransitions::kDive) {
-      decided_ = true;
-      leaving_ = true;
-      leaveTarget_ = target;
-      leaveTime_ = 0.0f;
-      leaveRequested_ = false;
+    // 演出が dive なら UI フェード → 飛び込みを挟んでから遷移する（LeavingState へ）
+    if (diveParams_.enabled && transition == SceneTransitions::kDive) {
+      StartLeaving(target, machine);
       Log::Print("[StageSelectScript] start -> dive -> " + target);
       return;
     }
     if (RequestSceneChange(target)) {
-      decided_ = true;
+      MarkDecided(machine);
       Log::Print("[StageSelectScript] start -> " + target);
     } else {
       Log::Print("[StageSelectScript] scene change refused: " + target);
@@ -788,48 +778,28 @@ private:
   // 出航：UI フェード → 飛び込み → 遷移（Result と同じ流れ）
   // ------------------------------------------------------------------
 
-  /// @brief 出航・戻るを決めた後の退出処理（UI フェード → 飛び込み → dive 遷移の要求）を進める
-  /// @param dt 前フレームからの経過時間（秒）
-  /// @note 飛び込みを始められないときは素の遷移で送り、遷移も通らなければ選択画面へ戻す
-  void UpdateLeave(float dt) {
-    leaveTime_ += dt;
-    // UI が消えきるまで待ってから飛び込みを始める
-    if (!dive_.IsActive()) {
-      uiAlpha_ = 1.0f - WaterCameraFx::Smooth01(leaveTime_ / (std::max)(uiFadeTime, 1e-3f));
-      if (uiAlpha_ > 0.0f) return;
-      uiAlpha_ = 0.0f;
-      Scene *scene = GetScene();
-      if (!dive_.Begin(WaterCameraFx::FindMainCamera(scene), WaterCameraFx::FindWaterY(scene), dive,
-                       look, &bubbles_)) {
-        Log::Print("[StageSelectScript] dive could not start, changing scene directly");
-        leaving_ = false;
-        if (!RequestSceneChange(leaveTarget_)) CancelLeave();
-      }
-      return;
-    }
-    if (!dive_.Update(dt)) {
-      dive_.End(false);
-      leaving_ = false;
-      if (!RequestSceneChange(leaveTarget_)) CancelLeave();
-      return;
-    }
-    // 飛び込みが終わったら dive 遷移を要求し、kLeaveRetrySeconds 通らなければ諦める
-    if (!dive_.IsDone() || leaveRequested_) return;
-    leaveRequested_ = RequestSceneChange(leaveTarget_, SceneTransitions::kDive);
-    if (!leaveRequested_ && dive_.DoneTime() > kLeaveRetrySeconds) {
-      Log::Print("[StageSelectScript] scene change kept failing, giving up: " + leaveTarget_);
-      dive_.End(/*restoreCamera=*/true);
-      CancelLeave();
-    }
-  }
+  // 退出演出そのもの（UI フェード → 飛び込み → dive 遷移の要求）は LeavingState::OnUpdate にある
+
+  /// @brief 面を選ぶ状態から始める（OnCreate で呼ぶ）
+  void EnterChoosing();
+
+  /// @brief 退出演出（UI フェード → 飛び込み）を始める
+  /// @param target 飛び込み後に遷移するシーン名
+  /// @param machine 遷移を予約するステートマシン
+  void StartLeaving(const std::string &target, StateMachine<StageSelectScript> &machine);
+
+  /// @brief 遷移を要求済みにする（以後は入力を受け付けない）
+  /// @param machine 遷移を予約するステートマシン
+  void MarkDecided(StateMachine<StageSelectScript> &machine);
+
+  /// @brief 演出なしで遷移を要求し、通れば遷移待ちへ、通らなければ選択画面へ戻す
+  /// @param target 遷移先のシーン名
+  /// @param machine 遷移を予約するステートマシン
+  void LeaveDirectly(const std::string &target, StateMachine<StageSelectScript> &machine);
 
   /// @brief 退出を取り消し、UI を表示して再び操作できる状態へ戻す
-  void CancelLeave() {
-    leaving_ = false;
-    leaveRequested_ = false;
-    decided_ = false;
-    uiAlpha_ = 1.0f;
-  }
+  /// @param machine 遷移を予約するステートマシン
+  void CancelLeave(StateMachine<StageSelectScript> &machine);
 
   /// @brief 色の不透明度に UI 全体のフェード量（uiAlpha_）を掛ける
   /// @param c 元の色
@@ -859,6 +829,23 @@ private:
   }
 
   // ------------------------------------------------------------------
+  // 設定項目（JSON。外から直接書き換えさせず、Deserialize だけが触る）
+  // ------------------------------------------------------------------
+  std::string titleText_ = "航路選択";
+  std::string subtitleText_ = "STAGE SELECT";
+  std::string fontPath_ = "Resources/fonts/Kiwi_Maru/KiwiMaru-Medium.ttf";
+
+  float dimAlpha_ = 0.22f;
+  RC::Vector4 panelColor_ = {0.05f, 0.06f, 0.09f, 0.78f};
+  RC::Vector4 accentColor_ = {0.42f, 0.76f, 0.88f, 1.0f};
+  RC::Vector4 selectedColor_ = {0.12f, 0.27f, 0.50f, 0.96f};
+
+  float uiFadeTime_ = 0.35f;
+  WaterCameraFx::DiveParams diveParams_; ///< 出航・戻るときの飛び込み（JSON の "dive*"）
+  WaterCameraFx::RiseParams riseParams_; ///< Dive 遷移で入ってきたときの浮上（JSON の "rise*"）
+  UnderwaterLook::Params look_;          ///< 水中の見た目（JSON の "underwater"）
+
+  // ------------------------------------------------------------------
   // 状態
   // ------------------------------------------------------------------
   int headingFont_ = -1;
@@ -867,28 +854,137 @@ private:
   int labelFont_ = -1;
   float fontScale_ = 1.0f;
 
+  StateMachine<StageSelectScript> fsm_; ///< 面の選択 / 退出演出 / 遷移待ち
   int selected_ = 0;
   int highlight_ = -1; ///< 今回新しく解放された面（金の輪で知らせる）
   float time_ = 0.0f;
   float bump_ = 0.0f;
   float shake_ = 0.0f;
-  bool decided_ = false;
   float demoT_ = 0.0f; ///< 見せ用デモ：UI が出てからの経過（TransitionDemo）
   int prevStickDir_ = 0;
   float lastMouseX_ = 0.0f;
   float lastMouseY_ = 0.0f;
 
-  bool leaving_ = false;
-  std::string leaveTarget_;
   static constexpr const char *kTriggerBack = "back";   ///< 遷移表のきっかけ名（ESC）
   static constexpr const char *kTriggerStage = "stage"; ///< 遷移表のきっかけ名（出航）
-  float leaveTime_ = 0.0f;
-  bool leaveRequested_ = false;
   float uiAlpha_ = 1.0f;
   float uiFadeIn_ = -1.0f;
   WaterCameraFx::DiveSequence dive_;
   WaterCameraFx::RiseSequence rise_;
   WaterCameraFx::Bubbles bubbles_;
 };
+
+// ======================================================================
+// 状態クラス（State パターン）
+// ======================================================================
+
+/// @brief 面を選んでいる状態。入力を受け付け、出航・戻るを決めたら次の状態を予約する
+class StageSelectScript::ChoosingState : public IState<StageSelectScript> {
+public:
+  /// @brief 見せ用デモの時間を測り、入力を処理する
+  void OnUpdate(StageSelectScript &owner, StateMachine<StageSelectScript> &machine, float deltaTime) override {
+    // 見せ用デモ：UI が出てからの時間を測る（kSelectHold 秒で選択中の面へ自動出航）
+    if (TransitionDemo::kEnabled && owner.uiFadeIn_ < 0.0f) owner.demoT_ += deltaTime;
+    owner.HandleInput(machine);
+  }
+  /// @brief 状態名
+  /// @return "Choosing"
+  const char *Name() const override { return "Choosing"; }
+};
+
+/// @brief 出航・戻るを決めた後の退出演出（UI フェード → 飛び込み → dive 遷移の要求）を進める状態
+/// @details 経過時間・遷移先・要求済みフラグはこの状態だけが使うので、本体ではなくここに持つ。
+class StageSelectScript::LeavingState : public IState<StageSelectScript> {
+public:
+  /// @brief 遷移先を受け取る
+  /// @param target 飛び込み後に遷移するシーン名
+  explicit LeavingState(std::string target) : target_(std::move(target)) {}
+  /// @brief UI を消し、飛び込みを進め、暗くなりきったら遷移を要求する
+  /// @note 飛び込みを始められないときは素の遷移で送り、遷移も通らなければ選択画面へ戻す
+  void OnUpdate(StageSelectScript &owner, StateMachine<StageSelectScript> &machine, float deltaTime) override;
+  /// @brief 状態名
+  /// @return "Leaving"
+  const char *Name() const override { return "Leaving"; }
+
+private:
+  std::string target_;     ///< 飛び込み後に遷移するシーン
+  float time_ = 0.0f;      ///< 退出を始めてからの経過時間（秒）
+  bool requested_ = false; ///< dive 遷移の要求が通ったか
+};
+
+/// @brief 遷移を要求済みの状態。フェードを待つだけで入力は受け付けない（二重に遷移させない）
+class StageSelectScript::DecidedState : public IState<StageSelectScript> {
+public:
+  /// @brief 何もしない
+  void OnUpdate(StageSelectScript &owner, StateMachine<StageSelectScript> &machine, float deltaTime) override {
+    (void)owner;
+    (void)machine;
+    (void)deltaTime;
+  }
+  /// @brief 状態名
+  /// @return "Decided"
+  const char *Name() const override { return "Decided"; }
+};
+
+// ======================================================================
+// 定義（状態クラスが完全型になってから書く）
+// ======================================================================
+
+void StageSelectScript::EnterChoosing() {
+  fsm_.ChangeState<ChoosingState>();
+  fsm_.ApplyPending(*this);
+}
+
+void StageSelectScript::StartLeaving(const std::string &target, StateMachine<StageSelectScript> &machine) {
+  machine.ChangeState<LeavingState>(target);
+}
+
+void StageSelectScript::MarkDecided(StateMachine<StageSelectScript> &machine) {
+  machine.ChangeState<DecidedState>();
+}
+
+void StageSelectScript::LeaveDirectly(const std::string &target, StateMachine<StageSelectScript> &machine) {
+  if (RequestSceneChange(target)) {
+    MarkDecided(machine);
+  } else {
+    CancelLeave(machine);
+  }
+}
+
+void StageSelectScript::CancelLeave(StateMachine<StageSelectScript> &machine) {
+  uiAlpha_ = 1.0f;
+  machine.ChangeState<ChoosingState>();
+}
+
+void StageSelectScript::LeavingState::OnUpdate(StageSelectScript &owner, StateMachine<StageSelectScript> &machine,
+                                               float deltaTime) {
+  time_ += deltaTime;
+  // UI が消えきるまで待ってから飛び込みを始める
+  if (!owner.dive_.IsActive()) {
+    owner.uiAlpha_ = 1.0f - WaterCameraFx::Smooth01(time_ / (std::max)(owner.uiFadeTime_, 1e-3f));
+    if (owner.uiAlpha_ > 0.0f) return;
+    owner.uiAlpha_ = 0.0f;
+    Scene *scene = owner.GetScene();
+    if (!owner.dive_.Begin(WaterCameraFx::FindMainCamera(scene), WaterCameraFx::FindWaterY(scene),
+                           owner.diveParams_, owner.look_, &owner.bubbles_)) {
+      Log::Print("[StageSelectScript] dive could not start, changing scene directly");
+      owner.LeaveDirectly(target_, machine);
+    }
+    return;
+  }
+  if (!owner.dive_.Update(deltaTime)) {
+    owner.dive_.End(false);
+    owner.LeaveDirectly(target_, machine);
+    return;
+  }
+  // 飛び込みが終わったら dive 遷移を要求し、kLeaveRetrySeconds 通らなければ諦める
+  if (!owner.dive_.IsDone() || requested_) return;
+  requested_ = owner.RequestSceneChange(target_, SceneTransitions::kDive);
+  if (!requested_ && owner.dive_.DoneTime() > kLeaveRetrySeconds) {
+    Log::Print("[StageSelectScript] scene change kept failing, giving up: " + target_);
+    owner.dive_.End(/*restoreCamera=*/true);
+    owner.CancelLeave(machine);
+  }
+}
 
 REGISTER_SCRIPT(StageSelectScript)

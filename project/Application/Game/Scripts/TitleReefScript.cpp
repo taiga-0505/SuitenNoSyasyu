@@ -59,35 +59,6 @@
 ///   "hideBelowY"   : カメラがこの高さより下にいるあいだは非表示（飛び込み・浮上の突き抜け防止）
 class TitleReefScript : public ScriptableEntity {
 public:
-  bool enabled = true;
-  int seed = 20260930;
-  float floorY = -6.0f;
-  float floorSize = 110.0f;
-  RC::Vector4 sandColor = {0.95f, 0.88f, 0.70f, 1.0f};
-  std::vector<RC::Vector4> mounds = {
-      {-11.0f, -1.0f, 8.0f, 2.2f},
-      {12.0f, 3.0f, 7.0f, 1.8f},
-      {1.0f, 10.0f, 9.0f, 1.5f},
-  };
-  std::vector<RC::Vector4> clusters = {
-      {-15.0f, 6.0f, 4.0f, 7.0f},  {14.5f, -5.5f, 4.5f, 8.0f}, {-14.0f, -6.5f, 4.0f, 7.0f},
-      {13.0f, 7.5f, 3.5f, 6.0f},   {-3.0f, 8.5f, 3.0f, 4.0f},  {7.0f, -0.5f, 2.5f, 4.0f},
-      {-7.5f, 0.5f, 2.5f, 4.0f},   {21.0f, 1.0f, 3.0f, 5.0f},  {-21.0f, 0.0f, 3.0f, 5.0f},
-  };
-  float scaleMin = 0.8f;
-  float scaleMax = 1.4f;
-  float maxTopY = -2.6f;
-  std::vector<RC::Vector4> palette = {
-      {1.00f, 0.52f, 0.55f, 1.0f}, // コーラルピンク
-      {1.00f, 0.66f, 0.30f, 1.0f}, // オレンジ
-      {0.98f, 0.86f, 0.36f, 1.0f}, // 黄
-      {0.66f, 0.46f, 0.92f, 1.0f}, // 紫
-      {0.46f, 0.86f, 0.70f, 1.0f}, // ミント
-      {0.95f, 0.40f, 0.70f, 1.0f}, // マゼンタ
-  };
-  RC::Vector4 rockColor = {0.42f, 0.40f, 0.36f, 1.0f};
-  float hideBelowY = -2.0f;
-
   /// @brief 設定項目を JSON に書き出す
   /// @return 設定項目を格納した JSON（色・リストは数値配列で表す）
   nlohmann::json Serialize() override {
@@ -199,9 +170,182 @@ protected:
 
 private:
   /// @brief 生成した部品 1 つ分のエンティティへの弱参照を保持する
+  /// @details 値を持つだけの受け渡し用の束なので struct のまま（01_01 の例外）。
   struct Part {
     std::weak_ptr<Entity> entity;
   };
+
+  // ---- 設定値（シーン JSON / インスペクタから変える。外からは触らせない）----
+  bool enabled = true;
+  int seed = 20260930;
+  float floorY = -6.0f;
+  float floorSize = 110.0f;
+  RC::Vector4 sandColor = {0.95f, 0.88f, 0.70f, 1.0f};
+  std::vector<RC::Vector4> mounds = {
+      {-11.0f, -1.0f, 8.0f, 2.2f},
+      {12.0f, 3.0f, 7.0f, 1.8f},
+      {1.0f, 10.0f, 9.0f, 1.5f},
+  };
+  std::vector<RC::Vector4> clusters = {
+      {-15.0f, 6.0f, 4.0f, 7.0f},  {14.5f, -5.5f, 4.5f, 8.0f}, {-14.0f, -6.5f, 4.0f, 7.0f},
+      {13.0f, 7.5f, 3.5f, 6.0f},   {-3.0f, 8.5f, 3.0f, 4.0f},  {7.0f, -0.5f, 2.5f, 4.0f},
+      {-7.5f, 0.5f, 2.5f, 4.0f},   {21.0f, 1.0f, 3.0f, 5.0f},  {-21.0f, 0.0f, 3.0f, 5.0f},
+  };
+  float scaleMin = 0.8f;
+  float scaleMax = 1.4f;
+  float maxTopY = -2.6f;
+  std::vector<RC::Vector4> palette = {
+      {1.00f, 0.52f, 0.55f, 1.0f}, // コーラルピンク
+      {1.00f, 0.66f, 0.30f, 1.0f}, // オレンジ
+      {0.98f, 0.86f, 0.36f, 1.0f}, // 黄
+      {0.66f, 0.46f, 0.92f, 1.0f}, // 紫
+      {0.46f, 0.86f, 0.70f, 1.0f}, // ミント
+      {0.95f, 0.40f, 0.70f, 1.0f}, // マゼンタ
+  };
+  RC::Vector4 rockColor = {0.42f, 0.40f, 0.36f, 1.0f};
+  float hideBelowY = -2.0f;
+
+  // ------------------------------------------------------------------
+  // サンゴの種類（01_02 ポリモーフィズム）
+  // ------------------------------------------------------------------
+  // 以前は Build の中で「乱数 pick の値で if / else if を並べて BuildBranch / BuildBrain …を呼び分ける」
+  // 種類分岐だった。種類ごとに「どう組み立てるか」だけが違うので、基底 CoralKind の仮想関数 Build を
+  // 各種類のクラスが override し、Build 側は基底の参照経由で呼ぶだけにした。
+  // 種類を増やすときは派生クラスを 1 つ足して ChooseCoral の表に並べればよい（Build は変えない）。
+  // 入れ子クラスにしているのは、組み立てに使う本体の private な補助関数（Rand / AddPart など）へ
+  // friend 無しで触れるため。
+
+  /// @brief サンゴ 1 株の種類（基底）
+  class CoralKind {
+  public:
+    virtual ~CoralKind() = default;
+
+    /// @brief 1 株ぶんの部品を生成する
+    /// @param reef 部品を登録する本体（乱数・色・部品生成の補助を使う）
+    /// @param scene 生成先のシーン
+    /// @param tag 部品エンティティ名の接頭辞
+    /// @param x 根元のワールド X 座標
+    /// @param y 根元のワールド Y 座標（地面の高さ）
+    /// @param z 根元のワールド Z 座標
+    /// @param s 大きさの倍率
+    virtual void Build(TitleReefScript &reef, Scene *scene, const std::string &tag, float x, float y, float z,
+                       float s) const = 0;
+  };
+
+  /// @brief 枝サンゴ：根元から外へ開く円錐の束
+  class BranchCoral final : public CoralKind {
+  public:
+    /// @copydoc CoralKind::Build
+    void Build(TitleReefScript &reef, Scene *scene, const std::string &tag, float x, float y, float z,
+               float s) const override {
+      const RC::Vector4 col = reef.PickColor();
+      const int n = 4 + static_cast<int>(reef.Rand(0.0f, 3.0f));
+      for (int k = 0; k < n; ++k) {
+        const float len = reef.ClampLen(y, reef.Rand(1.3f, 2.3f) * s);
+        const float rad = reef.Rand(0.14f, 0.22f) * s;
+        const float dir = reef.Rand(0.0f, kTwoPi);
+        const float tilt = reef.Rand(0.15f, 0.65f);
+        reef.AddTilted(scene, tag + "_b" + std::to_string(k), PrimitiveType::Cone,
+                       Shade(col, reef.Rand(0.85f, 1.05f)),
+                       {x + reef.Rand(-0.25f, 0.25f) * s, y, z + reef.Rand(-0.25f, 0.25f) * s}, dir, tilt, len, rad);
+      }
+    }
+  };
+
+  /// @brief 脳サンゴ：潰した球
+  class BrainCoral final : public CoralKind {
+  public:
+    /// @copydoc CoralKind::Build
+    void Build(TitleReefScript &reef, Scene *scene, const std::string &tag, float x, float y, float z,
+               float s) const override {
+      const float r = reef.Rand(0.8f, 1.4f) * s;
+      // 高さは maxTopY を超えないよう抑える（最低 0.2m は残す）
+      const float h = (std::min)(r * reef.Rand(0.55f, 0.75f), (std::max)(reef.maxTopY - y, 0.2f));
+      reef.AddPart(scene, tag + "_brain", PrimitiveType::Sphere, reef.PickColor(), {x, y, z},
+                   {0.0f, reef.Rand(0.0f, kTwoPi), 0.0f}, {r, h, r * reef.Rand(0.8f, 1.0f)}, 16.0f);
+    }
+  };
+
+  /// @brief テーブルサンゴ：細い柱＋平たい円盤
+  class TableCoral final : public CoralKind {
+  public:
+    /// @copydoc CoralKind::Build
+    void Build(TitleReefScript &reef, Scene *scene, const std::string &tag, float x, float y, float z,
+               float s) const override {
+      const RC::Vector4 col = reef.PickColor();
+      const float stem = reef.ClampLen(y, reef.Rand(0.6f, 1.1f) * s);
+      const float r = reef.Rand(1.0f, 1.7f) * s;
+      reef.AddPart(scene, tag + "_stem", PrimitiveType::Cylinder, Shade(col, 0.8f), {x, y + stem * 0.5f, z},
+                   {0.0f, 0.0f, 0.0f}, {0.18f * s, stem, 0.18f * s}, 8.0f);
+      reef.AddPart(scene, tag + "_top", PrimitiveType::Cylinder, col, {x, y + stem, z},
+                   {reef.Rand(-0.08f, 0.08f), reef.Rand(0.0f, kTwoPi), reef.Rand(-0.08f, 0.08f)},
+                   {r, 0.16f * s, r * reef.Rand(0.75f, 1.0f)}, 8.0f);
+    }
+  };
+
+  /// @brief チューブ（カイメン）：立った円柱の束
+  class TubeCoral final : public CoralKind {
+  public:
+    /// @copydoc CoralKind::Build
+    void Build(TitleReefScript &reef, Scene *scene, const std::string &tag, float x, float y, float z,
+               float s) const override {
+      const RC::Vector4 col = reef.PickColor();
+      const int n = 3 + static_cast<int>(reef.Rand(0.0f, 3.0f));
+      for (int k = 0; k < n; ++k) {
+        const float len = reef.ClampLen(y, reef.Rand(0.7f, 1.6f) * s);
+        const float rad = reef.Rand(0.16f, 0.26f) * s;
+        const float a = reef.Rand(0.0f, kTwoPi);
+        const float d = reef.Rand(0.1f, 0.45f) * s;
+        reef.AddTilted(scene, tag + "_t" + std::to_string(k), PrimitiveType::Cylinder,
+                       Shade(col, reef.Rand(0.85f, 1.05f)), {x + std::cos(a) * d, y, z + std::sin(a) * d}, a,
+                       reef.Rand(0.0f, 0.25f), len, rad);
+      }
+    }
+  };
+
+  /// @brief 岩：暗い色の潰した球か箱
+  class RockCoral final : public CoralKind {
+  public:
+    /// @copydoc CoralKind::Build
+    void Build(TitleReefScript &reef, Scene *scene, const std::string &tag, float x, float y, float z,
+               float s) const override {
+      const bool box = reef.Rand(0.0f, 1.0f) < 0.4f; // 40% は箱
+      const float r = reef.Rand(0.7f, 1.5f) * s;
+      reef.AddPart(scene, tag + "_rock", box ? PrimitiveType::Box : PrimitiveType::Sphere,
+                   Shade(reef.rockColor, reef.Rand(0.8f, 1.1f)), {x, y, z},
+                   {reef.Rand(-0.3f, 0.3f), reef.Rand(0.0f, kTwoPi), reef.Rand(-0.3f, 0.3f)},
+                   box ? RC::Vector3{r * 1.6f, r * 0.8f, r * 1.3f} : RC::Vector3{r, r * 0.6f, r * 0.85f}, 8.0f);
+    }
+  };
+
+  /// @brief 乱数 pick（0〜1）からサンゴの種類を選ぶ（Factory Method）
+  /// @param pick 0 以上 1 未満の乱数
+  /// @return 選んだ種類（枝 30% / 脳 22% / テーブル 16% / チューブ 16% / 岩 16%）
+  /// @details 「どの種類を作るか」の判断をこの 1 か所に集め、呼び出し側は CoralKind の参照だけを受け取る
+  ///          （Factory Method）。種類ごとのオブジェクトは状態を持たないので、関数内 static の定数で共有する。
+  ///          しきい値の並びと比較（pick < しきい値）は以前の if / else if と同じなので、乱数の消費順も変わらない。
+  static const CoralKind &ChooseCoral(float pick) {
+    static const BranchCoral kBranch{};
+    static const BrainCoral kBrain{};
+    static const TableCoral kTable{};
+    static const TubeCoral kTube{};
+    static const RockCoral kRock{};
+    /// @brief 累積確率のしきい値と、そのとき作る種類
+    struct Choice {
+      float below;           ///< pick がこれ未満ならこの種類
+      const CoralKind *kind; ///< 作る種類
+    };
+    static const Choice kChoices[] = {
+        {0.30f, &kBranch},
+        {0.52f, &kBrain},
+        {0.68f, &kTable},
+        {0.84f, &kTube},
+    };
+    for (const Choice &c : kChoices) {
+      if (pick < c.below) return *c.kind;
+    }
+    return kRock;
+  }
 
   static constexpr float kPi = 3.14159265f;
   static constexpr float kTwoPi = 6.28318531f;
@@ -249,13 +393,10 @@ private:
         const float baseY = GroundY(x, z);
         const float s = Rand(scaleMin, scaleMax);
         const std::string tag = "Reef_" + std::to_string(c) + "_" + std::to_string(i);
-        // 種類を確率で選ぶ（枝 30% / 脳 22% / テーブル 16% / チューブ 16% / 岩 16%）
+        // 種類を確率で選び（枝 30% / 脳 22% / テーブル 16% / チューブ 16% / 岩 16%）、
+        // 基底 CoralKind の参照経由で組み立てる（種類ごとの違いは派生クラスの Build が持つ）
         const float pick = Rand(0.0f, 1.0f);
-        if (pick < 0.30f) BuildBranch(scene, tag, x, baseY, z, s);
-        else if (pick < 0.52f) BuildBrain(scene, tag, x, baseY, z, s);
-        else if (pick < 0.68f) BuildTable(scene, tag, x, baseY, z, s);
-        else if (pick < 0.84f) BuildTube(scene, tag, x, baseY, z, s);
-        else BuildRock(scene, tag, x, baseY, z, s);
+        ChooseCoral(pick).Build(*this, scene, tag, x, baseY, z, s);
       }
     }
 
@@ -263,93 +404,6 @@ private:
     shown_ = true;
     SetShown(!CameraBelow(hideBelowY));
     Log::Print("[TitleReefScript] built " + std::to_string(parts_.size()) + " parts");
-  }
-
-  /// @brief 枝サンゴ：根元から外へ開く円錐の束を生成する
-  /// @param scene 生成先のシーン
-  /// @param tag 部品エンティティ名の接頭辞
-  /// @param x 根元のワールド X 座標
-  /// @param y 根元のワールド Y 座標（地面の高さ）
-  /// @param z 根元のワールド Z 座標
-  /// @param s 大きさの倍率
-  void BuildBranch(Scene *scene, const std::string &tag, float x, float y, float z, float s) {
-    const RC::Vector4 col = PickColor();
-    const int n = 4 + static_cast<int>(Rand(0.0f, 3.0f));
-    for (int k = 0; k < n; ++k) {
-      const float len = ClampLen(y, Rand(1.3f, 2.3f) * s);
-      const float rad = Rand(0.14f, 0.22f) * s;
-      const float dir = Rand(0.0f, kTwoPi);
-      const float tilt = Rand(0.15f, 0.65f);
-      AddTilted(scene, tag + "_b" + std::to_string(k), PrimitiveType::Cone, Shade(col, Rand(0.85f, 1.05f)),
-                {x + Rand(-0.25f, 0.25f) * s, y, z + Rand(-0.25f, 0.25f) * s}, dir, tilt, len, rad);
-    }
-  }
-
-  /// @brief 脳サンゴ：潰した球を生成する
-  /// @param scene 生成先のシーン
-  /// @param tag 部品エンティティ名の接頭辞
-  /// @param x 根元のワールド X 座標
-  /// @param y 根元のワールド Y 座標（地面の高さ）
-  /// @param z 根元のワールド Z 座標
-  /// @param s 大きさの倍率
-  void BuildBrain(Scene *scene, const std::string &tag, float x, float y, float z, float s) {
-    const float r = Rand(0.8f, 1.4f) * s;
-    // 高さは maxTopY を超えないよう抑える（最低 0.2m は残す）
-    const float h = (std::min)(r * Rand(0.55f, 0.75f), (std::max)(maxTopY - y, 0.2f));
-    AddPart(scene, tag + "_brain", PrimitiveType::Sphere, PickColor(), {x, y, z}, {0.0f, Rand(0.0f, kTwoPi), 0.0f},
-            {r, h, r * Rand(0.8f, 1.0f)}, 16.0f);
-  }
-
-  /// @brief テーブルサンゴ：細い柱＋平たい円盤を生成する
-  /// @param scene 生成先のシーン
-  /// @param tag 部品エンティティ名の接頭辞
-  /// @param x 根元のワールド X 座標
-  /// @param y 根元のワールド Y 座標（地面の高さ）
-  /// @param z 根元のワールド Z 座標
-  /// @param s 大きさの倍率
-  void BuildTable(Scene *scene, const std::string &tag, float x, float y, float z, float s) {
-    const RC::Vector4 col = PickColor();
-    const float stem = ClampLen(y, Rand(0.6f, 1.1f) * s);
-    const float r = Rand(1.0f, 1.7f) * s;
-    AddPart(scene, tag + "_stem", PrimitiveType::Cylinder, Shade(col, 0.8f), {x, y + stem * 0.5f, z}, {0.0f, 0.0f, 0.0f},
-            {0.18f * s, stem, 0.18f * s}, 8.0f);
-    AddPart(scene, tag + "_top", PrimitiveType::Cylinder, col, {x, y + stem, z},
-            {Rand(-0.08f, 0.08f), Rand(0.0f, kTwoPi), Rand(-0.08f, 0.08f)}, {r, 0.16f * s, r * Rand(0.75f, 1.0f)}, 8.0f);
-  }
-
-  /// @brief チューブ（カイメン）：立った円柱の束を生成する
-  /// @param scene 生成先のシーン
-  /// @param tag 部品エンティティ名の接頭辞
-  /// @param x 根元のワールド X 座標
-  /// @param y 根元のワールド Y 座標（地面の高さ）
-  /// @param z 根元のワールド Z 座標
-  /// @param s 大きさの倍率
-  void BuildTube(Scene *scene, const std::string &tag, float x, float y, float z, float s) {
-    const RC::Vector4 col = PickColor();
-    const int n = 3 + static_cast<int>(Rand(0.0f, 3.0f));
-    for (int k = 0; k < n; ++k) {
-      const float len = ClampLen(y, Rand(0.7f, 1.6f) * s);
-      const float rad = Rand(0.16f, 0.26f) * s;
-      const float a = Rand(0.0f, kTwoPi);
-      const float d = Rand(0.1f, 0.45f) * s;
-      AddTilted(scene, tag + "_t" + std::to_string(k), PrimitiveType::Cylinder, Shade(col, Rand(0.85f, 1.05f)),
-                {x + std::cos(a) * d, y, z + std::sin(a) * d}, a, Rand(0.0f, 0.25f), len, rad);
-    }
-  }
-
-  /// @brief 岩：暗い色の潰した球か箱（40%）を生成する
-  /// @param scene 生成先のシーン
-  /// @param tag 部品エンティティ名の接頭辞
-  /// @param x 根元のワールド X 座標
-  /// @param y 根元のワールド Y 座標（地面の高さ）
-  /// @param z 根元のワールド Z 座標
-  /// @param s 大きさの倍率
-  void BuildRock(Scene *scene, const std::string &tag, float x, float y, float z, float s) {
-    const bool box = Rand(0.0f, 1.0f) < 0.4f;
-    const float r = Rand(0.7f, 1.5f) * s;
-    AddPart(scene, tag + "_rock", box ? PrimitiveType::Box : PrimitiveType::Sphere, Shade(rockColor, Rand(0.8f, 1.1f)),
-            {x, y, z}, {Rand(-0.3f, 0.3f), Rand(0.0f, kTwoPi), Rand(-0.3f, 0.3f)},
-            box ? RC::Vector3{r * 1.6f, r * 0.8f, r * 1.3f} : RC::Vector3{r, r * 0.6f, r * 0.85f}, 8.0f);
   }
 
   /// @brief Y 軸の部品（Cone / Cylinder。どちらも高さ 1・半径 1・中心が原点）を根元から傾けて置く
@@ -495,9 +549,11 @@ private:
     return d(rng_);
   }
 
-  std::vector<Part> parts_;
-  std::weak_ptr<Entity> folder_;
-  std::mt19937 rng_;
+  std::vector<Part> parts_;       ///< 生成した部品
+  std::weak_ptr<Entity> folder_;  ///< 部品をまとめるフォルダ
+  std::mt19937 rng_;              ///< seed 付き乱数（並びを毎回同じにする）
+  // 表示中か。表示／非表示の 2 値を毎フレームカメラの高さから決め直すだけで、状態ごとの処理も無いので
+  // State パターンにはせず bool のままにしている。
   bool shown_ = true;
 };
 

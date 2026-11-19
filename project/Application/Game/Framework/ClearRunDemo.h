@@ -6,6 +6,7 @@
 #include "Common/Log/Log.h"
 #include "Scene.h"
 #include "Game/Framework/TransitionDemo.h"
+#include "Game/Framework/StateMachine.h"
 
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -44,6 +45,13 @@
 //                 倒せなければ kFightTimeout で強制撃破（突進が当たっても demo_invincible で被弾しない）
 //     AfterKill : 少し見せてからレールを再開し、照準を正面へ戻す → 終点でクリア（ClearAscendScript）
 //     Done      : 決着後の演出が始まった（result_transition_owner）。タグを片付けて何もしない
+//
+//   実装（State パターン）:
+//     以前は enum Phase + switch で上の 9 段階を切り替えていた。段階ごとの遷移条件
+//     （暗転しきったら / サメを倒したら …）が 1 つの関数に混ざっていたので、
+//     「段階 1 つ = 状態クラス 1 つ」（WaitIntroState 〜 DoneState）に分け、
+//     次の段階は各状態クラスが StateMachine::ChangeState で決めるようにした。
+//     「決着後の演出が始まったら Done へ」はどの段階からでも起きる割り込みなので、Update の入口で扱う。
 // ============================================================================
 
 namespace TransitionDemo {
@@ -51,10 +59,17 @@ namespace TransitionDemo {
 /// @brief クリアを見せるデモのステージ側の進行
 class ClearRun {
 public:
+  /// @brief 最初の段階（開始演出の終わりを待つ）で作る
+  ClearRun() {
+    fsm_.ChangeState<WaitIntroState>();
+    fsm_.ApplyPending(*this);
+  }
+
   /// @brief 状態を初期化し、前回のタグを消す（OnCreate で呼ぶ）
   /// @param cam Camera エンティティ（nullptr なら状態だけ初期化）
   void Reset(Entity *cam) {
-    phase_ = Phase::WaitIntro;
+    fsm_.ChangeState<WaitIntroState>();
+    fsm_.ApplyPending(*this);
     t_ = 0.0f;
     fightT_ = 0.0f;
     fade_ = 0.0f;
@@ -69,88 +84,28 @@ public:
   /// @param waterY 水面の高さ
   /// @param dt     経過時間（秒）
   void Update(Scene *scene, Entity &cam, const TransformComponent &tr, float waterY, float dt) {
-    if (!scene || phase_ == Phase::Done) return;
+    if (!scene || fsm_.IsIn<DoneState>()) return;
 
-    // 決着後の演出（クリアの海図 / 力尽きた演出）が始まったら手を引く
+    // 決着後の演出（クリアの海図 / 力尽きた演出）が始まったら手を引く（どの段階からでも起きる割り込み）
     if (cam.GetTagInt(kOwnerTag, 0) == 1 || cam.GetTagInt("game_over", 0) == 1) {
       ClearTags(cam);
       fade_ = 0.0f;
-      phase_ = Phase::Done;
+      fsm_.ChangeState<DoneState>();
+      fsm_.ApplyPending(*this);
       Log::Print("[ClearRunDemo] outro started, done");
       return;
     }
     cam.SetTag("demo_invincible", 1);
     t_ += dt;
 
-    switch (phase_) {
-    case Phase::WaitIntro:
-      t_ = 0.0f;
-      if (cam.GetTagInt("intro_playing", 0) == 1) return;
-      phase_ = Phase::Play;
-      Log::Print("[ClearRunDemo] play");
-      break;
+    // 段階ごとの処理と次の段階の決定は、現在の状態クラスに任せる
+    frame_ = Frame{scene, &cam, &tr, waterY, dt};
+    fsm_.Update(*this, dt);
+    frame_ = Frame{};
 
-    case Phase::Play: {
-      // 近くの敵へ照準を寄せて撃つ（いなければ正面）
-      RC::Vector3 target{};
-      if (FindNearestEnemy(*scene, cam, tr, target)) {
-        AimAt(cam, tr, target, true);
-      } else {
-        AimCenter(cam);
-      }
-      if (t_ >= kClearPlayTime) Enter(Phase::FadeOut, cam);
-      break;
-    }
-
-    case Phase::FadeOut:
-      fade_ = Smooth01(t_ / (std::max)(kSkipFadeOut, 1e-3f));
-      if (t_ >= kSkipFadeOut) {
-        fade_ = 1.0f;
-        JumpToFinal(*scene, cam);
-        Enter(Phase::Black, cam);
-      }
-      break;
-
-    case Phase::Black:
-      fade_ = 1.0f;
-      AimCenter(cam); // 暗いうちに正面へ戻しておく
-      if (t_ >= kSkipBlackHold) {
-        SpawnShark(*scene, cam, tr, waterY);
-        Enter(Phase::FadeIn, cam);
-      }
-      break;
-
-    case Phase::FadeIn:
-      fade_ = 1.0f - Smooth01(t_ / (std::max)(kSkipFadeIn, 1e-3f));
-      UpdateFight(cam, tr, dt);
-      if (t_ >= kSkipFadeIn) {
-        fade_ = 0.0f;
-        if (phase_ == Phase::FadeIn) Enter(Phase::Fight, cam);
-      }
-      break;
-
-    case Phase::Fight:
-      UpdateFight(cam, tr, dt);
-      break;
-
-    case Phase::AfterKill:
-      AimCenter(cam);
-      if (t_ >= kAfterKillDelay) {
-        cam.ClearTag("demo_rail_hold"); // 終点へ向けてレールを再開
-        Enter(Phase::Finish, cam);
-        Log::Print("[ClearRunDemo] shark down, rail resumes");
-      }
-      break;
-
-    case Phase::Finish:
-      AimCenter(cam);
-      break;
-
-    case Phase::Done:
-      break;
-    }
     // 明けきる前に次の段階へ進んだ場合（サメが途中で消えたなど）も、暗転は残さず明けていく
-    if (phase_ >= Phase::Fight && phase_ != Phase::Done && fade_ > 0.0f) {
+    const bool fightOrLater = fsm_.IsIn<FightState>() || fsm_.IsIn<AfterKillState>() || fsm_.IsIn<FinishState>();
+    if (fightOrLater && fade_ > 0.0f) {
       fade_ = (std::max)(0.0f, fade_ - dt / (std::max)(kSkipFadeIn, 1e-3f));
     }
   }
@@ -158,6 +113,10 @@ public:
   /// @brief 暗転の濃さ（呼び出し側が OnOverlayRender で Dive 遷移の色を画面全体に敷く）
   /// @return 0〜1
   float FadeAlpha() const { return fade_; }
+
+  /// @brief 現在の段階名（インスペクタ・ログ表示用）
+  /// @return 段階名
+  const char *PhaseName() const { return fsm_.CurrentName(); }
 
   /// @brief 片付け（OnDestroy で呼ぶ）
   /// @param cam Camera エンティティ（nullptr ならタグは触らない）
@@ -167,12 +126,167 @@ public:
       if (!s->IsPendingDestroy()) s->Destroy();
     }
     shark_.reset();
-    phase_ = Phase::Done;
+    fsm_.ChangeState<DoneState>();
+    fsm_.ApplyPending(*this);
     fade_ = 0.0f;
   }
 
+  /// @brief デモが立てるタグをすべて消す
+  /// @details エディタの保存で Camera にデモのタグが焼き付いていても、デモを流さないときに
+  ///          無敵などが残らないよう、デモの種類に関係なく呼び出し側からも使えるようにしている。
+  /// @param cam Camera エンティティ
+  static void ClearTags(Entity &cam) {
+    for (const char *k : {"demo_invincible", "demo_look", "demo_look_yaw_mrad", "demo_look_pitch_mrad", "demo_fire",
+                          "demo_rail_jump", "demo_rail_hold", "demo_skip_waves"}) {
+      cam.ClearTag(k);
+    }
+  }
+
 private:
-  enum class Phase { WaitIntro, Play, FadeOut, Black, FadeIn, Fight, AfterKill, Finish, Done };
+  /// @brief 状態クラスが使う、このフレームの入力（Update の間だけ有効）
+  struct Frame {
+    Scene *scene = nullptr;                ///< シーン
+    Entity *cam = nullptr;                 ///< Camera エンティティ
+    const TransformComponent *tr = nullptr; ///< カメラの Transform
+    float waterY = 0.0f;                   ///< 水面の高さ
+    float dt = 0.0f;                       ///< 経過時間（秒）
+  };
+
+  // ---- 状態クラス（private な入れ子クラスなので、ClearRun の private メンバをそのまま使える）----
+
+  /// @brief 開始演出（intro_playing）が終わるのを待つ
+  class WaitIntroState : public IState<ClearRun> {
+  public:
+    /// @brief 開始演出が終わったら Play へ
+    void OnUpdate(ClearRun &o, StateMachine<ClearRun> &m, float) override {
+      o.t_ = 0.0f;
+      if (o.frame_.cam->GetTagInt("intro_playing", 0) == 1) return;
+      m.ChangeState<PlayState>();
+      Log::Print("[ClearRunDemo] play");
+    }
+    /// @brief 状態名
+    const char *Name() const override { return "WaitIntro"; }
+  };
+
+  /// @brief kClearPlayTime 秒ふつうに進み、近くの敵へ照準を寄せて撃つ
+  class PlayState : public IState<ClearRun> {
+  public:
+    /// @brief 近くの敵を狙い、時間が来たら FadeOut へ
+    void OnUpdate(ClearRun &o, StateMachine<ClearRun> &m, float) override {
+      Entity &cam = *o.frame_.cam;
+      const TransformComponent &tr = *o.frame_.tr;
+      // 近くの敵へ照準を寄せて撃つ（いなければ正面）
+      RC::Vector3 target{};
+      if (o.FindNearestEnemy(*o.frame_.scene, cam, tr, target)) {
+        AimAt(cam, tr, target, true);
+      } else {
+        AimCenter(cam);
+      }
+      if (o.t_ >= kClearPlayTime) o.Enter<FadeOutState>(m, cam);
+    }
+    /// @brief 状態名
+    const char *Name() const override { return "Play"; }
+  };
+
+  /// @brief Dive 遷移と同じ深海色へ暗転する
+  class FadeOutState : public IState<ClearRun> {
+  public:
+    /// @brief 暗転を進め、暗転しきったら終点の手前へ移して Black へ
+    void OnUpdate(ClearRun &o, StateMachine<ClearRun> &m, float) override {
+      o.fade_ = Smooth01(o.t_ / (std::max)(kSkipFadeOut, 1e-3f));
+      if (o.t_ >= kSkipFadeOut) {
+        o.fade_ = 1.0f;
+        o.JumpToFinal(*o.frame_.scene, *o.frame_.cam);
+        o.Enter<BlackState>(m, *o.frame_.cam);
+      }
+    }
+    /// @brief 状態名
+    const char *Name() const override { return "FadeOut"; }
+  };
+
+  /// @brief 暗転しきったまま待つ（この間にレールが移る）
+  class BlackState : public IState<ClearRun> {
+  public:
+    /// @brief 照準を正面へ戻し、待ち終わったらサメを出して FadeIn へ
+    void OnUpdate(ClearRun &o, StateMachine<ClearRun> &m, float) override {
+      Entity &cam = *o.frame_.cam;
+      o.fade_ = 1.0f;
+      AimCenter(cam); // 暗いうちに正面へ戻しておく
+      if (o.t_ >= kSkipBlackHold) {
+        o.SpawnShark(*o.frame_.scene, cam, *o.frame_.tr, o.frame_.waterY);
+        o.Enter<FadeInState>(m, cam);
+      }
+    }
+    /// @brief 状態名
+    const char *Name() const override { return "Black"; }
+  };
+
+  /// @brief 前方にサメを出したまま明けていく（明けている間もサメを追う）
+  class FadeInState : public IState<ClearRun> {
+  public:
+    /// @brief 明けを進め、サメが倒れたら AfterKill、明けきったら Fight へ
+    void OnUpdate(ClearRun &o, StateMachine<ClearRun> &m, float dt) override {
+      Entity &cam = *o.frame_.cam;
+      o.fade_ = 1.0f - Smooth01(o.t_ / (std::max)(kSkipFadeIn, 1e-3f));
+      if (o.UpdateFight(cam, *o.frame_.tr, dt)) {
+        o.Enter<AfterKillState>(m, cam);
+        return;
+      }
+      if (o.t_ >= kSkipFadeIn) {
+        o.fade_ = 0.0f;
+        o.Enter<FightState>(m, cam);
+      }
+    }
+    /// @brief 状態名
+    const char *Name() const override { return "FadeIn"; }
+  };
+
+  /// @brief サメが水面近くまで浮いてきたら照準を合わせて撃つ
+  class FightState : public IState<ClearRun> {
+  public:
+    /// @brief サメを追い、倒れたら AfterKill へ
+    void OnUpdate(ClearRun &o, StateMachine<ClearRun> &m, float dt) override {
+      if (o.UpdateFight(*o.frame_.cam, *o.frame_.tr, dt)) o.Enter<AfterKillState>(m, *o.frame_.cam);
+    }
+    /// @brief 状態名
+    const char *Name() const override { return "Fight"; }
+  };
+
+  /// @brief 倒したところを少し見せてからレールを再開する
+  class AfterKillState : public IState<ClearRun> {
+  public:
+    /// @brief 照準を正面へ戻し、待ち終わったらレールを再開して Finish へ
+    void OnUpdate(ClearRun &o, StateMachine<ClearRun> &m, float) override {
+      Entity &cam = *o.frame_.cam;
+      AimCenter(cam);
+      if (o.t_ >= kAfterKillDelay) {
+        cam.ClearTag("demo_rail_hold"); // 終点へ向けてレールを再開
+        o.Enter<FinishState>(m, cam);
+        Log::Print("[ClearRunDemo] shark down, rail resumes");
+      }
+    }
+    /// @brief 状態名
+    const char *Name() const override { return "AfterKill"; }
+  };
+
+  /// @brief 終点まで正面を向いて進む（クリアの演出が始まると Update の入口で Done になる）
+  class FinishState : public IState<ClearRun> {
+  public:
+    /// @brief 照準を正面に保つ
+    void OnUpdate(ClearRun &o, StateMachine<ClearRun> &, float) override { AimCenter(*o.frame_.cam); }
+    /// @brief 状態名
+    const char *Name() const override { return "Finish"; }
+  };
+
+  /// @brief 決着後の演出が始まった（または片付けた）。何もしない
+  class DoneState : public IState<ClearRun> {
+  public:
+    /// @brief 何もしない
+    void OnUpdate(ClearRun &, StateMachine<ClearRun> &, float) override {}
+    /// @brief 状態名
+    const char *Name() const override { return "Done"; }
+  };
+
   static constexpr const char *kOwnerTag = "result_transition_owner";
   // サメの見た目と当たり・AI の設定は 1 面のウェーブのスポナー（Stage1.json の WaveShark）と同じ値
   static constexpr const char *kSharkModel = "Resources/model/shark/shark_game.glb";
@@ -191,19 +305,15 @@ private:
     return a;
   }
 
-  /// @brief 段階を切り替えて経過時間を 0 に戻す
-  void Enter(Phase p, Entity &cam) {
-    phase_ = p;
+  /// @brief 次の段階を予約し、経過時間を 0 に戻して撃つのをやめる（状態クラスから呼ぶ）
+  /// @tparam S 次の状態クラス
+  /// @param machine 状態を管理しているステートマシン
+  /// @param cam Camera エンティティ
+  template <class S>
+  void Enter(StateMachine<ClearRun> &machine, Entity &cam) {
+    machine.ChangeState<S>();
     t_ = 0.0f;
     cam.SetTag("demo_fire", 0);
-  }
-
-  /// @brief デモが立てるタグをすべて消す
-  static void ClearTags(Entity &cam) {
-    for (const char *k : {"demo_invincible", "demo_look", "demo_look_yaw_mrad", "demo_look_pitch_mrad", "demo_fire",
-                          "demo_rail_jump", "demo_rail_hold", "demo_skip_waves"}) {
-      cam.ClearTag(k);
-    }
   }
 
   /// @brief 自機の正面（レールの基準の向き）のヨー角
@@ -322,16 +432,19 @@ private:
     Log::Print("[ClearRunDemo] shark spawned");
   }
 
-  /// @brief サメへ照準を寄せ、水面近くまで浮いてきたら撃つ。倒れたら AfterKill へ
-  void UpdateFight(Entity &cam, const TransformComponent &tr, float dt) {
+  /// @brief サメへ照準を寄せ、水面近くまで浮いてきたら撃つ
+  /// @param cam Camera エンティティ
+  /// @param tr カメラの Transform
+  /// @param dt 経過時間（秒）
+  /// @return サメが倒れた（消えた）なら true（呼び出し側の状態が AfterKill へ進む）
+  bool UpdateFight(Entity &cam, const TransformComponent &tr, float dt) {
     auto s = shark_.lock();
     const bool gone = !s || s->IsPendingDestroy();
     if (gone || s->HasTag("enemy_defeated")) {
-      Enter(Phase::AfterKill, cam);
-      return;
+      return true;
     }
     const auto *str = s->GetComponent<TransformComponent>();
-    if (!str) return;
+    if (!str) return false;
     // 潜っている間も目で追い、浮いてきたら撃つ（水中へ撃っても水面で止まるだけなので）
     const RC::Vector3 target = {str->position.x, str->position.y + 0.4f, str->position.z};
     const bool ready = str->position.y >= sharkWaterY_ - kSharkReadyDepth;
@@ -341,9 +454,11 @@ private:
       s->SetTag("pending_damage", 999); // 当たらないまま時間切れ。強制的に倒す（保険）
       Log::Print("[ClearRunDemo] fight timeout, forcing kill");
     }
+    return false;
   }
 
-  Phase phase_ = Phase::WaitIntro;
+  StateMachine<ClearRun> fsm_; ///< 段階（WaitIntroState 〜 DoneState）
+  Frame frame_;                ///< このフレームの入力（Update の間だけ有効）
   float t_ = 0.0f;      ///< 現在の段階に入ってからの経過（秒）
   float fightT_ = 0.0f; ///< サメが出そろって撃ち始めてからの経過（秒）
   float fade_ = 0.0f;   ///< 暗転の濃さ（0〜1）

@@ -10,9 +10,16 @@
 ///            Game シーン OnEnter    -> BeginRun()   （前回のプレイ結果を捨てる）
 ///            プレイ中               -> RailShooterController が score / hp / 被ダメージを書き込む
 ///                                      RailMovementScript がウェイポイントの通過数を書き込む
-///                                      EnemyBaseScript が撃破のたびに AddEnemyDefeated() を呼ぶ
+///                                      撃破数は Observer 経由で数える: EnemyBaseScript が撃破時に
+///                                      GameEvents::EnemyDefeated() を発行し、それを購読している
+///                                      RailShooterGameMode が AddEnemyDefeated() を呼ぶ
+///                                      （敵は GameSession を知らない）
 ///            クリア or 死亡         -> Finish(Outcome) をシーン側が呼ぶ
 ///            Result                 -> Score() 等を読んで表示する（クリア／ゲームオーバー共通）
+///
+///          Singleton にしている理由: シーンをまたいで残る「今回のプレイ結果」は常に 1 つだけで、
+///          Game シーンと Result シーンという寿命の異なる場所から同じ値を読み書きする必要があるため。
+///          値はすべて private にし、書き込みはプレイ中の Set / Add 系、読み取りは const の Getter に限定している。
 class GameSession {
 public:
   /// @brief 1 プレイの決着のつき方
@@ -28,6 +35,10 @@ public:
     static GameSession instance;
     return instance;
   }
+
+  // Singleton なのでコピー・代入はさせない
+  GameSession(const GameSession &) = delete;
+  GameSession &operator=(const GameSession &) = delete;
 
   /// @brief 新しいプレイを開始する（Game シーンの OnEnter で呼ぶ）
   /// @details リトライのたびにスコアと経過時間をゼロへ戻す。
@@ -76,7 +87,9 @@ public:
     waypointsTotal_ = (total < waypointsReached_) ? waypointsReached_ : total;
   }
 
-  /// @brief 敵を撃破した（EnemyBaseScript が HP 0 になった瞬間に呼ぶ）
+  /// @brief 敵を撃破した
+  /// @details RailShooterGameMode が GameEvents::EnemyDefeated() を購読し、通知のたびに呼ぶ（Observer）。
+  ///          敵側（EnemyBaseScript）からは直接呼ばない。
   /// @param count 加算する撃破数（既定 1）
   void AddEnemyDefeated(int count = 1) { enemiesDefeated_ += count; }
 
@@ -91,20 +104,31 @@ public:
   /// @param count 加算する個数（既定 1）
   void AddChestCollected(int count = 1) { chestsCollected_ += count; }
 
-  /// @brief 撃破数・被ダメージ・宝箱取得数を直接書く（撮影モードの仕込み用。プレイ中は Add 系を使うこと）
-  /// @param count  撃破数 / 宝箱取得数（負なら 0 に丸める）
-  /// @param amount 被ダメージ合計（負なら 0 に丸める）
+  /// @brief 撃破数を直接書く（撮影モードの仕込み用。プレイ中は AddEnemyDefeated を使うこと）
+  /// @param count 撃破数（負なら 0 に丸める）
   void SetEnemiesDefeated(int count) { enemiesDefeated_ = (count < 0) ? 0 : count; }
+  /// @brief 被ダメージ合計を直接書く（撮影モードの仕込み用。プレイ中は AddDamageTaken を使うこと）
+  /// @param amount 被ダメージ合計（負なら 0 に丸める）
   void SetDamageTaken(int amount) { damageTaken_ = (amount < 0) ? 0 : amount; }
+  /// @brief 宝箱取得数を直接書く（撮影モードの仕込み用。プレイ中は AddChestCollected を使うこと）
+  /// @param count 宝箱取得数（負なら 0 に丸める）
   void SetChestsCollected(int count) { chestsCollected_ = (count < 0) ? 0 : count; }
 
   // --- Result から読む値 ---
-  /// @brief 記録したプレイ結果の基本値を取得する（スコア / HP / 最大 HP / 経過時間 / 決着）
-  /// @return それぞれの記録値（経過時間は秒）
+  /// @brief 記録したスコア
+  /// @return スコア
   int Score() const { return score_; }
+  /// @brief 記録したプレイヤーの HP
+  /// @return HP
   int PlayerHp() const { return playerHp_; }
+  /// @brief 記録したプレイヤーの最大 HP
+  /// @return 最大 HP
   int PlayerMaxHp() const { return playerMaxHp_; }
+  /// @brief 記録したプレイ開始からの経過時間
+  /// @return 経過時間（秒）
   float ElapsedTime() const { return elapsedTime_; }
+  /// @brief プレイの決着
+  /// @return 決着の種類（InProgress / Cleared / GameOver）
   Outcome GetOutcome() const { return outcome_; }
   /// @brief クリアで決着したかどうか
   /// @return Outcome::Cleared なら true
@@ -158,15 +182,15 @@ public:
 private:
   GameSession() = default;
 
-  int score_ = 0;
-  int playerHp_ = 0;
-  int playerMaxHp_ = 0;
-  float elapsedTime_ = 0.0f;
-  Outcome outcome_ = Outcome::InProgress;
-  int playCount_ = 0;
-  int waypointsReached_ = 0;
-  int waypointsTotal_ = 0;
-  int enemiesDefeated_ = 0;
-  int damageTaken_ = 0;
-  int chestsCollected_ = 0;
+  int score_ = 0;                         ///< スコア
+  int playerHp_ = 0;                      ///< プレイヤーの HP
+  int playerMaxHp_ = 0;                   ///< プレイヤーの最大 HP
+  float elapsedTime_ = 0.0f;              ///< プレイ開始からの経過時間（秒）
+  Outcome outcome_ = Outcome::InProgress; ///< 決着
+  int playCount_ = 0;                     ///< BeginRun が呼ばれた回数
+  int waypointsReached_ = 0;              ///< 到達したウェイポイント数
+  int waypointsTotal_ = 0;                ///< このルートで通る予定のウェイポイント総数
+  int enemiesDefeated_ = 0;               ///< 撃破数
+  int damageTaken_ = 0;                   ///< 被ダメージ合計
+  int chestsCollected_ = 0;               ///< 宝箱取得数
 };

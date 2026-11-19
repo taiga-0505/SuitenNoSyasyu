@@ -1,5 +1,6 @@
 #pragma once
 #include "Engine/Graphics/PostProcess/PostProcess.h"
+#include "Game/Framework/ScreenFx.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <array>
@@ -19,19 +20,11 @@
 ///   その後 fadeDuration 秒かけて縁から崩れて消える。
 ///   続けて当たると別の位置に重なって貼られるので、連続で食らうほど視界が塞がる。
 ///   同時に貼れる数（PostProcess::kMaxInkSplats）を超えたら、いちばん弱っているものを置き換える。
-struct InkScreenFx {
-  // ---- 調整値（JSON キー "ink"） ----
-  float holdDuration = 1.6f;   ///< 貼り付いてから薄れ始めるまで（秒）
-  float fadeDuration = 2.6f;   ///< 薄れ始めてから消えきるまで（秒）
-  float underwaterFadeScale = 1.35f; ///< 水中では墨が水に溶けて早く消える（倍率）
-  float radiusMin = 0.26f;     ///< 墨の半径（画面の高さ=1）
-  float radiusMax = 0.40f;     ///< 墨の半径の上限（画面の高さ=1）
-  float centerSpread = 0.22f;  ///< 画面中央からどれだけずらして貼るか（UV）
-  float murkPerSplat = 0.22f;  ///< 墨 1 個あたりの画面全体の濁り
-  float murkMax = 0.55f;       ///< 画面全体の濁りの上限
-  float inkColor[3] = {0.03f, 0.02f, 0.05f}; ///< 墨の色（RGB）
-  float inkOpacity = 0.96f;    ///< 墨の不透明度
-
+///
+///   画面演出の共通インタフェース ScreenFx を実装する（Update / Clear / IsActive）。
+///   調整値は外から直接書き換えさせず、JSON（ToJson / FromJson）とインスペクタ（DrawImGui）だけで変える。
+class InkScreenFx : public ScreenFx {
+public:
   /// @brief 墨を 1 個貼る
   /// @param amount 強さ 0..1（1 でフルサイズ）。小さい墨ほど小さく貼る
   void AddHit(float amount) {
@@ -72,7 +65,7 @@ struct InkScreenFx {
   /// @param pp         反映先の PostProcess（nullptr なら寿命だけ進める）
   /// @param dt         経過時間（秒）
   /// @param underwater 水中にいるか（true なら underwaterFadeScale 倍の速さで薄れる）
-  void Update(PostProcess *pp, float dt, bool underwater) {
+  void Update(PostProcess *pp, float dt, bool underwater) override {
     // 各墨の寿命を進める。holdDuration を過ぎたものだけ薄れさせ、消えたものは末尾と入れ替えて詰める
     const float fadeMul = underwater ? underwaterFadeScale : 1.0f;
     for (int i = 0; i < count_;) {
@@ -120,7 +113,7 @@ struct InkScreenFx {
 
   /// @brief 全部消す（シーンを抜けるとき・リトライ時）
   /// @param pp 反映先の PostProcess（nullptr なら内部状態だけ消す）
-  void Clear(PostProcess *pp) {
+  void Clear(PostProcess *pp) override {
     count_ = 0;
     kick_ = 0.0f;
     if (pp) {
@@ -134,6 +127,10 @@ struct InkScreenFx {
   /// @brief 現在貼られている墨の数
   /// @return 墨の個数（0〜PostProcess::kMaxInkSplats）
   int Count() const { return count_; }
+
+  /// @brief 墨か濁りが画面に出ているか
+  /// @return 墨が 1 個以上ある、または InkOverlay を有効にしているなら true
+  bool IsActive() const override { return count_ > 0 || active_; }
 
   /// @brief 調整値を JSON に変換する
   /// @return 調整値を持つ JSON オブジェクト
@@ -189,6 +186,18 @@ struct InkScreenFx {
 #endif
 
 private:
+  // ---- 調整値（JSON キー "ink"） ----
+  float holdDuration = 1.6f;   ///< 貼り付いてから薄れ始めるまで（秒）
+  float fadeDuration = 2.6f;   ///< 薄れ始めてから消えきるまで（秒）
+  float underwaterFadeScale = 1.35f; ///< 水中では墨が水に溶けて早く消える（倍率）
+  float radiusMin = 0.26f;     ///< 墨の半径（画面の高さ=1）
+  float radiusMax = 0.40f;     ///< 墨の半径の上限（画面の高さ=1）
+  float centerSpread = 0.22f;  ///< 画面中央からどれだけずらして貼るか（UV）
+  float murkPerSplat = 0.22f;  ///< 墨 1 個あたりの画面全体の濁り
+  float murkMax = 0.55f;       ///< 画面全体の濁りの上限
+  float inkColor[3] = {0.03f, 0.02f, 0.05f}; ///< 墨の色（RGB）
+  float inkOpacity = 0.96f;    ///< 墨の不透明度
+
   /// @brief 小数部を返す
   /// @param x 入力値
   /// @return x - floor(x)（0 以上 1 未満）

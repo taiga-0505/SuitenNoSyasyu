@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <string>
 
 #if RC_ENABLE_IMGUI
@@ -32,9 +33,19 @@
 ///     4. 次の面が選択色に変わって金の輪が灯り、情報パネルに「踏破」の印が押される
 ///     5. linger のあいだ見せてから、bleach 秒で白へ飛ばす
 ///   描画はすべてポストプロセスの後（OnOverlayRender）で行うので、水中の歪みや輪郭線は乗らない。
+///
+///   設計:
+///     - 「どの面をクリアしたか」で変わる部分（見出し・航路の行き先・次の面・情報パネル）は、
+///       以前は final_ / stage_ >= 0 の if を各描画関数に散らして分けていた。これを Route の派生クラス
+///       （ステージ外 / 通常の面 / 最終面）に分け、Sequence は route_ の virtual を呼ぶだけにした（ポリモーフィズム）。
+///       どの Route を作るかは MakeRoute（Factory Method）1 か所で決める。
+///     - 流れ 1〜5 は State パターンにしていない: 各段の開始時刻は経過時間 t_ と Params から計算で決まり、
+///       早送りは t_ を先の時刻へ飛ばすだけで済む。状態クラスに分けると早送りのたびに状態を
+///       順に渡り歩く必要があり、かえって複雑になるため、時間割（TUnroll0〜TEnd）の関数で表している。
 namespace ClearChartFx {
 
 /// @brief 海図演出の調整値（JSON キーは "chart*"。ClearAscendScript の scriptData に入る）
+/// @details 不変条件の無い調整値の束（インスペクタで直接いじる）なので、public メンバの struct のままにしている。
 struct Params {
   float hold = 0.35f;    ///< クリアしてから海図が開き始めるまで（秒）
   float unroll = 0.45f;  ///< 海図パネルが開ききるまで（秒）
@@ -125,7 +136,7 @@ public:
     stage_ = (stage >= 0 && stage < StageProgress::kStageCount) ? stage : -1;
     score_ = score;
     const StageProgress &prog = StageProgress::Get();
-    final_ = (stage_ == StageProgress::kStageCount - 1);
+    route_ = MakeRoute(stage_);
     unlocked_ = (stage_ >= 0 && prog.JustUnlocked() == stage_ + 1);
     best_ = (stage_ >= 0) ? prog.BestScore(stage_) : score;
   }
@@ -170,7 +181,7 @@ public:
   /// @param screenW 画面の幅（ピクセル）
   /// @param screenH 画面の高さ（ピクセル）
   void Draw(float screenW, float screenH) const {
-    if (!active_ || !p_) return;
+    if (!active_ || !p_ || !route_) return;
     const Params &p = *p_;
 
     // 1280x720 基準 → 実画面（縦横の小さいほうに合わせ、余りは均等に空ける。セレクトと同じ）
@@ -309,10 +320,214 @@ private:
   }
   /// @brief 最終面の航路の行き先（洞窟を抜けた先の朝日。5 面の右、海図の右端の手前）
   RC::Vector2 SunPos() const { return {kChartR - 46.0f, kSurfaceY - 22.0f}; }
-  /// @brief 今回の航路の始点と終点
-  void InkSegment(RC::Vector2 &a, RC::Vector2 &b) const {
-    a = NodePos(stage_);
-    b = final_ ? RC::Vector2{SunPos().x - 22.0f, kAboveY} : NodePos(stage_ + 1);
+
+  // ------------------------------------------------------------------
+  // 航路の種類（ポリモーフィズム）
+  // ------------------------------------------------------------------
+
+  /// @brief 今回クリアした航路の種類ごとの違い（見出し・行き先・次の面・情報パネル）
+  /// @details 既定の実装は「ステージ外（航路の強調なし）」の振る舞い。
+  class Route {
+  public:
+    virtual ~Route() = default;
+
+    /// @brief 見出しと欧文を決める
+    /// @param title 見出しの出力先
+    /// @param sub 欧文の出力先
+    virtual void Heading(std::string &title, std::string &sub) const = 0;
+    /// @brief 今回の航路の伸び具合（0〜1）
+    /// @param s 演出本体
+    /// @return 既定は 0（航路を引かない）
+    virtual float InkProgress(const Sequence &s) const {
+      (void)s;
+      return 0.0f;
+    }
+    /// @brief 航路が着いてからの現れ具合（0〜1）
+    /// @param s 演出本体
+    /// @return 既定は 0（着かない）
+    virtual float ArriveProgress(const Sequence &s) const {
+      (void)s;
+      return 0.0f;
+    }
+    /// @brief 航路が着いたら選択が移る面
+    /// @return 面の番号。移らなければ -1
+    virtual int NextIndex() const { return -1; }
+    /// @brief 各区間の航路を描いた後に足す行き先（最終面の朝日など）
+    /// @param s 演出本体
+    /// @param u 今回の航路の伸び具合（0〜1）
+    virtual void DrawDestination(const Sequence &s, float u) const {
+      (void)s;
+      (void)u;
+    }
+    /// @brief 航路の先頭を進むもの（タコ）を描く
+    /// @param s 演出本体
+    /// @param u 今回の航路の伸び具合（0〜1）
+    virtual void DrawTraveler(const Sequence &s, float u) const {
+      (void)s;
+      (void)u;
+    }
+    /// @brief 情報パネルの左側（面の番号・名前・次の航路）を描く
+    /// @param s 演出本体
+    /// @param T 情報パネルの上端（基準座標。浮かび上がりのずれ込み）
+    /// @param left 左端（実画面座標）
+    virtual void DrawInfoLeft(const Sequence &s, float T, float left) const = 0;
+    /// @brief 情報パネルに最高得点を添えるか
+    /// @return 既定は false
+    virtual bool ShowsBest() const { return false; }
+  };
+
+  /// @brief ステージ外から来たとき（エディタで直接開いたときなど）。航路の強調なしで出す
+  class NoStageRoute : public Route {
+  public:
+    /// @brief 「航路 踏破 / STAGE CLEAR」
+    void Heading(std::string &title, std::string &sub) const override {
+      title = "航路 踏破";
+      sub = "STAGE CLEAR";
+    }
+    /// @brief 「航路 踏破」だけを出す
+    void DrawInfoLeft(const Sequence &s, float T, float left) const override {
+      s.Text(s.nameFont_, "航路 踏破", left, s.Y(T + 50.0f), s.C(kInk));
+    }
+  };
+
+  /// @brief 通常の面（1〜4 面）をクリアしたとき。次の面まで航路を引く
+  class StageRoute : public Route {
+  public:
+    /// @brief クリアした面を受け取る
+    /// @param index クリアした面の番号（0 始まり）
+    explicit StageRoute(int index) : index_(index) {}
+
+    /// @brief 「第 N 面　○○　踏破 / STAGE N  ○○  CLEAR」
+    void Heading(std::string &title, std::string &sub) const override {
+      const StageProgress::StageInfo &info = StageProgress::Info(index_);
+      title = "第" + std::to_string(index_ + 1) + "面　" + info.title + "　踏破";
+      sub = "STAGE " + std::to_string(index_ + 1) + "  " + info.subtitle + "  CLEAR";
+    }
+    float InkProgress(const Sequence &s) const override { return s.InkU(); }
+    float ArriveProgress(const Sequence &s) const override { return s.Arrive(); }
+    int NextIndex() const override { return index_ + 1; }
+
+    /// @brief タコ（航路の先頭を進む）。丸と番号を隠さないよう、丸の縁の外から縁の手前までを進む
+    void DrawTraveler(const Sequence &s, float u) const override {
+      RC::Vector2 a, c;
+      InkSegment(s, a, c);
+      const float dx = c.x - a.x, dy = c.y - a.y;
+      const float len = (std::max)(std::sqrt(dx * dx + dy * dy), 1e-3f);
+      const RC::Vector2 dir = {dx / len, dy / len};
+      const float margin = (std::min)(kNodeR + 12.0f, len * 0.4f);
+      const RC::Vector2 from = {a.x + dir.x * margin, a.y + dir.y * margin};
+      const RC::Vector2 to = TravelerEnd(c, dir, margin);
+      s.DrawOctopus(Lerp(from, to, u));
+    }
+
+    /// @brief 第 N 面 ＋ 名前 ＋ 欧文と、航路が着いてからの「次の航路」
+    void DrawInfoLeft(const Sequence &s, float T, float left) const override {
+      const StageProgress::StageInfo &info = StageProgress::Info(index_);
+      // 第 N 面 ＋ 名前 ＋ 欧文
+      s.Text(s.labelFont_, "第" + std::to_string(index_ + 1) + "面", left, s.Y(T + 22.0f), s.C(kAccent));
+      const float nameY = s.Y(T + 50.0f);
+      s.Text(s.nameFont_, info.title, left, nameY, s.C(kInk));
+      s.Text(s.labelFont_, info.subtitle, left + s.TextW(s.nameFont_, info.title) + s.S(16.0f),
+             nameY + s.LineH(s.nameFont_) - s.LineH(s.labelFont_) - s.S(6.0f), s.C(kMuted, 0.8f));
+
+      // 次の航路（航路が着いてから）。今回はじめて開いた面には金の「解放」の札
+      const float k = s.Arrive();
+      if (k > 0.0f) {
+        const float ty = s.Y(T + 112.0f);
+        const std::string next = NextRouteText();
+        s.Text(s.labelFont_, next, left, ty + s.S(4.0f), s.C(kInk, k), TextAlign::Left, 0.85f);
+        if (ShowsUnlockTag() && s.unlocked_) {
+          const float tx = left + s.TextW(s.labelFont_, next, 0.85f) + s.S(14.0f);
+          const float w = s.TextW(s.labelFont_, "解放", 0.85f) + s.S(24.0f);
+          const float h = s.LineH(s.labelFont_, 0.85f) + s.S(8.0f);
+          RC::DrawBox({tx, ty}, {tx + w, ty + h}, s.C(kGold, 0.25f * k));
+          RC::DrawBox({tx, ty}, {tx + w, ty + h}, s.C(kGold, 0.9f * k), kWire);
+          s.Text(s.labelFont_, "解放", tx + w * 0.5f, ty + s.S(4.0f), s.C(kInk, k), TextAlign::Center, 0.85f);
+        }
+      }
+    }
+    bool ShowsBest() const override { return true; }
+
+  protected:
+    /// @brief 今回の航路の始点と終点
+    /// @param s 演出本体
+    /// @param a 始点の出力先（クリアした面の丸）
+    /// @param b 終点の出力先（InkEnd）
+    void InkSegment(const Sequence &s, RC::Vector2 &a, RC::Vector2 &b) const {
+      a = s.NodePos(index_);
+      b = InkEnd(s);
+    }
+    /// @brief 今回の航路の終点
+    /// @param s 演出本体
+    /// @return 次の面の丸の中心
+    virtual RC::Vector2 InkEnd(const Sequence &s) const { return s.NodePos(index_ + 1); }
+    /// @brief タコが止まる位置
+    /// @param c 航路の終点
+    /// @param dir 航路の向き（単位ベクトル）
+    /// @param margin 丸の縁から空ける距離
+    /// @return 次の面の丸の手前（縁の外）
+    virtual RC::Vector2 TravelerEnd(const RC::Vector2 &c, const RC::Vector2 &dir, float margin) const {
+      return {c.x - dir.x * margin, c.y - dir.y * margin};
+    }
+    /// @brief 情報パネルの「次の航路」の文言
+    /// @return 次の面の番号と名前
+    virtual std::string NextRouteText() const {
+      return "次の航路　第" + std::to_string(index_ + 2) + "面　" + StageProgress::Info(index_ + 1).title;
+    }
+    /// @brief 次の面が今回解放されたときに金の「解放」の札を出すか
+    /// @return 通常の面は true
+    virtual bool ShowsUnlockTag() const { return true; }
+
+  private:
+    int index_; ///< クリアした面（0 始まり）
+  };
+
+  /// @brief 最終面をクリアしたとき。次の面ではなく、洞窟を抜けた先の朝日まで航路を引く
+  class FinalStageRoute : public StageRoute {
+  public:
+    /// @brief クリアした面（最終面）を受け取る
+    /// @param index 最終面の番号（0 始まり）
+    explicit FinalStageRoute(int index) : StageRoute(index) {}
+
+    /// @brief 「全航路 踏破 / ALL CLEAR」
+    void Heading(std::string &title, std::string &sub) const override {
+      title = "全航路 踏破";
+      sub = "ALL CLEAR";
+    }
+    /// @brief 最終面は選択を移さない（今回の面のまま）
+    int NextIndex() const override { return -1; }
+    /// @brief 朝日までの破線と浅葱の航路、朝日を描く
+    void DrawDestination(const Sequence &s, float u) const override {
+      RC::Vector2 a, c;
+      InkSegment(s, a, c);
+      s.DrawDashed(a, c);
+      s.DrawRoute(a, c, u);
+      s.DrawSun(s.Arrive());
+    }
+
+  protected:
+    /// @brief 朝日の手前
+    RC::Vector2 InkEnd(const Sequence &s) const override { return RC::Vector2{s.SunPos().x - 22.0f, kAboveY}; }
+    /// @brief 朝日まで進みきる
+    RC::Vector2 TravelerEnd(const RC::Vector2 &c, const RC::Vector2 &dir, float margin) const override {
+      (void)dir;
+      (void)margin;
+      return c;
+    }
+    /// @brief 外洋へ抜ける一言
+    std::string NextRouteText() const override { return "洞窟を抜け、夜明けの外洋へ"; }
+    /// @brief 解放される面が無いので札は出さない
+    bool ShowsUnlockTag() const override { return false; }
+  };
+
+  /// @brief クリアした面から Route を作る（Factory Method）
+  /// @param stage クリアした面（0 始まり。ステージ外なら -1）
+  /// @return ステージ外 / 通常の面 / 最終面 に応じた Route
+  /// @details 種類の判断をここ 1 か所に集め、描画側は具体的な Route の型を知らなくて済むようにした。
+  static std::unique_ptr<Route> MakeRoute(int stage) {
+    if (stage < 0) return std::make_unique<NoStageRoute>();
+    if (stage == StageProgress::kStageCount - 1) return std::make_unique<FinalStageRoute>(stage);
+    return std::make_unique<StageRoute>(stage);
   }
 
   /// @brief 右下に 1px ずらした影付きで文字を描く（セレクトの Text と同じ）
@@ -358,17 +573,7 @@ private:
   /// @brief 画面上部の見出し（第 N 面 ○○ 踏破 / 欧文。セレクトの「航路選択」と同じ位置・飾り）
   void DrawHeading() const {
     std::string title, sub;
-    if (final_) {
-      title = "全航路 踏破";
-      sub = "ALL CLEAR";
-    } else if (stage_ >= 0) {
-      const StageProgress::StageInfo &info = StageProgress::Info(stage_);
-      title = "第" + std::to_string(stage_ + 1) + "面　" + info.title + "　踏破";
-      sub = "STAGE " + std::to_string(stage_ + 1) + "  " + info.subtitle + "  CLEAR";
-    } else {
-      title = "航路 踏破";
-      sub = "STAGE CLEAR";
-    }
+    route_->Heading(title, sub); // 文言は航路の種類（Route）が決める
     const float cx = X(kDesignW * 0.5f);
     const float top = Y(30.0f + 8.0f * (1.0f - ca_)); // 少し下から浮かび上がる
     const float hh = LineH(headingFont_);
@@ -408,7 +613,7 @@ private:
 
     // 航路。過去にクリアした区間は浅葱、まだの区間は鼠の破線（セレクトと同じ）。
     // 今回の区間は破線の上に浅葱が伸びていく
-    const float u = (stage_ >= 0) ? InkU() : 0.0f;
+    const float u = route_->InkProgress(*this);
     for (int i = 0; i + 1 < StageProgress::kStageCount; ++i) {
       const RC::Vector2 a = NodePos(i), c = NodePos(i + 1);
       if (i == stage_) {
@@ -420,20 +625,14 @@ private:
         DrawDashed(a, c);
       }
     }
-    // 最終面は、洞窟を抜けた先の朝日まで
-    if (final_) {
-      RC::Vector2 a, c;
-      InkSegment(a, c);
-      DrawDashed(a, c);
-      DrawRoute(a, c, u);
-      DrawSun(Arrive());
-    }
+    // 最終面は、洞窟を抜けた先の朝日まで（行き先の追加は Route に任せる）
+    route_->DrawDestination(*this, u);
 
     // 各面の丸。航路が着くまでは今回の面が選択中、着いたら次の面へ選択が移る
     // （セレクトは「今回解放された面」を選択し、金の輪を付けた状態で開くので、そこへつながる）
-    const float arrive = (stage_ >= 0) ? Arrive() : 0.0f;
+    const float arrive = route_->ArriveProgress(*this);
     const float pulse = 0.5f + 0.5f * std::sin(t_ * (6.28318530718f / 1.4f));
-    const int nextIdx = (!final_ && stage_ >= 0) ? stage_ + 1 : -1;
+    const int nextIdx = route_->NextIndex();
     for (int i = 0; i < StageProgress::kStageCount; ++i) {
       const RC::Vector2 c = NodePos(i);
       const bool isNext = (i == nextIdx);
@@ -479,18 +678,8 @@ private:
            C(sel > 0.5f ? kInk : kMuted, unlocked ? 1.0f : 0.6f), TextAlign::Center, 0.85f);
     }
 
-    // タコ（航路の先頭を進む）。丸と番号を隠さないよう、丸の縁の外から縁の手前までを進む
-    if (stage_ >= 0) {
-      RC::Vector2 a, c;
-      InkSegment(a, c);
-      const float dx = c.x - a.x, dy = c.y - a.y;
-      const float len = (std::max)(std::sqrt(dx * dx + dy * dy), 1e-3f);
-      const RC::Vector2 dir = {dx / len, dy / len};
-      const float margin = (std::min)(kNodeR + 12.0f, len * 0.4f);
-      const RC::Vector2 from = {a.x + dir.x * margin, a.y + dir.y * margin};
-      const RC::Vector2 to = final_ ? c : RC::Vector2{c.x - dir.x * margin, c.y - dir.y * margin};
-      DrawOctopus(Lerp(from, to, u));
-    }
+    // タコ（航路の先頭を進む）。ステージ外では出さない（Route に任せる）
+    route_->DrawTraveler(*this, u);
   }
 
   /// @brief 洞窟（StageSelectScript::DrawCave と同じ岩の天井・床・口）
@@ -601,35 +790,8 @@ private:
     const float T = kInfoT + rise;
     const float left = X(kInfoL + 44.0f), right = X(kInfoR - 44.0f);
 
-    if (stage_ >= 0) {
-      const StageProgress::StageInfo &info = StageProgress::Info(stage_);
-      // 第 N 面 ＋ 名前 ＋ 欧文
-      Text(labelFont_, "第" + std::to_string(stage_ + 1) + "面", left, Y(T + 22.0f), C(kAccent));
-      const float nameY = Y(T + 50.0f);
-      Text(nameFont_, info.title, left, nameY, C(kInk));
-      Text(labelFont_, info.subtitle, left + TextW(nameFont_, info.title) + S(16.0f),
-           nameY + LineH(nameFont_) - LineH(labelFont_) - S(6.0f), C(kMuted, 0.8f));
-
-      // 次の航路（航路が着いてから）。今回はじめて開いた面には金の「解放」の札
-      const float k = Arrive();
-      if (k > 0.0f) {
-        const float ty = Y(T + 112.0f);
-        const std::string next = final_ ? "洞窟を抜け、夜明けの外洋へ"
-                                        : "次の航路　第" + std::to_string(stage_ + 2) + "面　" +
-                                              StageProgress::Info(stage_ + 1).title;
-        Text(labelFont_, next, left, ty + S(4.0f), C(kInk, k), TextAlign::Left, 0.85f);
-        if (!final_ && unlocked_) {
-          const float tx = left + TextW(labelFont_, next, 0.85f) + S(14.0f);
-          const float w = TextW(labelFont_, "解放", 0.85f) + S(24.0f);
-          const float h = LineH(labelFont_, 0.85f) + S(8.0f);
-          RC::DrawBox({tx, ty}, {tx + w, ty + h}, C(kGold, 0.25f * k));
-          RC::DrawBox({tx, ty}, {tx + w, ty + h}, C(kGold, 0.9f * k), kWire);
-          Text(labelFont_, "解放", tx + w * 0.5f, ty + S(4.0f), C(kInk, k), TextAlign::Center, 0.85f);
-        }
-      }
-    } else {
-      Text(nameFont_, "航路 踏破", left, Y(T + 50.0f), C(kInk));
-    }
+    // 左側（面の番号・名前・次の航路）は航路の種類ごとに違うので Route に任せる
+    route_->DrawInfoLeft(*this, T, left);
 
     // 右側：「踏破」（セレクトの「踏破済み」と同じ金。押した瞬間は大きく、縮んで収まる）と今回の得点
     if (t_ >= TStamp()) {
@@ -646,7 +808,7 @@ private:
     }
     Text(labelFont_, "今回の得点", right, Y(T + 70.0f), C(kMuted), TextAlign::Right, 0.85f);
     Text(nameFont_, std::to_string(score_), right, Y(T + 96.0f), C(kInk), TextAlign::Right);
-    if (stage_ >= 0) {
+    if (route_->ShowsBest()) {
       const std::string best = "最高 " + std::to_string(best_);
       Text(labelFont_, best, right - TextW(nameFont_, std::to_string(score_)) - S(18.0f),
            Y(T + 96.0f) + LineH(nameFont_) - LineH(labelFont_, 0.75f) - S(6.0f), C(kMuted, 0.8f), TextAlign::Right,
@@ -673,7 +835,7 @@ private:
   bool active_ = false;
   float t_ = 0.0f;        ///< 開始からの経過時間（秒）
   int stage_ = -1;        ///< クリアした面（0 始まり。ステージ外なら -1）
-  bool final_ = false;    ///< 最終面か
+  std::unique_ptr<Route> route_; ///< 航路の種類（ステージ外 / 通常の面 / 最終面）。Begin で作る
   bool unlocked_ = false; ///< 今回のクリアで次の面が解放されたか
   int score_ = 0;
   int best_ = 0;

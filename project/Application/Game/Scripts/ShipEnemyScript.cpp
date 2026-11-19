@@ -9,9 +9,12 @@
 #include "Common/Log/Log.h"
 #include "Scene.h"
 #include "RenderCommon.h"
+#include "Game/Framework/EntityPool.h"
+#include "Game/Framework/StateMachine.h"
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <random>
 
 #if RC_ENABLE_IMGUI
@@ -59,321 +62,21 @@
 // 何かの拍子に扇の外（+20°）へ出たら、旋回と速力を上げて正面へ戻る（recover）。
 // 数値検証（静止した自機・既定値）では、定常時の最大方位 62〜68°（視点限界 80° 以内）、
 // 斉射可能な時間は 7〜8 割、背後から出現した場合も 2〜5 秒で視界へ戻る。
-
-/// @brief 船の行動段階
-enum class ShipState {
-    Patrol,  ///< プレイヤーを見つけるまで、出現地点のまわりを巡航する
-    Engage,  ///< 横腹を向ける位置へ回り込む
-    Firing,  ///< 斉射中（操船は続ける）
-    Reload,  ///< 再装填中
-};
+//
+// 行動段階（State Pattern）
+// ------------------------
+// 巡航 Patrol → 交戦 Engage → 斉射 Firing → 再装填 Reload → 交戦 Engage → ...
+// 以前は enum ShipState + switch で、斉射の残弾・再装填タイマーが本体のメンバに並んでいた。
+// 状態ごとにクラスへ分け、各状態が「その状態で何をするか」と「次にどの状態へ行くか」を持つ。
+// 操船（円を回る・扇の中で切り返す）はどの状態でも続けるので本体側に残し、
+// 「交戦中か（Patrol 以外か）」だけを状態から読む。
 
 /// @brief 旋回の遅い砲撃艦
 class ShipEnemyScript : public EnemyBaseScript {
 public:
-    // --- 探知 ---
-    float detectDistance = 60.0f; ///< この距離まで近づかれたら交戦に入る
-    bool  requireInView = true;   ///< プレイヤーの視界内にいるときだけ交戦する
-    float viewDot = 0.2f;         ///< 視界判定のしきい値（0.2 で前方およそ150度）
-
-    // --- 操船 ---
-    float cruiseSpeed = 6.0f;        ///< 巡航速度(m/s)
-    float engageSpeed = 4.5f;        ///< 交戦中の速度(m/s)
-    float turnRateDeg = 35.0f;       ///< 旋回速度(度/秒)。小さいほど「船らしい」
-    float preferredDistance = 28.0f; ///< 保ちたい交戦距離(m)。自機を中心にこの半径を回る（旋回半径の 3 倍が下限）
-    float patrolRadius = 18.0f;      ///< 巡航で描く円の半径(m)
-    float frontArcDeg = 50.0f;       ///< 自機の正面から左右この角度までを持ち場にする(度)。超えたら折り返す
-    float recoverTurnMul = 2.5f;     ///< 持ち場の外へ出たときの旋回速度の倍率
-    float recoverSpeedMul = 1.8f;    ///< 持ち場の外へ出たときの速力の倍率（自機が止まっているときだけ）
-
-    // --- 砲撃 ---
-    float broadsideToleranceDeg = 35.0f; ///< 「横腹を向けた」とみなす角度の許容(度)
-    float fireMinDistance = 12.0f;       ///< これより近いと撃たない
-    float fireMaxDistance = 45.0f;       ///< これより遠いと撃たない
-    int   volleyCount = 3;               ///< 1 斉射の弾数
-    float volleyInterval = 0.22f;        ///< 斉射内の発射間隔(秒)
-    float reloadDuration = 3.0f;         ///< 再装填(秒)
-    float shellSpeed = 22.0f;            ///< 砲弾の初速(m/s)
-    /// @brief 砲弾の種類。0=通常(1ダメージ) / 2=重量弾(3ダメージ)
-    /// @warning 1（拡散）は使えない。WaterBullet 側が拡散弾を
-    ///          `PlayerBullet` としてしか扱っておらず、`EnemyBullet` で 1 を指定すると
-    ///          向きが入らないまま速度ゼロで砲口から落ちる（技術的負債 D-13）。
-    ///          誤って設定しても事故らないよう、使う直前に 0 か 2 へ丸めている。
-    int   bulletType = 0;
-    float gunOffset = 2.2f;              ///< 船体中心から砲までの横方向の距離(m)
-    float gunHeight = 1.2f;              ///< 砲の高さ(m)
-    float spreadDeg = 4.0f;              ///< 弾の散り(度)
-    float leadFactor = 0.6f;             ///< 未来位置を読む強さ(0=読まない / 1=完全に読む)
-    float shellShootRadius = 1.2f;       ///< 自機の弾がこの距離まで来たら砲弾を撃ち落とせる(m)
-
-    // --- 見た目 ---
-    float modelYawOffsetDeg = 0.0f; ///< モデルの向き補正(度)。箱の仮モデルでは 0
-    bool  debugDraw = true;         ///< 交戦円・砲の位置などをギズモ描画する
-
-protected:
-    /// @brief 基底の体力に加えて、船のパラメータを JSON へ書き出す
-    /// @return 全パラメータを格納した json
-    nlohmann::json Serialize() override {
-        nlohmann::json j = EnemyBaseScript::Serialize(); // hp / maxHp / deathDuration
-        j["detectDistance"] = detectDistance;
-        j["requireInView"] = requireInView;
-        j["viewDot"] = viewDot;
-        j["cruiseSpeed"] = cruiseSpeed;
-        j["engageSpeed"] = engageSpeed;
-        j["turnRateDeg"] = turnRateDeg;
-        j["preferredDistance"] = preferredDistance;
-        j["patrolRadius"] = patrolRadius;
-        j["frontArcDeg"] = frontArcDeg;
-        j["recoverTurnMul"] = recoverTurnMul;
-        j["recoverSpeedMul"] = recoverSpeedMul;
-        j["broadsideToleranceDeg"] = broadsideToleranceDeg;
-        j["fireMinDistance"] = fireMinDistance;
-        j["fireMaxDistance"] = fireMaxDistance;
-        j["volleyCount"] = volleyCount;
-        j["volleyInterval"] = volleyInterval;
-        j["reloadDuration"] = reloadDuration;
-        j["shellSpeed"] = shellSpeed;
-        j["bulletType"] = bulletType;
-        j["gunOffset"] = gunOffset;
-        j["gunHeight"] = gunHeight;
-        j["spreadDeg"] = spreadDeg;
-        j["leadFactor"] = leadFactor;
-        j["shellShootRadius"] = shellShootRadius;
-        j["modelYawOffsetDeg"] = modelYawOffsetDeg;
-        j["debugDraw"] = debugDraw;
-        return j;
-    }
-
-    /// @brief JSON から基底の体力と船のパラメータを読み込む（含まれる項目だけ上書きする）
-    /// @param j 読み込み元の json
-    void Deserialize(const nlohmann::json& j) override {
-        EnemyBaseScript::Deserialize(j);
-        if (j.contains("detectDistance")) detectDistance = j["detectDistance"].get<float>();
-        if (j.contains("requireInView")) requireInView = j["requireInView"].get<bool>();
-        if (j.contains("viewDot")) viewDot = j["viewDot"].get<float>();
-        if (j.contains("cruiseSpeed")) cruiseSpeed = j["cruiseSpeed"].get<float>();
-        if (j.contains("engageSpeed")) engageSpeed = j["engageSpeed"].get<float>();
-        if (j.contains("turnRateDeg")) turnRateDeg = j["turnRateDeg"].get<float>();
-        if (j.contains("preferredDistance")) preferredDistance = j["preferredDistance"].get<float>();
-        if (j.contains("patrolRadius")) patrolRadius = j["patrolRadius"].get<float>();
-        if (j.contains("frontArcDeg")) frontArcDeg = j["frontArcDeg"].get<float>();
-        if (j.contains("recoverTurnMul")) recoverTurnMul = j["recoverTurnMul"].get<float>();
-        if (j.contains("recoverSpeedMul")) recoverSpeedMul = j["recoverSpeedMul"].get<float>();
-        if (j.contains("broadsideToleranceDeg")) broadsideToleranceDeg = j["broadsideToleranceDeg"].get<float>();
-        if (j.contains("fireMinDistance")) fireMinDistance = j["fireMinDistance"].get<float>();
-        if (j.contains("fireMaxDistance")) fireMaxDistance = j["fireMaxDistance"].get<float>();
-        if (j.contains("volleyCount")) volleyCount = j["volleyCount"].get<int>();
-        if (j.contains("volleyInterval")) volleyInterval = j["volleyInterval"].get<float>();
-        if (j.contains("reloadDuration")) reloadDuration = j["reloadDuration"].get<float>();
-        if (j.contains("shellSpeed")) shellSpeed = j["shellSpeed"].get<float>();
-        if (j.contains("bulletType")) bulletType = j["bulletType"].get<int>();
-        if (j.contains("gunOffset")) gunOffset = j["gunOffset"].get<float>();
-        if (j.contains("gunHeight")) gunHeight = j["gunHeight"].get<float>();
-        if (j.contains("spreadDeg")) spreadDeg = j["spreadDeg"].get<float>();
-        if (j.contains("leadFactor")) leadFactor = j["leadFactor"].get<float>();
-        if (j.contains("shellShootRadius")) shellShootRadius = j["shellShootRadius"].get<float>();
-        if (j.contains("modelYawOffsetDeg")) modelYawOffsetDeg = j["modelYawOffsetDeg"].get<float>();
-        if (j.contains("debugDraw")) debugDraw = j["debugDraw"].get<bool>();
-    }
-
-    /// @brief 船としての既定値（HP・撃破演出時間）を設定し、出現位置・船首方位・巡航の回り方を決める
-    void OnCreate() override {
-        EnemyBaseScript::OnCreate();
-        // 船はサメより硬く、沈むまでにも時間がかかる。
-        // データ側で指定があればそちらを優先する（D-12）。
-        if (!hpFromData) {
-            hp = 40;
-            maxHp = 40;
-        }
-        // 浸水して沈みきるのを見せるぶん長めに取る。
-        // hp と同じく、データ側で指定があればそちらを優先する。
-        if (!deathDurationFromData) deathDuration = 6.0f;
-
-        state_ = ShipState::Patrol;
-        if (auto* tr = GetComponent<TransformComponent>()) {
-            spawnPos_ = tr->position;
-            headingY_ = tr->rotation.y - modelYawOffsetDeg * kDeg2Rad;
-        }
-        // 巡航でどちら回りにするかは出現時に一度だけ決める。
-        // 毎フレーム選び直すと、境目で左右に迷ってその場で首を振る。
-        circleSign_ = (RandomUnit() < 0.5f) ? -1.0f : 1.0f;
-
-        if (Entity* self = GetEntity()) {
-            self->ClearTag("flooding"); // 前回のプレイで保存されていた場合の消し込み
-        }
-    }
-
-    /// @brief 目標の速度推定、状態遷移（巡航・交戦・斉射・再装填）、操船を行う
-    /// @param deltaTime 前フレームからの経過秒数
-    /// @note 書き込むのは XZ 座標と rotation.y のみ。Y と pitch / roll は BuoyancyScript の担当。
-    void OnUpdate(float deltaTime) override {
-        EnemyBaseScript::OnUpdate(deltaTime); // 被弾処理・HP タグ・消滅タイマー
-
-        auto* tr = GetComponent<TransformComponent>();
-        if (!tr) return;
-
-        // 撃沈後は操船も砲撃もしない。沈める処理は BuoyancyScript に任せる
-        // （TakeDamage で flooding タグを立ててある）。
-        if (isDead) return;
-        if (deltaTime <= 0.0f) return;
-
-        Scene* scene = GetScene();
-        if (!scene) return;
-
-        Entity* target = FindTarget(scene);
-        if (!target) return;
-        auto* targetTr = target->GetComponent<TransformComponent>();
-        if (!targetTr) return;
-
-        UpdateTargetVelocity(targetTr->position, deltaTime);
-
-        // --- 目標との位置関係 ---
-        const float dx = targetTr->position.x - tr->position.x;
-        const float dz = targetTr->position.z - tr->position.z;
-        const float dist = std::sqrt(dx * dx + dz * dz);
-        lastDistance_ = dist;
-
-        // --- 自機の正面から見た自分の方位 ---
-        // 視点を振っても持ち場がぶれないよう、カメラの今の向きではなく
-        // 「視点の基準の向き」（RailShooterController が base_yaw_mrad タグで出す）を使う。
-        UpdateFrontYaw(target, targetTr);
-        const float frontX = std::sin(frontYaw_);
-        const float frontZ = std::cos(frontYaw_);
-        const float rightX = frontZ;
-        const float rightZ = -frontX;
-        const float localF = (-dx) * frontX + (-dz) * frontZ; // 自機から見て前方への距離
-        const float localR = (-dx) * rightX + (-dz) * rightZ; // 自機から見て右への距離
-        const float bearing = std::atan2(localR, localF);     // 正面からの方位(rad, 右が正)
-        lastBearing_ = bearing;
-
-        // 持ち場（正面の扇）の外へ出たら recover。境目でばたつかないよう出入りに差をつける
-        const float arc = std::clamp(frontArcDeg, 5.0f, 170.0f) * kDeg2Rad;
-        if (!recovering_ && std::fabs(bearing) > arc + kRecoverEnterMarginDeg * kDeg2Rad) {
-            recovering_ = true;
-        } else if (recovering_ && std::fabs(bearing) < arc) {
-            recovering_ = false;
-        }
-
-        // 交戦時に回る円の半径。旋回半径に比べて小さすぎると円に乗れず暴れるので下限を設ける
-        const float orbitRadius = EngageRadius();
-
-        switch (state_) {
-        case ShipState::Patrol:
-            if (dist <= detectDistance && IsSeenBy(targetTr, dx, dz, dist)) {
-                // 回り込む向きは「今の船首から見て旋回量が少ないほう」を選ぶ。
-                circleSign_ = ChooseCircleSign(tr->position, targetTr->position, orbitRadius);
-                state_ = ShipState::Engage;
-                Log::Print("[ShipEnemyScript] engaging");
-            }
-            break;
-
-        case ShipState::Engage:
-            if (dist > detectDistance * kDisengageMargin) {
-                state_ = ShipState::Patrol; // 振り切られた
-            } else if (!recovering_ && CanFire(dx, dz, dist)) {
-                // 持ち場の外（自機が撃ち返せない位置）からは撃たない
-                shotsLeft_ = (std::max)(volleyCount, 1);
-                shotTimer_ = 0.0f;
-                state_ = ShipState::Firing;
-            }
-            break;
-
-        case ShipState::Firing:
-            // volleyInterval ごとに 1 発ずつ撃ち、撃ち切ったら再装填へ
-            shotTimer_ -= deltaTime;
-            if (shotTimer_ <= 0.0f) {
-                FireShell(scene, tr, targetTr->position);
-                shotTimer_ = (std::max)(volleyInterval, 0.0f);
-                if (--shotsLeft_ <= 0) {
-                    reloadTimer_ = (std::max)(reloadDuration, 0.0f);
-                    state_ = ShipState::Reload;
-                }
-            }
-            break;
-
-        case ShipState::Reload:
-            reloadTimer_ -= deltaTime;
-            if (reloadTimer_ <= 0.0f) state_ = ShipState::Engage;
-            break;
-        }
-
-        // --- 操船（どの状態でも動き続ける。止まる船は的でしかない） ---
-        const bool engaged = (state_ != ShipState::Patrol);
-        const RC::Vector3 center = engaged ? targetTr->position : spawnPos_;
-        const float radius = engaged ? orbitRadius : patrolRadius;
-        float speed = engaged ? engageSpeed : cruiseSpeed;
-        float turnMul = 1.0f;
-
-        RC::Vector3 desired = OrbitDirection(tr->position, center, radius, circleSign_);
-
-        if (engaged) {
-            // 正面の扇の端まで来たら回る向きを反転する（＝扇の中を往復する）。
-            // 「今の回り方で方位がさらに外へ開いていくか」で判定するので、
-            // 扇の外にいる場合も、正面へ戻る向きに自然と揃う。
-            flipCooldown_ -= deltaTime;
-            const float vF = desired.x * frontX + desired.z * frontZ;
-            const float vR = desired.x * rightX + desired.z * rightZ;
-            const float bearingRate = localF * vR - localR * vF; // 方位の増える向き（符号だけ使う）
-            const bool openingOut = (bearing > arc && bearingRate > 0.0f) ||
-                                    (bearing < -arc && bearingRate < 0.0f);
-            if (flipCooldown_ <= 0.0f && openingOut) {
-                circleSign_ = -circleSign_;
-                desired = OrbitDirection(tr->position, center, radius, circleSign_);
-                flipCooldown_ = kFlipCooldown;
-                // 円の上にいるなら外側へ大回りで切り返す（内側へ切ると自機へ突っ込んで射程を割る）。
-                // 円から大きく外れているときは、素直に近いほうへ回す。
-                if (std::fabs(dist - radius) < radius * kForcedTurnBand) {
-                    const float shipRX = std::cos(headingY_); // 船の右舷方向
-                    const float shipRZ = -std::sin(headingY_);
-                    const float side = shipRX * dx + shipRZ * dz; // 正なら自機は右舷側
-                    forcedTurn_ = (side > 0.0f) ? -1 : 1;           // 自機と反対側へ舵を切る
-                } else {
-                    forcedTurn_ = 0;
-                }
-            }
-
-            // 持ち場の外では急いで戻る。レール移動中（自機が動いている）は追わない：
-            // 振り切られた砲艦が脅威でなくなるのは意図どおり。
-            if (recovering_) {
-                turnMul = (std::max)(recoverTurnMul, 1.0f);
-                const float targetSpeed = std::sqrt(targetVel_.x * targetVel_.x + targetVel_.z * targetVel_.z);
-                if (targetSpeed < kTargetStillSpeed) speed *= (std::max)(recoverSpeedMul, 1.0f);
-            }
-        } else {
-            forcedTurn_ = 0;
-        }
-
-        SteerTowards(desired, deltaTime, turnMul);
-
-        // 船首方向にだけ進む（真横へは動けない）
-        const float fx = std::sin(headingY_);
-        const float fz = std::cos(headingY_);
-        tr->position.x += fx * speed * deltaTime;
-        tr->position.z += fz * speed * deltaTime;
-        // Y と pitch / roll には触らない（BuoyancyScript の担当）
-        tr->rotation.y = headingY_ + modelYawOffsetDeg * kDeg2Rad;
-    }
-
-public:
-    /// @brief 基底の被ダメージ処理に加え、撃沈されたら船体を浸水させる
-    /// @param damage 受けるダメージ量
-    void TakeDamage(int damage) override {
-        const bool wasDead = isDead;
-        EnemyBaseScript::TakeDamage(damage);
-        if (!wasDead && isDead) {
-            if (Entity* self = GetEntity()) {
-                // 位置を直接下げるのではなく、BuoyancyScript に実効密度比を
-                // 上げてもらう。波に揺られながら沈むので自然に見えるうえ、
-                // 浮力側と位置を取り合うこともない。
-                self->SetTag("flooding", 1);
-            }
-            Log::Print("[ShipEnemyScript] sinking");
-        }
-    }
-
     /// @brief 船首方向・左右の砲の位置・交戦距離をギズモ描画する（debugDraw が偽なら何もしない）
     void OnDebugRender() override {
-        if (!debugDraw) return;
+        if (!debugDraw_) return;
         auto* tr = GetComponent<TransformComponent>();
         if (!tr) return;
 
@@ -388,13 +91,13 @@ public:
         // 左右の砲の位置
         const float rx = fz, rz = -fx;
         for (float s : { 1.0f, -1.0f }) {
-            RC::DrawWireSphere3D({ tr->position.x + rx * gunOffset * s,
-                                   tr->position.y + gunHeight,
-                                   tr->position.z + rz * gunOffset * s },
+            RC::DrawWireSphere3D({ tr->position.x + rx * gunOffset_ * s,
+                                   tr->position.y + gunHeight_,
+                                   tr->position.z + rz * gunOffset_ * s },
                                  0.35f, col, 8, 8, true);
         }
         // 保とうとしている交戦距離
-        RC::DrawWireSphere3D(tr->position, preferredDistance,
+        RC::DrawWireSphere3D(tr->position, preferredDistance_,
                              { col.x, col.y, col.z, 0.35f }, 24, 3, true);
 
         // 持ち場（自機の正面の扇）の両端。recover 中は赤
@@ -402,7 +105,7 @@ public:
             const RC::Vector4 arcCol = recovering_ ? RC::Vector4{ 1.0f, 0.2f, 0.2f, 0.8f }
                                                    : RC::Vector4{ 0.3f, 0.9f, 1.0f, 0.6f };
             const float len = EngageRadius() * 1.5f;
-            const float arc = std::clamp(frontArcDeg, 5.0f, 170.0f) * kDeg2Rad;
+            const float arc = std::clamp(frontArcDeg_, 5.0f, 170.0f) * kDeg2Rad;
             for (float s : { 1.0f, -1.0f }) {
                 const float a = frontYaw_ + arc * s;
                 RC::DrawLine3D({ lastTargetPos_.x, tr->position.y, lastTargetPos_.z },
@@ -415,71 +118,117 @@ public:
 
 #if RC_ENABLE_IMGUI
     /// @brief インスペクタに状態表示・各パラメータの編集欄・斉射サイクルの目安を表示する
-    void OnImGui() override {
-        EnemyBaseScript::OnImGui();
-        ImGui::Text("State: %s  dist %.1fm", StateName(state_), lastDistance_);
-        ImGui::Text("Heading: %.0f deg   Circle: %s",
-                    headingY_ / kDeg2Rad, circleSign_ > 0.0f ? "CW" : "CCW");
-        if (state_ == ShipState::Firing) ImGui::Text("Shots left: %d", shotsLeft_);
-        if (state_ == ShipState::Reload) ImGui::Text("Reload: %.2fs", reloadTimer_);
-        ImGui::Text("Target vel: (%.1f, %.1f, %.1f)", targetVel_.x, targetVel_.y, targetVel_.z);
-        ImGui::Text("Bearing: %.0f deg  %s  (orbit r %.1fm)", lastBearing_ / kDeg2Rad,
-                    recovering_ ? "RECOVER" : "in arc", EngageRadius());
-
-        ImGui::Separator();
-        ImGui::TextUnformatted("探知");
-        ImGui::DragFloat("Detect Distance", &detectDistance, 0.5f, 1.0f, 300.0f);
-        ImGui::Checkbox("Require In View", &requireInView);
-
-        ImGui::TextUnformatted("操船");
-        ImGui::DragFloat("Cruise Speed", &cruiseSpeed, 0.1f, 0.0f, 40.0f);
-        ImGui::DragFloat("Engage Speed", &engageSpeed, 0.1f, 0.0f, 40.0f);
-        ImGui::DragFloat("Turn Rate (deg/s)", &turnRateDeg, 1.0f, 1.0f, 360.0f);
-        ImGui::DragFloat("Preferred Distance", &preferredDistance, 0.5f, 1.0f, 200.0f);
-        ImGui::DragFloat("Patrol Radius", &patrolRadius, 0.5f, 1.0f, 200.0f);
-        ImGui::DragFloat("Front Arc (deg)", &frontArcDeg, 1.0f, 5.0f, 170.0f);
-        ImGui::DragFloat("Recover Turn Mul", &recoverTurnMul, 0.05f, 1.0f, 6.0f);
-        ImGui::DragFloat("Recover Speed Mul", &recoverSpeedMul, 0.05f, 1.0f, 4.0f);
-
-        ImGui::TextUnformatted("砲撃");
-        ImGui::DragFloat("Broadside Tolerance (deg)", &broadsideToleranceDeg, 1.0f, 1.0f, 89.0f);
-        ImGui::DragFloat("Fire Min Distance", &fireMinDistance, 0.5f, 0.0f, 200.0f);
-        ImGui::DragFloat("Fire Max Distance", &fireMaxDistance, 0.5f, 1.0f, 300.0f);
-        ImGui::DragInt("Volley Count", &volleyCount, 1, 1, 12);
-        ImGui::DragFloat("Volley Interval", &volleyInterval, 0.01f, 0.0f, 3.0f);
-        ImGui::DragFloat("Reload Duration", &reloadDuration, 0.1f, 0.0f, 30.0f);
-        ImGui::DragFloat("Shell Speed", &shellSpeed, 0.5f, 1.0f, 200.0f);
-        // 拡散(1)は EnemyBullet では機能しないので選ばせない（D-13）
-        {
-            static const char* kShellLabels[] = { "normal (1 dmg)", "heavy (3 dmg)" };
-            int sel = (SanitizeBulletType(bulletType) == 2) ? 1 : 0;
-            if (ImGui::Combo("Shell Type", &sel, kShellLabels, IM_ARRAYSIZE(kShellLabels))) {
-                bulletType = (sel == 1) ? 2 : 0;
-            }
-            ImGui::SameLine();
-            ImGui::Text("(g=%.1f)", ShellGravityFor(bulletType));
-        }
-        ImGui::DragFloat("Gun Offset", &gunOffset, 0.1f, 0.0f, 20.0f);
-        ImGui::DragFloat("Gun Height", &gunHeight, 0.1f, -5.0f, 20.0f);
-        ImGui::DragFloat("Spread (deg)", &spreadDeg, 0.1f, 0.0f, 45.0f);
-        ImGui::SliderFloat("Lead Factor", &leadFactor, 0.0f, 1.5f);
-        ImGui::DragFloat("Shell Shoot Radius", &shellShootRadius, 0.05f, 0.0f, 5.0f);
-        ImGui::Checkbox("Debug Draw", &debugDraw);
-
-        // 実際にどれくらいの手数になるかの目安。
-        // プレイヤーには 1 秒の無敵時間があるので、斉射の 2 発目以降は
-        // ほぼ当たっても入らない。volleyCount は圧のかけ方であって
-        // ダメージ量ではない、という点に注意。
-        const float cycle = static_cast<float>((std::max)(volleyCount, 1)) * volleyInterval
-                          + (std::max)(reloadDuration, 0.0f);
-        if (cycle > 0.0f) {
-            ImGui::Separator();
-            ImGui::Text("斉射サイクル %.2fs（プレイヤー無敵 1.0s のため実効は 1 サイクル 1 ダメージ）", cycle);
-        }
-    }
+    /// @details 状態クラスの完全型が必要なため、本体はクラス定義の外に書く。
+    void OnImGui() override;
 #endif
 
+protected:
+    /// @brief 基底の体力に加えて、船のパラメータを JSON へ書き出す
+    /// @return 全パラメータを格納した json
+    nlohmann::json Serialize() override {
+        nlohmann::json j = EnemyBaseScript::Serialize(); // hp / maxHp / deathDuration
+        j["detectDistance"] = detectDistance_;
+        j["requireInView"] = requireInView_;
+        j["viewDot"] = viewDot_;
+        j["cruiseSpeed"] = cruiseSpeed_;
+        j["engageSpeed"] = engageSpeed_;
+        j["turnRateDeg"] = turnRateDeg_;
+        j["preferredDistance"] = preferredDistance_;
+        j["patrolRadius"] = patrolRadius_;
+        j["frontArcDeg"] = frontArcDeg_;
+        j["recoverTurnMul"] = recoverTurnMul_;
+        j["recoverSpeedMul"] = recoverSpeedMul_;
+        j["broadsideToleranceDeg"] = broadsideToleranceDeg_;
+        j["fireMinDistance"] = fireMinDistance_;
+        j["fireMaxDistance"] = fireMaxDistance_;
+        j["volleyCount"] = volleyCount_;
+        j["volleyInterval"] = volleyInterval_;
+        j["reloadDuration"] = reloadDuration_;
+        j["shellSpeed"] = shellSpeed_;
+        j["bulletType"] = bulletType_;
+        j["gunOffset"] = gunOffset_;
+        j["gunHeight"] = gunHeight_;
+        j["spreadDeg"] = spreadDeg_;
+        j["leadFactor"] = leadFactor_;
+        j["shellShootRadius"] = shellShootRadius_;
+        j["modelYawOffsetDeg"] = modelYawOffsetDeg_;
+        j["debugDraw"] = debugDraw_;
+        return j;
+    }
+
+    /// @brief JSON から基底の体力と船のパラメータを読み込む（含まれる項目だけ上書きする）
+    /// @param j 読み込み元の json
+    void Deserialize(const nlohmann::json& j) override {
+        EnemyBaseScript::Deserialize(j);
+        if (j.contains("detectDistance")) detectDistance_ = j["detectDistance"].get<float>();
+        if (j.contains("requireInView")) requireInView_ = j["requireInView"].get<bool>();
+        if (j.contains("viewDot")) viewDot_ = j["viewDot"].get<float>();
+        if (j.contains("cruiseSpeed")) cruiseSpeed_ = j["cruiseSpeed"].get<float>();
+        if (j.contains("engageSpeed")) engageSpeed_ = j["engageSpeed"].get<float>();
+        if (j.contains("turnRateDeg")) turnRateDeg_ = j["turnRateDeg"].get<float>();
+        if (j.contains("preferredDistance")) preferredDistance_ = j["preferredDistance"].get<float>();
+        if (j.contains("patrolRadius")) patrolRadius_ = j["patrolRadius"].get<float>();
+        if (j.contains("frontArcDeg")) frontArcDeg_ = j["frontArcDeg"].get<float>();
+        if (j.contains("recoverTurnMul")) recoverTurnMul_ = j["recoverTurnMul"].get<float>();
+        if (j.contains("recoverSpeedMul")) recoverSpeedMul_ = j["recoverSpeedMul"].get<float>();
+        if (j.contains("broadsideToleranceDeg")) broadsideToleranceDeg_ = j["broadsideToleranceDeg"].get<float>();
+        if (j.contains("fireMinDistance")) fireMinDistance_ = j["fireMinDistance"].get<float>();
+        if (j.contains("fireMaxDistance")) fireMaxDistance_ = j["fireMaxDistance"].get<float>();
+        if (j.contains("volleyCount")) volleyCount_ = j["volleyCount"].get<int>();
+        if (j.contains("volleyInterval")) volleyInterval_ = j["volleyInterval"].get<float>();
+        if (j.contains("reloadDuration")) reloadDuration_ = j["reloadDuration"].get<float>();
+        if (j.contains("shellSpeed")) shellSpeed_ = j["shellSpeed"].get<float>();
+        if (j.contains("bulletType")) bulletType_ = j["bulletType"].get<int>();
+        if (j.contains("gunOffset")) gunOffset_ = j["gunOffset"].get<float>();
+        if (j.contains("gunHeight")) gunHeight_ = j["gunHeight"].get<float>();
+        if (j.contains("spreadDeg")) spreadDeg_ = j["spreadDeg"].get<float>();
+        if (j.contains("leadFactor")) leadFactor_ = j["leadFactor"].get<float>();
+        if (j.contains("shellShootRadius")) shellShootRadius_ = j["shellShootRadius"].get<float>();
+        if (j.contains("modelYawOffsetDeg")) modelYawOffsetDeg_ = j["modelYawOffsetDeg"].get<float>();
+        if (j.contains("debugDraw")) debugDraw_ = j["debugDraw"].get<bool>();
+    }
+
+    /// @brief 船としての既定値（HP・撃破演出時間）を設定し、出現位置・船首方位・巡航の回り方を決める
+    /// @details 状態クラスの完全型が必要なため、本体はクラス定義の外に書く。
+    void OnCreate() override;
+
+    /// @brief 目標の速度推定、状態の更新（巡航・交戦・斉射・再装填）、操船を行う
+    /// @param deltaTime 前フレームからの経過秒数
+    /// @note 書き込むのは XZ 座標と rotation.y のみ。Y と pitch / roll は BuoyancyScript の担当。
+    ///       撃沈後は呼ばれない（基底の Template Method が OnUpdateDefeated 側へ振り分ける）。
+    ///       沈める処理は BuoyancyScript に任せる（OnEnemyDefeated で flooding タグを立てる）。
+    void OnUpdateAlive(float deltaTime) override;
+
+    /// @brief 撃沈された瞬間に、船体を浸水させる
+    /// @details 位置を直接下げるのではなく、BuoyancyScript に実効密度比を
+    ///          上げてもらう。波に揺られながら沈むので自然に見えるうえ、
+    ///          浮力側と位置を取り合うこともない。
+    void OnEnemyDefeated() override {
+        if (Entity* self = GetEntity()) {
+            self->SetTag("flooding", 1);
+        }
+        Log::Print("[ShipEnemyScript] sinking");
+    }
+
 private:
+    // --- 状態クラス（private な入れ子クラスなので friend 無しで本体の private メンバを使える） ---
+    class PatrolState; ///< プレイヤーを見つけるまで、出現地点のまわりを巡航する
+    class EngageState; ///< 横腹を向ける位置へ回り込む
+    class FiringState; ///< 斉射中（操船は続ける）
+    class ReloadState; ///< 再装填中
+
+    /// @brief 1 フレーム分の「目標との位置関係」。本体が計算し、状態クラスが読む
+    /// @details 不変条件の無い受け渡し用のデータなので struct のままにしている。
+    struct Sense {
+        Scene* scene = nullptr;                       ///< 砲弾を出すシーン
+        TransformComponent* tr = nullptr;             ///< 自身の Transform
+        const TransformComponent* targetTr = nullptr; ///< 目標（自機）の Transform
+        float dx = 0.0f;                              ///< 船から目標への X 方向の差
+        float dz = 0.0f;                              ///< 船から目標への Z 方向の差
+        float dist = 0.0f;                            ///< 船と目標の XZ 平面上の距離
+        float orbitRadius = 0.0f;                     ///< 交戦時に回る円の半径
+    };
+
     static constexpr float kPi = 3.14159265358979f;
     static constexpr float kDeg2Rad = kPi / 180.0f;
     /// @brief 交戦をやめる距離の倍率（探知距離ちょうどで切ると境目でばたつく）
@@ -496,19 +245,6 @@ private:
     static constexpr float kMinOrbitTurnRadii = 3.0f;
     /// @brief 自機が止まっているとみなす速さ(m/s)。これ未満のときだけ recover で増速する
     static constexpr float kTargetStillSpeed = 1.0f;
-
-    /// @brief 状態の表示名を返す（ImGui 表示用）
-    /// @param s 状態
-    /// @return 状態名の文字列
-    static const char* StateName(ShipState s) {
-        switch (s) {
-        case ShipState::Patrol: return "Patrol";
-        case ShipState::Engage: return "Engage";
-        case ShipState::Firing: return "Firing";
-        case ShipState::Reload: return "Reload";
-        }
-        return "?";
-    }
 
     /// @brief 0..1 の一様乱数を返す
     /// @return 0 以上 1 未満の乱数
@@ -568,13 +304,13 @@ private:
     /// @param dist 船と目標の XZ 平面上の距離
     /// @return 視界内なら true（requireInView が偽なら常に true）
     bool IsSeenBy(const TransformComponent* targetTr, float dx, float dz, float dist) const {
-        if (!requireInView) return true;
+        if (!requireInView_) return true;
         if (dist < 0.01f) return true;
         const float cy = std::cos(targetTr->rotation.y);
         const float sy = std::sin(targetTr->rotation.y);
         // 目標から見た自分の方向（-dx, -dz）と目標の前方との内積
         const float dot = sy * (-dx / dist) + cy * (-dz / dist);
-        return dot > viewDot;
+        return dot > viewDot_;
     }
 
     /// @brief 「自機の正面」の向きを更新する
@@ -596,9 +332,9 @@ private:
     /// @brief 交戦時に自機の周りを回る半径（preferredDistance。ただし旋回半径の kMinOrbitTurnRadii 倍が下限）
     /// @return 半径(m)
     float EngageRadius() const {
-        const float omega = (std::max)(turnRateDeg, 1.0f) * kDeg2Rad;
-        const float turnRadius = (std::max)(engageSpeed, 0.0f) / omega;
-        return (std::max)(preferredDistance, turnRadius * kMinOrbitTurnRadii);
+        const float omega = (std::max)(turnRateDeg_, 1.0f) * kDeg2Rad;
+        const float turnRadius = (std::max)(engageSpeed_, 0.0f) / omega;
+        return (std::max)(preferredDistance_, turnRadius * kMinOrbitTurnRadii);
     }
 
     /// @brief 回り込む向きを「旋回量が少ないほう」で決める
@@ -657,7 +393,7 @@ private:
     /// @param turnMul 旋回速度の倍率（recover 中に上げる）
     void SteerTowards(const RC::Vector3& desired, float deltaTime, float turnMul) {
         const float target = std::atan2(desired.x, desired.z);
-        const float maxStep = (std::max)(turnRateDeg, 0.0f) * turnMul * kDeg2Rad * deltaTime;
+        const float maxStep = (std::max)(turnRateDeg_, 0.0f) * turnMul * kDeg2Rad * deltaTime;
         float d = WrapPi(target - headingY_);
         if (forcedTurn_ != 0) {
             if (std::fabs(d) < kForcedTurnReleaseDeg * kDeg2Rad) {
@@ -679,7 +415,7 @@ private:
     /// @param dist 船と目標の XZ 平面上の距離
     /// @return 撃てるなら true
     bool CanFire(float dx, float dz, float dist) const {
-        if (dist < fireMinDistance || dist > fireMaxDistance) return false;
+        if (dist < fireMinDistance_ || dist > fireMaxDistance_) return false;
         if (dist < 1e-3f) return false;
 
         const float fx = std::sin(headingY_);
@@ -687,7 +423,7 @@ private:
         // 船首と目標方向の内積。0 に近いほど真横。
         const float align = fx * (dx / dist) + fz * (dz / dist);
         // 許容 35 度なら、船首から見て 55〜125 度の範囲を「横腹」とみなす
-        const float limit = std::cos((90.0f - std::clamp(broadsideToleranceDeg, 0.0f, 89.0f)) * kDeg2Rad);
+        const float limit = std::cos((90.0f - std::clamp(broadsideToleranceDeg_, 0.0f, 89.0f)) * kDeg2Rad);
         return std::fabs(align) <= limit;
     }
 
@@ -707,9 +443,9 @@ private:
             (rx * (targetPos.x - tr->position.x) + rz * (targetPos.z - tr->position.z)) >= 0.0f
                 ? 1.0f : -1.0f;
 
-        const RC::Vector3 muzzle = { tr->position.x + rx * gunOffset * side,
-                                     tr->position.y + gunHeight,
-                                     tr->position.z + rz * gunOffset * side };
+        const RC::Vector3 muzzle = { tr->position.x + rx * gunOffset_ * side,
+                                     tr->position.y + gunHeight_,
+                                     tr->position.z + rz * gunOffset_ * side };
 
         // 砲口から狙点への単位方向を求める
         const RC::Vector3 aim = SolveAimPoint(muzzle, targetPos);
@@ -722,8 +458,8 @@ private:
         dirX /= len; dirY /= len; dirZ /= len;
 
         // 散り。Y 軸まわりに少し回すだけで十分ばらける
-        if (spreadDeg > 0.0f) {
-            const float a = (RandomUnit() * 2.0f - 1.0f) * spreadDeg * kDeg2Rad;
+        if (spreadDeg_ > 0.0f) {
+            const float a = (RandomUnit() * 2.0f - 1.0f) * spreadDeg_ * kDeg2Rad;
             const float c = std::cos(a), s = std::sin(a);
             const float nx = dirX * c + dirZ * s;
             const float nz = -dirX * s + dirZ * c;
@@ -744,8 +480,8 @@ private:
     /// @param targetPos 目標の現在位置
     /// @return 狙うべき点
     RC::Vector3 SolveAimPoint(const RC::Vector3& muzzle, const RC::Vector3& targetPos) const {
-        const float speed = (std::max)(shellSpeed, 1.0f);
-        const float shellGravity = ShellGravityFor(bulletType);
+        const float speed = (std::max)(shellSpeed_, 1.0f);
+        const float shellGravity = ShellGravityFor(bulletType_);
         RC::Vector3 aim = targetPos;
 
         for (int i = 0; i < kAimIterations; ++i) {
@@ -754,31 +490,23 @@ private:
             const float dz = aim.z - muzzle.z;
             const float flight = std::sqrt(dx * dx + dy * dy + dz * dz) / speed;
 
-            aim.x = targetPos.x + targetVel_.x * flight * leadFactor;
-            aim.y = targetPos.y + targetVel_.y * flight * leadFactor
+            aim.x = targetPos.x + targetVel_.x * flight * leadFactor_;
+            aim.y = targetPos.y + targetVel_.y * flight * leadFactor_
                   + 0.5f * shellGravity * flight * flight;
-            aim.z = targetPos.z + targetVel_.z * flight * leadFactor;
+            aim.z = targetPos.z + targetVel_.z * flight * leadFactor_;
         }
         return aim;
     }
 
-    /// @brief 砲弾エンティティを出す（既存の EnemyBullet プールを流用）
+    /// @brief 砲弾エンティティを出す（EnemyBullet の Object Pool から取り出す）
     /// @param scene 砲弾を生成するシーン
     /// @param pos 発射位置（砲口）
     /// @param dir 発射方向（単位ベクトル）
     void SpawnShell(Scene* scene, const RC::Vector3& pos, const RC::Vector3& dir) {
-        // 非アクティブな EnemyBullet があれば再利用し、無ければ新規に作る
-        std::shared_ptr<Entity> shell = nullptr;
-        for (auto& e : scene->GetEntities()) {
-            if (e && e->GetName() == "EnemyBullet" && !e->IsActive() && !e->IsPendingDestroy()) {
-                shell = e;
-                shell->SetActive(true);
-                shell->SetTag("reused", 1);
-                break;
-            }
-        }
-        const bool isNew = (shell == nullptr);
-        if (isNew) shell = scene->CreateEntity("EnemyBullet");
+        // 非アクティブな EnemyBullet があれば再利用し、無ければ新規に作る（規則は EntityPool に集約）
+        EntityPool::Lease lease = shellPool_.Acquire(*scene);
+        std::shared_ptr<Entity> shell = lease.entity;
+        const bool isNew = lease.isNew;
         if (!shell) return;
 
         auto* btr = shell->GetComponent<TransformComponent>();
@@ -822,11 +550,11 @@ private:
         shell->SetTag("dir_x", static_cast<int>(dir.x * 1000.0f));
         shell->SetTag("dir_y", static_cast<int>(dir.y * 1000.0f));
         shell->SetTag("dir_z", static_cast<int>(dir.z * 1000.0f));
-        shell->SetTag("bullet_speed", static_cast<int>(shellSpeed * 10.0f));
-        shell->SetTag("bullet_type", SanitizeBulletType(bulletType));
+        shell->SetTag("bullet_speed", static_cast<int>(shellSpeed_ * 10.0f));
+        shell->SetTag("bullet_type", SanitizeBulletType(bulletType_));
         // 砲弾は自機の弾で撃ち落とせる（判定は WaterBullet 側）。半径は 100 倍の整数
         shell->SetTag("shootable", 1);
-        shell->SetTag("shoot_radius", static_cast<int>(shellShootRadius * 100.0f));
+        shell->SetTag("shoot_radius", static_cast<int>(shellShootRadius_ * 100.0f));
 
         if (isNew) {
             scene->InitDynamicEntityRuntime(*shell);
@@ -863,7 +591,48 @@ private:
     /// @brief 砲弾の色（鉄）
     static constexpr RC::Vector4 kShellColor = { 0.25f, 0.25f, 0.28f, 1.0f };
 
-    ShipState state_ = ShipState::Patrol;
+    // --- 探知 ---
+    float detectDistance_ = 60.0f; ///< この距離まで近づかれたら交戦に入る
+    bool  requireInView_ = true;   ///< プレイヤーの視界内にいるときだけ交戦する
+    float viewDot_ = 0.2f;         ///< 視界判定のしきい値（0.2 で前方およそ150度）
+
+    // --- 操船 ---
+    float cruiseSpeed_ = 6.0f;        ///< 巡航速度(m/s)
+    float engageSpeed_ = 4.5f;        ///< 交戦中の速度(m/s)
+    float turnRateDeg_ = 35.0f;       ///< 旋回速度(度/秒)。小さいほど「船らしい」
+    float preferredDistance_ = 28.0f; ///< 保ちたい交戦距離(m)。自機を中心にこの半径を回る（旋回半径の 3 倍が下限）
+    float patrolRadius_ = 18.0f;      ///< 巡航で描く円の半径(m)
+    float frontArcDeg_ = 50.0f;       ///< 自機の正面から左右この角度までを持ち場にする(度)。超えたら折り返す
+    float recoverTurnMul_ = 2.5f;     ///< 持ち場の外へ出たときの旋回速度の倍率
+    float recoverSpeedMul_ = 1.8f;    ///< 持ち場の外へ出たときの速力の倍率（自機が止まっているときだけ）
+
+    // --- 砲撃 ---
+    float broadsideToleranceDeg_ = 35.0f; ///< 「横腹を向けた」とみなす角度の許容(度)
+    float fireMinDistance_ = 12.0f;       ///< これより近いと撃たない
+    float fireMaxDistance_ = 45.0f;       ///< これより遠いと撃たない
+    int   volleyCount_ = 3;               ///< 1 斉射の弾数
+    float volleyInterval_ = 0.22f;        ///< 斉射内の発射間隔(秒)
+    float reloadDuration_ = 3.0f;         ///< 再装填(秒)
+    float shellSpeed_ = 22.0f;            ///< 砲弾の初速(m/s)
+    /// @brief 砲弾の種類。0=通常(1ダメージ) / 2=重量弾(3ダメージ)
+    /// @warning 1（拡散）は使えない。WaterBullet 側が拡散弾を
+    ///          `PlayerBullet` としてしか扱っておらず、`EnemyBullet` で 1 を指定すると
+    ///          向きが入らないまま速度ゼロで砲口から落ちる（技術的負債 D-13）。
+    ///          誤って設定しても事故らないよう、使う直前に 0 か 2 へ丸めている。
+    int   bulletType_ = 0;
+    float gunOffset_ = 2.2f;              ///< 船体中心から砲までの横方向の距離(m)
+    float gunHeight_ = 1.2f;              ///< 砲の高さ(m)
+    float spreadDeg_ = 4.0f;              ///< 弾の散り(度)
+    float leadFactor_ = 0.6f;             ///< 未来位置を読む強さ(0=読まない / 1=完全に読む)
+    float shellShootRadius_ = 1.2f;       ///< 自機の弾がこの距離まで来たら砲弾を撃ち落とせる(m)
+
+    // --- 見た目 ---
+    float modelYawOffsetDeg_ = 0.0f; ///< モデルの向き補正(度)。箱の仮モデルでは 0
+    bool  debugDraw_ = true;         ///< 交戦円・砲の位置などをギズモ描画する
+
+    // --- 実行時の状態 ---
+    StateMachine<ShipEnemyScript> fsm_; ///< 行動段階のステートマシン
+    Sense sense_;                       ///< このフレームの位置関係（状態クラスが読む）
     float headingY_ = 0.0f;       ///< 船首方位(rad)。モデル補正を含まない素の向き
     float circleSign_ = 1.0f;     ///< 回り込む向き(+1 / -1)
     RC::Vector3 spawnPos_{ 0.0f, 0.0f, 0.0f }; ///< 出現地点（巡航の中心）
@@ -876,14 +645,367 @@ private:
     float flipCooldown_ = 0.0f;   ///< 次に回る向きを反転できるまでの残り秒数
     int   forcedTurn_ = 0;        ///< 切り返し中に固定する舵の向き（+1=右 / -1=左 / 0=固定しない）
 
-    int   shotsLeft_ = 0;
-    float shotTimer_ = 0.0f;
-    float reloadTimer_ = 0.0f;
+    std::weak_ptr<Entity> cachedTarget_;            ///< 目標（カメラ）のキャッシュ
+    RC::Vector3 lastTargetPos_{ 0.0f, 0.0f, 0.0f }; ///< 前フレームの目標位置
+    RC::Vector3 targetVel_{ 0.0f, 0.0f, 0.0f };     ///< 推定した目標の速度
+    bool hasLastTarget_ = false;                    ///< lastTargetPos_ が有効か
 
-    std::weak_ptr<Entity> cachedTarget_;
-    RC::Vector3 lastTargetPos_{ 0.0f, 0.0f, 0.0f };
-    RC::Vector3 targetVel_{ 0.0f, 0.0f, 0.0f };
-    bool hasLastTarget_ = false;
+    /// @brief 砲弾（EnemyBullet）の Object Pool
+    /// @details 斉射のたびに砲弾を作っては捨てると生成・破棄のコストが積み重なるため、
+    ///          使い終わって非アクティブになった弾を再利用する。以前はここと EnemyAI に
+    ///          同じ「非アクティブな弾を探す」処理が書かれていたので EntityPool に集約した。
+    EntityPool shellPool_{"EnemyBullet"};
 };
+
+// =====================================================================
+// 状態クラス
+// =====================================================================
+
+/// @brief プレイヤーを見つけるまで、出現地点のまわりを巡航する。探知したら交戦へ
+class ShipEnemyScript::PatrolState final : public IState<ShipEnemyScript> {
+public:
+    /// @brief 探知判定と交戦への遷移
+    /// @param owner 船本体
+    /// @param machine ステートマシン
+    /// @param deltaTime 前フレームからの経過秒数
+    void OnUpdate(ShipEnemyScript& owner, StateMachine<ShipEnemyScript>& machine, float deltaTime) override;
+
+    /// @brief 状態名
+    /// @return "Patrol"
+    const char* Name() const override { return "Patrol"; }
+};
+
+/// @brief 横腹を向ける位置へ回り込む。撃てる位置に来たら斉射へ、振り切られたら巡航へ
+class ShipEnemyScript::EngageState final : public IState<ShipEnemyScript> {
+public:
+    /// @brief 射撃可否・離脱の判定と遷移
+    /// @param owner 船本体
+    /// @param machine ステートマシン
+    /// @param deltaTime 前フレームからの経過秒数
+    void OnUpdate(ShipEnemyScript& owner, StateMachine<ShipEnemyScript>& machine, float deltaTime) override;
+
+    /// @brief 状態名
+    /// @return "Engage"
+    const char* Name() const override { return "Engage"; }
+};
+
+/// @brief 斉射中（操船は続ける）。volleyInterval ごとに 1 発ずつ撃ち、撃ち切ったら再装填へ
+class ShipEnemyScript::FiringState final : public IState<ShipEnemyScript> {
+public:
+    /// @brief 斉射の弾数と発射タイマーを用意する
+    /// @param owner 船本体
+    /// @param machine ステートマシン
+    void OnEnter(ShipEnemyScript& owner, StateMachine<ShipEnemyScript>& machine) override {
+        (void)machine;
+        shotsLeft_ = (std::max)(owner.volleyCount_, 1);
+        shotTimer_ = 0.0f;
+    }
+
+    /// @brief 発射と、再装填への遷移
+    /// @param owner 船本体
+    /// @param machine ステートマシン
+    /// @param deltaTime 前フレームからの経過秒数
+    void OnUpdate(ShipEnemyScript& owner, StateMachine<ShipEnemyScript>& machine, float deltaTime) override;
+
+    /// @brief 状態名
+    /// @return "Firing"
+    const char* Name() const override { return "Firing"; }
+
+    /// @brief この斉射の残り弾数（ImGui 表示用）
+    /// @return 残り弾数
+    int ShotsLeft() const { return shotsLeft_; }
+
+private:
+    int   shotsLeft_ = 0;    ///< この斉射の残り弾数
+    float shotTimer_ = 0.0f; ///< 次の 1 発までの残り秒数
+};
+
+/// @brief 再装填中。終わったら交戦へ戻る
+class ShipEnemyScript::ReloadState final : public IState<ShipEnemyScript> {
+public:
+    /// @brief 再装填タイマーを始める
+    /// @param owner 船本体
+    /// @param machine ステートマシン
+    void OnEnter(ShipEnemyScript& owner, StateMachine<ShipEnemyScript>& machine) override {
+        (void)machine;
+        reloadTimer_ = (std::max)(owner.reloadDuration_, 0.0f);
+    }
+
+    /// @brief 再装填の進行と、交戦への遷移
+    /// @param owner 船本体
+    /// @param machine ステートマシン
+    /// @param deltaTime 前フレームからの経過秒数
+    void OnUpdate(ShipEnemyScript& owner, StateMachine<ShipEnemyScript>& machine, float deltaTime) override;
+
+    /// @brief 状態名
+    /// @return "Reload"
+    const char* Name() const override { return "Reload"; }
+
+    /// @brief 再装填の残り秒数（ImGui 表示用）
+    /// @return 残り秒数
+    float ReloadTimer() const { return reloadTimer_; }
+
+private:
+    float reloadTimer_ = 0.0f; ///< 再装填の残り秒数
+};
+
+// ---------------------------------------------------------------------
+// 状態クラスの処理（すべての状態クラスが完全型になったあとで定義する）
+// ---------------------------------------------------------------------
+
+void ShipEnemyScript::PatrolState::OnUpdate(ShipEnemyScript& owner, StateMachine<ShipEnemyScript>& machine,
+                                            float deltaTime) {
+    (void)deltaTime;
+    const Sense& s = owner.sense_;
+    if (s.dist <= owner.detectDistance_ && owner.IsSeenBy(s.targetTr, s.dx, s.dz, s.dist)) {
+        // 回り込む向きは「今の船首から見て旋回量が少ないほう」を選ぶ。
+        owner.circleSign_ = owner.ChooseCircleSign(s.tr->position, s.targetTr->position, s.orbitRadius);
+        machine.ChangeState<EngageState>();
+        Log::Print("[ShipEnemyScript] engaging");
+    }
+}
+
+void ShipEnemyScript::EngageState::OnUpdate(ShipEnemyScript& owner, StateMachine<ShipEnemyScript>& machine,
+                                            float deltaTime) {
+    (void)deltaTime;
+    const Sense& s = owner.sense_;
+    if (s.dist > owner.detectDistance_ * kDisengageMargin) {
+        machine.ChangeState<PatrolState>(); // 振り切られた
+    } else if (!owner.recovering_ && owner.CanFire(s.dx, s.dz, s.dist)) {
+        // 持ち場の外（自機が撃ち返せない位置）からは撃たない
+        machine.ChangeState<FiringState>(); // 弾数とタイマーは FiringState::OnEnter で用意する
+    }
+}
+
+void ShipEnemyScript::FiringState::OnUpdate(ShipEnemyScript& owner, StateMachine<ShipEnemyScript>& machine,
+                                            float deltaTime) {
+    const Sense& s = owner.sense_;
+    // volleyInterval ごとに 1 発ずつ撃ち、撃ち切ったら再装填へ
+    shotTimer_ -= deltaTime;
+    if (shotTimer_ <= 0.0f) {
+        owner.FireShell(s.scene, s.tr, s.targetTr->position);
+        shotTimer_ = (std::max)(owner.volleyInterval_, 0.0f);
+        if (--shotsLeft_ <= 0) {
+            machine.ChangeState<ReloadState>(); // 再装填の長さは ReloadState::OnEnter で決める
+        }
+    }
+}
+
+void ShipEnemyScript::ReloadState::OnUpdate(ShipEnemyScript& owner, StateMachine<ShipEnemyScript>& machine,
+                                            float deltaTime) {
+    (void)owner;
+    reloadTimer_ -= deltaTime;
+    if (reloadTimer_ <= 0.0f) machine.ChangeState<EngageState>();
+}
+
+// ---------------------------------------------------------------------
+// 本体の処理のうち、状態クラスの完全型が必要なもの
+// ---------------------------------------------------------------------
+
+void ShipEnemyScript::OnCreate() {
+    EnemyBaseScript::OnCreate();
+    // 船はサメより硬く、沈むまでにも時間がかかる。
+    // データ側で指定があればそちらを優先する（D-12）。
+    SetDefaultHp(40);
+    // 浸水して沈みきるのを見せるぶん長めに取る。
+    // hp と同じく、データ側で指定があればそちらを優先する。
+    SetDefaultDeathDuration(6.0f);
+
+    fsm_.ChangeState<PatrolState>();
+    fsm_.ApplyPending(*this);
+    if (auto* tr = GetComponent<TransformComponent>()) {
+        spawnPos_ = tr->position;
+        headingY_ = tr->rotation.y - modelYawOffsetDeg_ * kDeg2Rad;
+    }
+    // 巡航でどちら回りにするかは出現時に一度だけ決める。
+    // 毎フレーム選び直すと、境目で左右に迷ってその場で首を振る。
+    circleSign_ = (RandomUnit() < 0.5f) ? -1.0f : 1.0f;
+
+    if (Entity* self = GetEntity()) {
+        self->ClearTag("flooding"); // 前回のプレイで保存されていた場合の消し込み
+    }
+}
+
+void ShipEnemyScript::OnUpdateAlive(float deltaTime) {
+    auto* tr = GetComponent<TransformComponent>();
+    if (!tr) return;
+    if (deltaTime <= 0.0f) return;
+
+    Scene* scene = GetScene();
+    if (!scene) return;
+
+    Entity* target = FindTarget(scene);
+    if (!target) return;
+    auto* targetTr = target->GetComponent<TransformComponent>();
+    if (!targetTr) return;
+
+    UpdateTargetVelocity(targetTr->position, deltaTime);
+
+    // --- 目標との位置関係 ---
+    const float dx = targetTr->position.x - tr->position.x;
+    const float dz = targetTr->position.z - tr->position.z;
+    const float dist = std::sqrt(dx * dx + dz * dz);
+    lastDistance_ = dist;
+
+    // --- 自機の正面から見た自分の方位 ---
+    // 視点を振っても持ち場がぶれないよう、カメラの今の向きではなく
+    // 「視点の基準の向き」（RailShooterController が base_yaw_mrad タグで出す）を使う。
+    UpdateFrontYaw(target, targetTr);
+    const float frontX = std::sin(frontYaw_);
+    const float frontZ = std::cos(frontYaw_);
+    const float rightX = frontZ;
+    const float rightZ = -frontX;
+    const float localF = (-dx) * frontX + (-dz) * frontZ; // 自機から見て前方への距離
+    const float localR = (-dx) * rightX + (-dz) * rightZ; // 自機から見て右への距離
+    const float bearing = std::atan2(localR, localF);     // 正面からの方位(rad, 右が正)
+    lastBearing_ = bearing;
+
+    // 持ち場（正面の扇）の外へ出たら recover。境目でばたつかないよう出入りに差をつける
+    const float arc = std::clamp(frontArcDeg_, 5.0f, 170.0f) * kDeg2Rad;
+    if (!recovering_ && std::fabs(bearing) > arc + kRecoverEnterMarginDeg * kDeg2Rad) {
+        recovering_ = true;
+    } else if (recovering_ && std::fabs(bearing) < arc) {
+        recovering_ = false;
+    }
+
+    // 交戦時に回る円の半径。旋回半径に比べて小さすぎると円に乗れず暴れるので下限を設ける
+    const float orbitRadius = EngageRadius();
+
+    // --- 行動段階の更新（遷移先は各状態クラスが決める） ---
+    sense_.scene = scene;
+    sense_.tr = tr;
+    sense_.targetTr = targetTr;
+    sense_.dx = dx;
+    sense_.dz = dz;
+    sense_.dist = dist;
+    sense_.orbitRadius = orbitRadius;
+    fsm_.Update(*this, deltaTime);
+    // このフレーム限りのポインタを持ち越さない
+    sense_.scene = nullptr;
+    sense_.tr = nullptr;
+    sense_.targetTr = nullptr;
+
+    // --- 操船（どの状態でも動き続ける。止まる船は的でしかない） ---
+    // fsm_.Update は予約された遷移を反映してから戻るので、ここでは遷移後の状態を見る（以前の switch と同じ）
+    const bool engaged = !fsm_.IsIn<PatrolState>();
+    const RC::Vector3 center = engaged ? targetTr->position : spawnPos_;
+    const float radius = engaged ? orbitRadius : patrolRadius_;
+    float speed = engaged ? engageSpeed_ : cruiseSpeed_;
+    float turnMul = 1.0f;
+
+    RC::Vector3 desired = OrbitDirection(tr->position, center, radius, circleSign_);
+
+    if (engaged) {
+        // 正面の扇の端まで来たら回る向きを反転する（＝扇の中を往復する）。
+        // 「今の回り方で方位がさらに外へ開いていくか」で判定するので、
+        // 扇の外にいる場合も、正面へ戻る向きに自然と揃う。
+        flipCooldown_ -= deltaTime;
+        const float vF = desired.x * frontX + desired.z * frontZ;
+        const float vR = desired.x * rightX + desired.z * rightZ;
+        const float bearingRate = localF * vR - localR * vF; // 方位の増える向き（符号だけ使う）
+        const bool openingOut = (bearing > arc && bearingRate > 0.0f) ||
+                                (bearing < -arc && bearingRate < 0.0f);
+        if (flipCooldown_ <= 0.0f && openingOut) {
+            circleSign_ = -circleSign_;
+            desired = OrbitDirection(tr->position, center, radius, circleSign_);
+            flipCooldown_ = kFlipCooldown;
+            // 円の上にいるなら外側へ大回りで切り返す（内側へ切ると自機へ突っ込んで射程を割る）。
+            // 円から大きく外れているときは、素直に近いほうへ回す。
+            if (std::fabs(dist - radius) < radius * kForcedTurnBand) {
+                const float shipRX = std::cos(headingY_); // 船の右舷方向
+                const float shipRZ = -std::sin(headingY_);
+                const float side = shipRX * dx + shipRZ * dz; // 正なら自機は右舷側
+                forcedTurn_ = (side > 0.0f) ? -1 : 1;           // 自機と反対側へ舵を切る
+            } else {
+                forcedTurn_ = 0;
+            }
+        }
+
+        // 持ち場の外では急いで戻る。レール移動中（自機が動いている）は追わない：
+        // 振り切られた砲艦が脅威でなくなるのは意図どおり。
+        if (recovering_) {
+            turnMul = (std::max)(recoverTurnMul_, 1.0f);
+            const float targetSpeed = std::sqrt(targetVel_.x * targetVel_.x + targetVel_.z * targetVel_.z);
+            if (targetSpeed < kTargetStillSpeed) speed *= (std::max)(recoverSpeedMul_, 1.0f);
+        }
+    } else {
+        forcedTurn_ = 0;
+    }
+
+    SteerTowards(desired, deltaTime, turnMul);
+
+    // 船首方向にだけ進む（真横へは動けない）
+    const float fx = std::sin(headingY_);
+    const float fz = std::cos(headingY_);
+    tr->position.x += fx * speed * deltaTime;
+    tr->position.z += fz * speed * deltaTime;
+    // Y と pitch / roll には触らない（BuoyancyScript の担当）
+    tr->rotation.y = headingY_ + modelYawOffsetDeg_ * kDeg2Rad;
+}
+
+#if RC_ENABLE_IMGUI
+void ShipEnemyScript::OnImGui() {
+    EnemyBaseScript::OnImGui();
+    ImGui::Text("State: %s  dist %.1fm", fsm_.CurrentName(), lastDistance_);
+    ImGui::Text("Heading: %.0f deg   Circle: %s",
+                headingY_ / kDeg2Rad, circleSign_ > 0.0f ? "CW" : "CCW");
+    if (const FiringState* firing = fsm_.As<FiringState>()) ImGui::Text("Shots left: %d", firing->ShotsLeft());
+    if (const ReloadState* reload = fsm_.As<ReloadState>()) ImGui::Text("Reload: %.2fs", reload->ReloadTimer());
+    ImGui::Text("Target vel: (%.1f, %.1f, %.1f)", targetVel_.x, targetVel_.y, targetVel_.z);
+    ImGui::Text("Bearing: %.0f deg  %s  (orbit r %.1fm)", lastBearing_ / kDeg2Rad,
+                recovering_ ? "RECOVER" : "in arc", EngageRadius());
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("探知");
+    ImGui::DragFloat("Detect Distance", &detectDistance_, 0.5f, 1.0f, 300.0f);
+    ImGui::Checkbox("Require In View", &requireInView_);
+
+    ImGui::TextUnformatted("操船");
+    ImGui::DragFloat("Cruise Speed", &cruiseSpeed_, 0.1f, 0.0f, 40.0f);
+    ImGui::DragFloat("Engage Speed", &engageSpeed_, 0.1f, 0.0f, 40.0f);
+    ImGui::DragFloat("Turn Rate (deg/s)", &turnRateDeg_, 1.0f, 1.0f, 360.0f);
+    ImGui::DragFloat("Preferred Distance", &preferredDistance_, 0.5f, 1.0f, 200.0f);
+    ImGui::DragFloat("Patrol Radius", &patrolRadius_, 0.5f, 1.0f, 200.0f);
+    ImGui::DragFloat("Front Arc (deg)", &frontArcDeg_, 1.0f, 5.0f, 170.0f);
+    ImGui::DragFloat("Recover Turn Mul", &recoverTurnMul_, 0.05f, 1.0f, 6.0f);
+    ImGui::DragFloat("Recover Speed Mul", &recoverSpeedMul_, 0.05f, 1.0f, 4.0f);
+
+    ImGui::TextUnformatted("砲撃");
+    ImGui::DragFloat("Broadside Tolerance (deg)", &broadsideToleranceDeg_, 1.0f, 1.0f, 89.0f);
+    ImGui::DragFloat("Fire Min Distance", &fireMinDistance_, 0.5f, 0.0f, 200.0f);
+    ImGui::DragFloat("Fire Max Distance", &fireMaxDistance_, 0.5f, 1.0f, 300.0f);
+    ImGui::DragInt("Volley Count", &volleyCount_, 1, 1, 12);
+    ImGui::DragFloat("Volley Interval", &volleyInterval_, 0.01f, 0.0f, 3.0f);
+    ImGui::DragFloat("Reload Duration", &reloadDuration_, 0.1f, 0.0f, 30.0f);
+    ImGui::DragFloat("Shell Speed", &shellSpeed_, 0.5f, 1.0f, 200.0f);
+    // 拡散(1)は EnemyBullet では機能しないので選ばせない（D-13）
+    {
+        static const char* kShellLabels[] = { "normal (1 dmg)", "heavy (3 dmg)" };
+        int sel = (SanitizeBulletType(bulletType_) == 2) ? 1 : 0;
+        if (ImGui::Combo("Shell Type", &sel, kShellLabels, IM_ARRAYSIZE(kShellLabels))) {
+            bulletType_ = (sel == 1) ? 2 : 0;
+        }
+        ImGui::SameLine();
+        ImGui::Text("(g=%.1f)", ShellGravityFor(bulletType_));
+    }
+    ImGui::DragFloat("Gun Offset", &gunOffset_, 0.1f, 0.0f, 20.0f);
+    ImGui::DragFloat("Gun Height", &gunHeight_, 0.1f, -5.0f, 20.0f);
+    ImGui::DragFloat("Spread (deg)", &spreadDeg_, 0.1f, 0.0f, 45.0f);
+    ImGui::SliderFloat("Lead Factor", &leadFactor_, 0.0f, 1.5f);
+    ImGui::DragFloat("Shell Shoot Radius", &shellShootRadius_, 0.05f, 0.0f, 5.0f);
+    ImGui::Checkbox("Debug Draw", &debugDraw_);
+
+    // 実際にどれくらいの手数になるかの目安。
+    // プレイヤーには 1 秒の無敵時間があるので、斉射の 2 発目以降は
+    // ほぼ当たっても入らない。volleyCount は圧のかけ方であって
+    // ダメージ量ではない、という点に注意。
+    const float cycle = static_cast<float>((std::max)(volleyCount_, 1)) * volleyInterval_
+                      + (std::max)(reloadDuration_, 0.0f);
+    if (cycle > 0.0f) {
+        ImGui::Separator();
+        ImGui::Text("斉射サイクル %.2fs（プレイヤー無敵 1.0s のため実効は 1 サイクル 1 ダメージ）", cycle);
+    }
+}
+#endif
 
 REGISTER_SCRIPT(ShipEnemyScript)

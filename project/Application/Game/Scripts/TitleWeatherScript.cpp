@@ -12,6 +12,7 @@
 #include "RenderCommon.h"
 #include "Engine/Render/RenderContext.h"
 #include "Framework/App.h"
+#include "Game/Framework/StateMachine.h"
 #include "Game/Framework/WaterCameraFx.h"
 #include "Scene.h"
 
@@ -47,6 +48,14 @@
 //   - 再生中だけ書き換える。編集中に書き換えると、その値がシーンの保存で JSON に焼き付くため
 //     （CaveLightZoneScript と同じ方針）。再生を止めたとき・破棄時に元の値へ戻す。
 //   - カメラが水中に入ったら（飛び込み演出）雨・雪・稲光の描画は消す。
+//
+//   クラス設計：
+//     - 天候の進行（晴れ → 強まる → 続く → 弱まる）は State パターン（ClearState / FadeInState / HoldState /
+//       FadeOutState）。以前は enum + switch で、次の状態も switch の中で決めていた。
+//     - 天候の種類（晴れ・雨・雪・雷雨）は Strategy パターン（WeatherKind の派生）。以前は enum Weather を
+//       見て「雷雨なら風を強く」「雨か雷雨なら雨粒を出す」などの if / switch が各所に散らばっていた。
+//       種類ごとの違いを 1 クラスにまとめたので、天候を足すときはクラスを 1 つ足せばよい。
+//     - 書き換える前のシーンの値は Memento パターン（SceneSnapshot）で控えて、再生停止・破棄時に戻す。
 // ============================================================================
 
 namespace {
@@ -188,8 +197,12 @@ void TransformPoint(const RC::Vector3 &p, const RC::Matrix4x4 &m, float &x, floa
 /// @brief タイトル画面の時間帯サイクルとランダムな天候（雨・雪・雷雨）
 class TitleWeatherScript : public ScriptableEntity {
 public:
+  /// @brief 天候を「晴れ」で始める（OnCreate 前にインスペクタへ出しても状態名が出るように）
+  TitleWeatherScript();
+
+private:
   // ------------------------------------------------------------------
-  // 設定
+  // 設定（シーン JSON とインスペクタからだけ触るので外へは公開しない）
   // ------------------------------------------------------------------
 
   /// @brief 時間帯 1 つぶんの見た目
@@ -501,9 +514,152 @@ public:
   };
 
   /// @brief 時間帯の見た目の種類（looks の添字）
+  /// @note 時間帯は振る舞いが同じで値（Look）だけが違うので、クラスに分けずデータ（looks の配列）で持つ
   enum LookId { kDay = 0, kEvening, kNight, kDawn, kLookCount };
-  /// @brief 天候の種類
-  enum class Weather { Clear = 0, Rain, Snow, Storm };
+
+  // ------------------------------------------------------------------
+  // 天候の種類（Strategy パターン）
+  //   以前は enum class Weather { Clear, Rain, Snow, Storm } を各所の if / switch で見ていた
+  //   （見た目の補正の選択・雨粒の量・雪片の量・雨の横風・雷を落とすか）。
+  //   種類ごとの違いを WeatherKind の派生クラスにまとめ、本体は weather_->RainAmount(...) のように
+  //   基底のポインタ経由で呼ぶだけにした。天候を増やすときは派生クラスを 1 つ足せばよい。
+  // ------------------------------------------------------------------
+
+  /// @brief 天候の種類ごとの振る舞いの基底（既定値は「何も降らない・補正しない」）
+  class WeatherKind {
+  public:
+    virtual ~WeatherKind() = default;
+
+    /// @brief 表示名（インスペクタ用）
+    /// @return 名前
+    virtual const char *Name() const = 0;
+
+    /// @brief 晴れか（強制切り替えの予約が「無い」ことも晴れで表す）
+    /// @return 晴れなら true
+    virtual bool IsClear() const { return false; }
+
+    /// @brief 時間帯の見た目に掛ける補正（満額）
+    /// @param owner 設定値（rainLook など）を持つ本体
+    /// @return 補正値。補正しないなら nullptr
+    virtual const WeatherMod *FullMod(const TitleWeatherScript &owner) const {
+      (void)owner;
+      return nullptr;
+    }
+
+    /// @brief 雨粒の量の割合
+    /// @param owner 設定値（rain.amount など）を持つ本体
+    /// @param smoothLevel 天候の強さ（smoothstep 済み、0〜1）
+    /// @return 0〜1
+    virtual float RainAmount(const TitleWeatherScript &owner, float smoothLevel) const {
+      (void)owner;
+      (void)smoothLevel;
+      return 0.0f;
+    }
+
+    /// @brief 雪片の量の割合
+    /// @param smoothLevel 天候の強さ（smoothstep 済み、0〜1）
+    /// @return 0〜1
+    virtual float SnowAmount(float smoothLevel) const {
+      (void)smoothLevel;
+      return 0.0f;
+    }
+
+    /// @brief 雨の横風に掛ける倍率
+    /// @param owner 設定値（rain.stormWindScale など）を持つ本体
+    /// @return 倍率
+    virtual float RainWindScale(const TitleWeatherScript &owner) const {
+      (void)owner;
+      return 1.0f;
+    }
+
+    /// @brief 稲光を落とす天候か
+    /// @return 落とすなら true
+    virtual bool HasLightning() const { return false; }
+  };
+
+  /// @brief 晴れ：何も降らず、見た目も補正しない
+  class ClearWeather final : public WeatherKind {
+  public:
+    /// @brief 表示名
+    /// @return "clear"
+    const char *Name() const override { return "clear"; }
+    /// @brief 晴れ
+    /// @return true
+    bool IsClear() const override { return true; }
+  };
+
+  /// @brief 雨：rain.amount の割合で雨粒を降らせ、rainLook で暗くする
+  class RainWeather final : public WeatherKind {
+  public:
+    /// @brief 表示名
+    /// @return "rain"
+    const char *Name() const override { return "rain"; }
+    /// @brief 雨の補正
+    /// @param owner 本体
+    /// @return rainLook
+    const WeatherMod *FullMod(const TitleWeatherScript &owner) const override { return &owner.rainLook; }
+    /// @brief 普通の雨は雷雨の rain.amount 倍
+    /// @param owner 本体
+    /// @param smoothLevel 天候の強さ（smoothstep 済み）
+    /// @return 雨粒の量の割合
+    float RainAmount(const TitleWeatherScript &owner, float smoothLevel) const override {
+      return smoothLevel * std::clamp(owner.rain.amount, 0.0f, 1.0f);
+    }
+  };
+
+  /// @brief 雪：雪片を降らせ、snowLook で鉛色の海と白い霞にする
+  class SnowWeather final : public WeatherKind {
+  public:
+    /// @brief 表示名
+    /// @return "snow"
+    const char *Name() const override { return "snow"; }
+    /// @brief 雪の補正
+    /// @param owner 本体
+    /// @return snowLook
+    const WeatherMod *FullMod(const TitleWeatherScript &owner) const override { return &owner.snowLook; }
+    /// @brief 雪片は強さそのまま
+    /// @param smoothLevel 天候の強さ（smoothstep 済み）
+    /// @return 雪片の量の割合
+    float SnowAmount(float smoothLevel) const override { return smoothLevel; }
+  };
+
+  /// @brief 雷雨：雨粒を満額で降らせ、横風を強め、稲光を落とす
+  class StormWeather final : public WeatherKind {
+  public:
+    /// @brief 表示名
+    /// @return "storm"
+    const char *Name() const override { return "storm"; }
+    /// @brief 雷雨の補正
+    /// @param owner 本体
+    /// @return stormLook
+    const WeatherMod *FullMod(const TitleWeatherScript &owner) const override { return &owner.stormLook; }
+    /// @brief 雷雨は強さそのまま
+    /// @param owner 本体
+    /// @param smoothLevel 天候の強さ（smoothstep 済み）
+    /// @return 雨粒の量の割合
+    float RainAmount(const TitleWeatherScript &owner, float smoothLevel) const override {
+      (void)owner;
+      return smoothLevel;
+    }
+    /// @brief 雷雨の横風は stormWindScale 倍
+    /// @param owner 本体
+    /// @return 倍率
+    float RainWindScale(const TitleWeatherScript &owner) const override { return owner.rain.stormWindScale; }
+    /// @brief 稲光を落とす
+    /// @return true
+    bool HasLightning() const override { return true; }
+  };
+
+  /// @brief 天候の種類のインスタンスを取得する
+  /// @tparam Kind WeatherKind の派生
+  /// @return 種類ごとに 1 つだけの共有インスタンス
+  /// @details 種類のクラスは状態を持たない（値は本体の設定を読むだけ）ので、種類ごとに 1 つを共有する
+  ///          （Flyweight パターン）。同じ種類は同じアドレスになるので、ポインタの比較で「同じ天候か」を判定できる。
+  template <class Kind>
+  static const WeatherKind *KindOf() {
+    static const Kind instance{};
+    return &instance;
+  }
 
   /// @brief 時間帯スケジュールのキー（1 周の中の位置と、そこでの見た目）
   struct ScheduleKey {
@@ -550,6 +706,7 @@ public:
   std::string thunderSoundPath; ///< 雷鳴（空なら鳴らさない）
   float thunderVolume = 0.8f;
 
+public:
   // ------------------------------------------------------------------
   // Serialize / Deserialize
   // ------------------------------------------------------------------
@@ -659,7 +816,7 @@ public:
   void OnImGui() override {
     ImGui::Checkbox("Enabled", &enabled);
     ImGui::Text("phase %.3f (%s)  weather: %s  level %.2f  drops %d  flakes %d", phase_, PhaseLabel(phase_),
-                WeatherName(weather_), level_, activeDrops_, activeFlakes_);
+                weather_->Name(), level_, activeDrops_, activeFlakes_);
 
     ImGui::SeparatorText("Time of Day");
     ImGui::Checkbox("Time Enabled", &timeEnabled);
@@ -703,14 +860,14 @@ public:
 
     ImGui::SeparatorText("Weather");
     ImGui::Checkbox("Weather Enabled (random)", &weatherEnabled);
-    ImGui::Text("state %s  timer %.1f s", StateName(state_), stateTimer_);
-    if (ImGui::Button("Clear")) ForceWeather(Weather::Clear);
+    ImGui::Text("state %s  timer %.1f s", fsm_.CurrentName(), stateTimer_);
+    if (ImGui::Button("Clear")) ForceWeather(KindOf<ClearWeather>());
     ImGui::SameLine();
-    if (ImGui::Button("Rain")) ForceWeather(Weather::Rain);
+    if (ImGui::Button("Rain")) ForceWeather(KindOf<RainWeather>());
     ImGui::SameLine();
-    if (ImGui::Button("Snow")) ForceWeather(Weather::Snow);
+    if (ImGui::Button("Snow")) ForceWeather(KindOf<SnowWeather>());
     ImGui::SameLine();
-    if (ImGui::Button("Storm")) ForceWeather(Weather::Storm);
+    if (ImGui::Button("Storm")) ForceWeather(KindOf<StormWeather>());
     ImGui::SameLine();
     if (ImGui::Button("Strike")) StrikeLightning();
     ImGui::DragFloatRange2("First Delay", &firstDelayMin, &firstDelayMax, 0.5f, 0.0f, 600.0f);
@@ -808,8 +965,9 @@ protected:
   void OnCreate() override {
     rng_.seed(std::random_device{}());
     phase_ = startPhase - std::floor(startPhase);
-    state_ = State::Clear;
-    stateTimer_ = RandRange(firstDelayMin, firstDelayMax);
+    // 最初の天候までは firstDelay（以降の晴れは clearMin〜clearMax）待つ
+    fsm_.ChangeState<ClearState>(RandRange(firstDelayMin, firstDelayMax));
+    fsm_.ApplyPending(*this);
     drops_.clear();
     flakes_.clear();
     rings_.clear();
@@ -883,8 +1041,7 @@ protected:
   }
 
 private:
-  /// @brief 天候の進行状態（晴れ → 強まる → 続く → 弱まる）
-  enum class State { Clear, FadeIn, Hold, FadeOut };
+  using WeatherMachine = StateMachine<TitleWeatherScript>; ///< 天候の進行のステートマシン
 
   /// @brief 雨粒 1 つ（ワールド座標で動かす）
   struct Drop {
@@ -921,13 +1078,9 @@ private:
   /// @param i 見た目 ID（LookId）
   /// @return 名前（範囲外なら "day"）
   static const char *LookName(int i) {
-    switch (i) {
-    case kDay: return "day";
-    case kEvening: return "evening";
-    case kNight: return "night";
-    case kDawn: return "dawn";
-    default: return "day";
-    }
+    // 添字 → 名前はただの対応表なので、switch ではなく表で引く
+    static constexpr const char *kNames[kLookCount] = {"day", "evening", "night", "dawn"};
+    return (i >= 0 && i < kLookCount) ? kNames[i] : "day";
   }
   /// @brief 名前から時間帯の見た目 ID を引く
   /// @param s 名前
@@ -937,28 +1090,6 @@ private:
       if (s == LookName(i)) return i;
     }
     return -1;
-  }
-  /// @brief 天候の表示名
-  /// @param w 天候
-  /// @return 名前
-  static const char *WeatherName(Weather w) {
-    switch (w) {
-    case Weather::Rain: return "rain";
-    case Weather::Snow: return "snow";
-    case Weather::Storm: return "storm";
-    default: return "clear";
-    }
-  }
-  /// @brief 天候の進行状態の表示名
-  /// @param s 状態
-  /// @return 名前
-  static const char *StateName(State s) {
-    switch (s) {
-    case State::FadeIn: return "fade-in";
-    case State::Hold: return "hold";
-    case State::FadeOut: return "fade-out";
-    default: return "clear";
-    }
   }
   /// @brief 位置 p の直前のスケジュールキーの look 名（デバッグ表示用）
   /// @param p 1 周の中の位置（0〜1）
@@ -1107,101 +1238,54 @@ private:
   // 天候
   // ------------------------------------------------------------------
 
-  /// @brief 天候の状態遷移（晴れ → FadeIn → Hold → FadeOut → 晴れ）を進め、強さ level_ を更新する
+  /// @brief 天候の進行（晴れ → FadeIn → Hold → FadeOut → 晴れ）を進め、強さ level_ を更新する
   /// @param dt 経過秒
+  /// @details 状態ごとの処理と次の状態の決定は、状態クラス（ClearState など）の OnUpdate が行う
   void UpdateWeatherState(float dt) {
     stateTimer_ -= dt;
-    switch (state_) {
-    case State::Clear:
-      level_ = 0.0f;
-      // 強制切り替えの予約があればそれを始める。無ければ晴れの待ちが切れたところで抽選する
-      if (pendingWeather_ != Weather::Clear) {
-        BeginWeather(pendingWeather_);
-        pendingWeather_ = Weather::Clear;
-      } else if (weatherEnabled && stateTimer_ <= 0.0f) {
-        const Weather w = PickWeather();
-        if (w == Weather::Clear) {
-          stateTimer_ = RandRange(clearMin, clearMax);
-        } else {
-          BeginWeather(w);
-        }
-      }
-      break;
-    case State::FadeIn:
-      level_ = (std::min)(1.0f, level_ + dt / (std::max)(fadeIn, 0.01f));
-      if (level_ >= 1.0f) {
-        state_ = State::Hold;
-        stateTimer_ = RandRange(holdMin, holdMax);
-      }
-      break;
-    case State::Hold:
-      level_ = 1.0f;
-      if (stateTimer_ <= 0.0f) state_ = State::FadeOut;
-      break;
-    case State::FadeOut: {
-      // 強制切り替えの待ちがあるときは速めに止める
-      const float dur = (pendingWeather_ != Weather::Clear) ? (std::min)(fadeOut, 2.0f) : fadeOut;
-      level_ = (std::max)(0.0f, level_ - dt / (std::max)(dur, 0.01f));
-      if (level_ <= 0.0f) {
-        weather_ = Weather::Clear;
-        state_ = State::Clear;
-        stateTimer_ = RandRange(clearMin, clearMax);
-      }
-      break;
-    }
-    }
-  }
-
-  /// @brief 天候 w を強まり始めの状態にする
-  /// @param w 始める天候
-  /// @note 最初の稲光までの待ちは、通常の間隔の半分にする
-  void BeginWeather(Weather w) {
-    weather_ = w;
-    state_ = State::FadeIn;
-    lightningTimer_ = RandRange(lightning.intervalMin, lightning.intervalMax) * 0.5f;
+    fsm_.Update(*this, dt);
   }
 
   /// @brief weights の比率で雨・雪・雷雨を抽選する
-  /// @return 抽選した天候。重みの合計がほぼ 0 なら Clear
-  Weather PickWeather() {
+  /// @return 抽選した天候。重みの合計がほぼ 0 なら晴れ
+  const WeatherKind *PickWeather() {
     const float wr = (std::max)(weightRain, 0.0f);
     const float ws = (std::max)(weightSnow, 0.0f);
     const float wt = (std::max)(weightStorm, 0.0f);
     const float sum = wr + ws + wt;
-    if (sum <= 1e-5f) return Weather::Clear;
+    if (sum <= 1e-5f) return KindOf<ClearWeather>();
     const float r = Rand01() * sum;
-    if (r < wr) return Weather::Rain;
-    if (r < wr + ws) return Weather::Snow;
-    return Weather::Storm;
+    if (r < wr) return KindOf<RainWeather>();
+    if (r < wr + ws) return KindOf<SnowWeather>();
+    return KindOf<StormWeather>();
   }
 
   /// @brief ImGui から天候を切り替える（今の天候が残っていれば先に素早く止める）
-  /// @param w 切り替え先の天候（Clear なら今の天候を止める）
-  void ForceWeather(Weather w) {
-    if (w == Weather::Clear) {
-      pendingWeather_ = Weather::Clear;
-      if (state_ != State::Clear) state_ = State::FadeOut;
+  /// @param w 切り替え先の天候（晴れなら今の天候を止める）
+  /// @note 状態の外（インスペクタ）からの遷移なので、予約した遷移はその場で反映する（以前と同じく即座に切り替わる）
+  void ForceWeather(const WeatherKind *w) {
+    if (w->IsClear()) {
+      pendingWeather_ = KindOf<ClearWeather>();
+      if (!fsm_.IsIn<ClearState>()) fsm_.ChangeState<FadeOutState>();
+      fsm_.ApplyPending(*this);
       return;
     }
-    if (state_ == State::Clear || weather_ == w) {
-      pendingWeather_ = Weather::Clear;
-      BeginWeather(w);
+    if (fsm_.IsIn<ClearState>() || weather_ == w) {
+      pendingWeather_ = KindOf<ClearWeather>();
+      fsm_.ChangeState<FadeInState>(w);
+      fsm_.ApplyPending(*this);
       return;
     }
     pendingWeather_ = w;
-    state_ = State::FadeOut;
+    fsm_.ChangeState<FadeOutState>();
+    fsm_.ApplyPending(*this);
   }
 
   /// @brief 現在の天候の見た目補正（強さに応じて無補正 → 満額へ補間）
   /// @return 補正値（晴れなら無補正）
   WeatherMod CurrentMod() const {
-    const WeatherMod *m = nullptr;
-    switch (weather_) {
-    case Weather::Rain: m = &rainLook; break;
-    case Weather::Snow: m = &snowLook; break;
-    case Weather::Storm: m = &stormLook; break;
-    default: return WeatherMod{};
-    }
+    const WeatherMod *m = weather_->FullMod(*this);
+    if (!m) return WeatherMod{};
     const float t = Smooth01(level_);
     WeatherMod r;
     r.lightScale = Lerp(1.0f, m->lightScale, t);
@@ -1220,16 +1304,132 @@ private:
     return r;
   }
 
-  /// @brief 雨粒の量の割合（雷雨は強さそのまま、普通の雨は rain.amount 倍）
+  /// @brief 雨粒の量の割合（雷雨は強さそのまま、普通の雨は rain.amount 倍。決めるのは天候の種類）
   /// @return 0〜1
-  float RainLevel() const {
-    if (weather_ == Weather::Storm) return Smooth01(level_);
-    if (weather_ == Weather::Rain) return Smooth01(level_) * std::clamp(rain.amount, 0.0f, 1.0f);
-    return 0.0f;
-  }
-  /// @brief 雪片の量の割合
+  float RainLevel() const { return weather_->RainAmount(*this, Smooth01(level_)); }
+  /// @brief 雪片の量の割合（決めるのは天候の種類）
   /// @return 0〜1（雪以外は 0）
-  float SnowLevel() const { return (weather_ == Weather::Snow) ? Smooth01(level_) : 0.0f; }
+  float SnowLevel() const { return weather_->SnowAmount(Smooth01(level_)); }
+
+  // ------------------------------------------------------------------
+  // 天候の進行の状態クラス（State パターン）
+  //   以前は enum class State { Clear, FadeIn, Hold, FadeOut } と switch で、次の状態も switch の中で
+  //   決めていた。状態ごとにクラスに分け、次の状態は状態クラス自身が machine.ChangeState で決める。
+  //   入れ子クラスなので、friend 無しで本体の private メンバ（level_ など）に触れる。
+  // ------------------------------------------------------------------
+
+  /// @brief 晴れ：待ちが切れたら天候を抽選する（強制切り替えの予約があればそれを始める）
+  class ClearState final : public IState<TitleWeatherScript> {
+  public:
+    /// @brief 晴れの長さで作る
+    /// @param wait 次の天候を抽選するまでの秒数（シーン開始時は firstDelay、以降は clearMin〜clearMax）
+    explicit ClearState(float wait) : wait_(wait) {}
+    /// @brief 天候を晴れに戻し、待ち時間を設定する
+    /// @param o 本体
+    /// @param machine ステートマシン（未使用）
+    void OnEnter(TitleWeatherScript &o, WeatherMachine &machine) override {
+      (void)machine;
+      o.weather_ = KindOf<ClearWeather>();
+      o.stateTimer_ = wait_;
+    }
+    /// @brief 予約か抽選で次の天候が決まったら FadeIn へ
+    /// @param o 本体
+    /// @param machine 遷移を予約するステートマシン
+    /// @param dt 経過秒（未使用。待ち時間は UpdateWeatherState が減らす）
+    void OnUpdate(TitleWeatherScript &o, WeatherMachine &machine, float dt) override {
+      (void)dt;
+      o.level_ = 0.0f;
+      // 強制切り替えの予約があればそれを始める。無ければ晴れの待ちが切れたところで抽選する
+      if (!o.pendingWeather_->IsClear()) {
+        machine.ChangeState<FadeInState>(o.pendingWeather_);
+        o.pendingWeather_ = KindOf<ClearWeather>();
+      } else if (o.weatherEnabled && o.stateTimer_ <= 0.0f) {
+        const WeatherKind *w = o.PickWeather();
+        if (w->IsClear()) {
+          o.stateTimer_ = o.RandRange(o.clearMin, o.clearMax);
+        } else {
+          machine.ChangeState<FadeInState>(w);
+        }
+      }
+    }
+    /// @brief 状態名
+    /// @return "clear"
+    const char *Name() const override { return "clear"; }
+
+  private:
+    float wait_ = 0.0f; ///< 次の天候を抽選するまでの秒数
+  };
+
+  /// @brief 強まる：fadeIn 秒かけて強さを 0 → 1 へ。満額になったら Hold へ
+  class FadeInState final : public IState<TitleWeatherScript> {
+  public:
+    /// @brief 始める天候で作る
+    /// @param kind 始める天候
+    explicit FadeInState(const WeatherKind *kind) : kind_(kind) {}
+    /// @brief 天候を切り替え、最初の稲光までの待ちを通常の間隔の半分にする
+    /// @param o 本体
+    /// @param machine ステートマシン（未使用）
+    void OnEnter(TitleWeatherScript &o, WeatherMachine &machine) override {
+      (void)machine;
+      o.weather_ = kind_;
+      o.lightningTimer_ = o.RandRange(o.lightning.intervalMin, o.lightning.intervalMax) * 0.5f;
+    }
+    /// @brief 強さを上げ、満額になったら Hold へ
+    /// @param o 本体
+    /// @param machine 遷移を予約するステートマシン
+    /// @param dt 経過秒
+    void OnUpdate(TitleWeatherScript &o, WeatherMachine &machine, float dt) override {
+      o.level_ = (std::min)(1.0f, o.level_ + dt / (std::max)(o.fadeIn, 0.01f));
+      if (o.level_ >= 1.0f) machine.ChangeState<HoldState>();
+    }
+    /// @brief 状態名
+    /// @return "fade-in"
+    const char *Name() const override { return "fade-in"; }
+
+  private:
+    const WeatherKind *kind_; ///< 始める天候
+  };
+
+  /// @brief 続く：holdMin〜holdMax 秒、強さ 1 のまま。時間が来たら FadeOut へ
+  class HoldState final : public IState<TitleWeatherScript> {
+  public:
+    /// @brief 続ける長さを抽選する
+    /// @param o 本体
+    /// @param machine ステートマシン（未使用）
+    void OnEnter(TitleWeatherScript &o, WeatherMachine &machine) override {
+      (void)machine;
+      o.stateTimer_ = o.RandRange(o.holdMin, o.holdMax);
+    }
+    /// @brief 強さを 1 に保ち、時間が来たら FadeOut へ
+    /// @param o 本体
+    /// @param machine 遷移を予約するステートマシン
+    /// @param dt 経過秒（未使用。待ち時間は UpdateWeatherState が減らす）
+    void OnUpdate(TitleWeatherScript &o, WeatherMachine &machine, float dt) override {
+      (void)dt;
+      o.level_ = 1.0f;
+      if (o.stateTimer_ <= 0.0f) machine.ChangeState<FadeOutState>();
+    }
+    /// @brief 状態名
+    /// @return "hold"
+    const char *Name() const override { return "hold"; }
+  };
+
+  /// @brief 弱まる：fadeOut 秒かけて強さを 1 → 0 へ。止んだら Clear へ
+  class FadeOutState final : public IState<TitleWeatherScript> {
+  public:
+    /// @brief 強さを下げ、0 になったら Clear へ（強制切り替えの待ちがあるときは速めに止める）
+    /// @param o 本体
+    /// @param machine 遷移を予約するステートマシン
+    /// @param dt 経過秒
+    void OnUpdate(TitleWeatherScript &o, WeatherMachine &machine, float dt) override {
+      const float dur = (!o.pendingWeather_->IsClear()) ? (std::min)(o.fadeOut, 2.0f) : o.fadeOut;
+      o.level_ = (std::max)(0.0f, o.level_ - dt / (std::max)(dur, 0.01f));
+      if (o.level_ <= 0.0f) machine.ChangeState<ClearState>(o.RandRange(o.clearMin, o.clearMax));
+    }
+    /// @brief 状態名
+    /// @return "fade-out"
+    const char *Name() const override { return "fade-out"; }
+  };
 
   // ------------------------------------------------------------------
   // 雷
@@ -1272,7 +1472,7 @@ private:
     }
     if (dt <= 0.0f) return;
     // 雷雨の強さが minLevel 以上のあいだだけ、ランダムな間隔で稲光を起こす
-    if (!lightning.enabled || weather_ != Weather::Storm || level_ < lightning.minLevel) return;
+    if (!lightning.enabled || !weather_->HasLightning() || level_ < lightning.minLevel) return;
     lightningTimer_ -= dt;
     if (lightningTimer_ <= 0.0f) {
       StrikeLightning();
@@ -1423,10 +1623,10 @@ private:
   // 雨
   // ------------------------------------------------------------------
 
-  /// @brief 雨の横風（雷雨では stormWindScale 倍）
+  /// @brief 雨の横風（雷雨では stormWindScale 倍。倍率は天候の種類が決める）
   /// @return 風速 m/s
   RC::Vector3 RainWind() const {
-    const float s = (weather_ == Weather::Storm) ? rain.stormWindScale : 1.0f;
+    const float s = weather_->RainWindScale(*this);
     return V3(rain.wind.x * s, rain.wind.y * s, rain.wind.z * s);
   }
 
@@ -1738,91 +1938,125 @@ private:
   // シーンへの反映
   // ------------------------------------------------------------------
 
-  /// @brief 書き換える前のシーンの値（平行光源・水面・空）。再生停止・破棄時に戻すために保存する
-  struct Saved {
-    bool valid = false;
-    std::weak_ptr<Entity> lightEntity, waterEntity, skyEntity;
-    RC::Vector4 lightColor{};
-    RC::Vector3 lightDirection{};
-    float lightIntensity = 1.0f;
-    RC::Vector3 ambientColor{};
-    float ambientIntensity = 0.0f;
-    RC::Vector4 waterShallow{}, waterDeep{}, waterSss{};
-    float waterEnvironment = 0.0f, waterCrestTint = 0.0f;
-    float waveHeight = 0.0f, waveHeight2 = 0.0f, whitecapCoverage = 0.0f;
-    RC::Vector4 skyColor{};
+  /// @brief 書き換える前のシーンの値（平行光源・水面・空）の控え。再生停止・破棄時に戻すために保存する
+  /// @details Memento パターン：シーンを上書きする前の値を丸ごと控えておき、あとで元へ戻す。
+  ///          再生中だけ値を書き換え、編集中の保存に焼き付けないための仕組み。控えの中身は private にして、
+  ///          「控える」「戻す」と、上書きの基準に使う値（波の高さなど）の読み出しだけを公開する。
+  class SceneSnapshot {
+  public:
+    /// @brief 控えがあるか
+    /// @return 控え済みなら true
+    bool IsValid() const { return valid_; }
+
+    /// @brief 書き換える前の平行光源・水面・空の値を控える（控え済みなら何もしない）
+    /// @param scene 対象のシーン（nullptr なら何もしない）
+    /// @note それぞれシーン内で最初に見つかったエンティティを対象にする
+    void Capture(Scene *scene) {
+      if (valid_) return;
+      if (!scene) return;
+      for (const auto &e : scene->GetEntities()) {
+        if (!e) continue;
+        if (lightEntity_.expired()) {
+          if (auto *l = e->GetComponent<DirectionalLightComponent>()) {
+            lightEntity_ = e;
+            lightColor_ = l->color;
+            lightDirection_ = l->direction;
+            lightIntensity_ = l->intensity;
+            ambientColor_ = l->ambientColor;
+            ambientIntensity_ = l->ambientIntensity;
+          }
+        }
+        if (waterEntity_.expired()) {
+          if (auto *w = e->GetComponent<WaterComponent>()) {
+            waterEntity_ = e;
+            waterShallow_ = w->shallowColor;
+            waterDeep_ = w->deepColor;
+            waterSss_ = w->sssColor;
+            waterEnvironment_ = w->environmentCoeff;
+            waterCrestTint_ = w->crestTint;
+            waveHeight_ = w->waveHeight;
+            waveHeight2_ = w->waveHeight2;
+            whitecapCoverage_ = w->whitecapCoverage;
+          }
+        }
+        if (skyEntity_.expired()) {
+          if (auto *s = e->GetComponent<SkyboxComponent>()) {
+            skyEntity_ = e;
+            skyColor_ = s->color;
+          }
+        }
+      }
+      valid_ = true;
+    }
+
+    /// @brief 控えた値をシーンへ戻し、控えを破棄する（控えが無ければ何もしない）
+    void Restore() {
+      if (!valid_) return;
+      if (auto e = lightEntity_.lock()) {
+        if (auto *l = e->GetComponent<DirectionalLightComponent>()) {
+          l->color = lightColor_;
+          l->direction = lightDirection_;
+          l->intensity = lightIntensity_;
+          l->ambientColor = ambientColor_;
+          l->ambientIntensity = ambientIntensity_;
+        }
+      }
+      if (auto e = waterEntity_.lock()) {
+        if (auto *w = e->GetComponent<WaterComponent>()) {
+          w->shallowColor = waterShallow_;
+          w->deepColor = waterDeep_;
+          w->sssColor = waterSss_;
+          w->environmentCoeff = waterEnvironment_;
+          w->crestTint = waterCrestTint_;
+          w->waveHeight = waveHeight_;
+          w->waveHeight2 = waveHeight2_;
+          w->whitecapCoverage = whitecapCoverage_;
+        }
+      }
+      if (auto e = skyEntity_.lock()) {
+        if (auto *s = e->GetComponent<SkyboxComponent>()) s->color = skyColor_;
+      }
+      *this = SceneSnapshot{};
+    }
+
+    /// @brief 控えた平行光源のエンティティ
+    /// @return エンティティ（無い・破棄済みなら nullptr）
+    std::shared_ptr<Entity> LightEntity() const { return lightEntity_.lock(); }
+    /// @brief 控えた水面のエンティティ
+    /// @return エンティティ（無い・破棄済みなら nullptr）
+    std::shared_ptr<Entity> WaterEntity() const { return waterEntity_.lock(); }
+    /// @brief 控えた空のエンティティ
+    /// @return エンティティ（無い・破棄済みなら nullptr）
+    std::shared_ptr<Entity> SkyEntity() const { return skyEntity_.lock(); }
+    /// @brief 控えた波の高さ（天候の補正の基準）
+    /// @return 波の高さ
+    float WaveHeight() const { return waveHeight_; }
+    /// @brief 控えた 2 つ目の波の高さ（天候の補正の基準）
+    /// @return 波の高さ
+    float WaveHeight2() const { return waveHeight2_; }
+    /// @brief 控えた白波の量（天候の補正の基準）
+    /// @return 白波の量
+    float WhitecapCoverage() const { return whitecapCoverage_; }
+
+  private:
+    bool valid_ = false;
+    std::weak_ptr<Entity> lightEntity_, waterEntity_, skyEntity_;
+    RC::Vector4 lightColor_{};
+    RC::Vector3 lightDirection_{};
+    float lightIntensity_ = 1.0f;
+    RC::Vector3 ambientColor_{};
+    float ambientIntensity_ = 0.0f;
+    RC::Vector4 waterShallow_{}, waterDeep_{}, waterSss_{};
+    float waterEnvironment_ = 0.0f, waterCrestTint_ = 0.0f;
+    float waveHeight_ = 0.0f, waveHeight2_ = 0.0f, whitecapCoverage_ = 0.0f;
+    RC::Vector4 skyColor_{};
   };
 
-  /// @brief 書き換える前の平行光源・水面・空の値を保存する（保存済みなら何もしない）
-  /// @note それぞれシーン内で最初に見つかったエンティティを対象にする
-  void CaptureScene() {
-    if (saved_.valid) return;
-    Scene *scene = GetScene();
-    if (!scene) return;
-    for (const auto &e : scene->GetEntities()) {
-      if (!e) continue;
-      if (saved_.lightEntity.expired()) {
-        if (auto *l = e->GetComponent<DirectionalLightComponent>()) {
-          saved_.lightEntity = e;
-          saved_.lightColor = l->color;
-          saved_.lightDirection = l->direction;
-          saved_.lightIntensity = l->intensity;
-          saved_.ambientColor = l->ambientColor;
-          saved_.ambientIntensity = l->ambientIntensity;
-        }
-      }
-      if (saved_.waterEntity.expired()) {
-        if (auto *w = e->GetComponent<WaterComponent>()) {
-          saved_.waterEntity = e;
-          saved_.waterShallow = w->shallowColor;
-          saved_.waterDeep = w->deepColor;
-          saved_.waterSss = w->sssColor;
-          saved_.waterEnvironment = w->environmentCoeff;
-          saved_.waterCrestTint = w->crestTint;
-          saved_.waveHeight = w->waveHeight;
-          saved_.waveHeight2 = w->waveHeight2;
-          saved_.whitecapCoverage = w->whitecapCoverage;
-        }
-      }
-      if (saved_.skyEntity.expired()) {
-        if (auto *s = e->GetComponent<SkyboxComponent>()) {
-          saved_.skyEntity = e;
-          saved_.skyColor = s->color;
-        }
-      }
-    }
-    saved_.valid = true;
-  }
+  /// @brief 書き換える前の平行光源・水面・空の値を控える（控え済みなら何もしない）
+  void CaptureScene() { saved_.Capture(GetScene()); }
 
-  /// @brief CaptureScene で保存した値をシーンへ戻し、保存を破棄する
-  void RestoreScene() {
-    if (!saved_.valid) return;
-    if (auto e = saved_.lightEntity.lock()) {
-      if (auto *l = e->GetComponent<DirectionalLightComponent>()) {
-        l->color = saved_.lightColor;
-        l->direction = saved_.lightDirection;
-        l->intensity = saved_.lightIntensity;
-        l->ambientColor = saved_.ambientColor;
-        l->ambientIntensity = saved_.ambientIntensity;
-      }
-    }
-    if (auto e = saved_.waterEntity.lock()) {
-      if (auto *w = e->GetComponent<WaterComponent>()) {
-        w->shallowColor = saved_.waterShallow;
-        w->deepColor = saved_.waterDeep;
-        w->sssColor = saved_.waterSss;
-        w->environmentCoeff = saved_.waterEnvironment;
-        w->crestTint = saved_.waterCrestTint;
-        w->waveHeight = saved_.waveHeight;
-        w->waveHeight2 = saved_.waveHeight2;
-        w->whitecapCoverage = saved_.whitecapCoverage;
-      }
-    }
-    if (auto e = saved_.skyEntity.lock()) {
-      if (auto *s = e->GetComponent<SkyboxComponent>()) s->color = saved_.skyColor;
-    }
-    saved_ = Saved{};
-  }
+  /// @brief CaptureScene で控えた値をシーンへ戻し、控えを破棄する
+  void RestoreScene() { saved_.Restore(); }
 
   /// @brief 時間帯の見た目に天候補正と稲光を重ねて、平行光源・水面・空・カラーグレードへ書き込む
   void ApplyToScene() {
@@ -1841,7 +2075,7 @@ private:
     haze_ = mod.haze;
 
     // 平行光源：天候で灰色へ寄せて減光し、稲光の色と強さを重ねる
-    if (auto e = saved_.lightEntity.lock()) {
+    if (auto e = saved_.LightEntity()) {
       if (auto *l = e->GetComponent<DirectionalLightComponent>()) {
         const RC::Vector3 lc = Desaturate(V3(look.lightColor.x, look.lightColor.y, look.lightColor.z), mod.lightDesaturate);
         const RC::Vector3 fc = V3(lightning.flashColor.x, lightning.flashColor.y, lightning.flashColor.z);
@@ -1855,7 +2089,7 @@ private:
       }
     }
     // 水面：色は天候で暗くし、波の高さ・白波はシーン初期値を基準に補正する
-    if (auto e = saved_.waterEntity.lock()) {
+    if (auto e = saved_.WaterEntity()) {
       if (auto *w = e->GetComponent<WaterComponent>()) {
         auto scaleRgb = [](const RC::Vector4 &c, float s) { return V4(c.x * s, c.y * s, c.z * s, c.w); };
         w->shallowColor = scaleRgb(look.waterShallow, mod.waterScale);
@@ -1863,13 +2097,13 @@ private:
         w->sssColor = look.waterSss;
         w->environmentCoeff = look.waterEnvironment;
         w->crestTint = look.waterCrestTint;
-        w->waveHeight = saved_.waveHeight * mod.waveScale;
-        w->waveHeight2 = saved_.waveHeight2 * mod.waveScale;
-        w->whitecapCoverage = std::clamp(saved_.whitecapCoverage + mod.whitecapAdd, 0.0f, 1.0f);
+        w->waveHeight = saved_.WaveHeight() * mod.waveScale;
+        w->waveHeight2 = saved_.WaveHeight2() * mod.waveScale;
+        w->whitecapCoverage = std::clamp(saved_.WhitecapCoverage() + mod.whitecapAdd, 0.0f, 1.0f);
       }
     }
     // 空の乗算色
-    if (auto e = saved_.skyEntity.lock()) {
+    if (auto e = saved_.SkyEntity()) {
       if (auto *s = e->GetComponent<SkyboxComponent>()) {
         s->color = V4(look.skyColor.x * mod.skyScale, look.skyColor.y * mod.skyScale, look.skyColor.z * mod.skyScale,
                       look.skyColor.w);
@@ -1920,10 +2154,10 @@ private:
   std::mt19937 rng_{20261006u};
   float phase_ = 0.0f;
 
-  Weather weather_ = Weather::Clear;
-  Weather pendingWeather_ = Weather::Clear;
-  State state_ = State::Clear;
-  float stateTimer_ = 0.0f;
+  const WeatherKind *weather_ = KindOf<ClearWeather>();        ///< 今の天候（Strategy）
+  const WeatherKind *pendingWeather_ = KindOf<ClearWeather>(); ///< 強制切り替えの予約（晴れなら予約なし）
+  WeatherMachine fsm_;       ///< 天候の進行（Clear / FadeIn / Hold / FadeOut）
+  float stateTimer_ = 0.0f;  ///< 今の状態の待ち時間（晴れ・続くで使う。インスペクタにも出す）
   float level_ = 0.0f;
 
   // 雷
@@ -1968,7 +2202,12 @@ private:
   int thunderClip_ = -1;
   int rainVoice_ = -1;
 
-  Saved saved_;
+  SceneSnapshot saved_; ///< 書き換える前のシーンの値の控え（Memento）
 };
+
+TitleWeatherScript::TitleWeatherScript() {
+  fsm_.ChangeState<ClearState>(0.0f);
+  fsm_.ApplyPending(*this);
+}
 
 REGISTER_SCRIPT(TitleWeatherScript)

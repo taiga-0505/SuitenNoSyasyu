@@ -9,57 +9,74 @@
 #include "Render/Systems/RenderInteractiveWater.h"
 #include "Scene.h"
 #include <cmath>
+#include <cstdint>
 #include <iostream>
+#include <memory>
 
 #if RC_ENABLE_IMGUI
 #include "imgui/imgui.h"
 #endif
 
 #include "EnemyBaseScript.h"
+#include "Game/Framework/EntityPool.h"
 
 /// @brief 水面の汎用敵 AI。初期位置の左右を往復しながらカメラを向き、水弾を撃つ
 /// @details 空中にいる間は落下し、着水時に水しぶきを出す。撃破後は沈んでいく。
+///
+///          「生存中」と「撃破後」の切り替えは基底 DamageableScript の Template Method
+///          （OnUpdateAlive / OnUpdateDefeated）に任せている。以前は OnUpdate の中で
+///          `if (isDead) { ... return; }` と分岐していたが、分岐の責任を基底へ移したことで、
+///          このクラスは「それぞれの状態で何をするか」だけを書けばよくなった。
+///          生存中の行動は「往復しながら撃つ」の 1 通りしかなく、空中／水面も高さで決まる
+///          一時的な条件にすぎないため、State Pattern にはしていない（状態クラスに分けても
+///          遷移が無く、かえって読みにくくなるため）。
 class EnemyAI : public EnemyBaseScript {
 public:
-    /// @brief 左右往復の速さ（往復角の進む速さに掛かる係数）
-    float moveSpeed = 3.0f;
-    /// @brief 射撃間隔の基準秒数
-    float shootInterval = 1.5f;
-    /// @brief 水弾の速度
-    float bulletSpeed = 10.0f;
-    float preferredDist = 15.0f;  ///< プレイヤーとの希望距離（現状の移動処理では未使用）
-    float weight = 5.0f;          ///< 着水時の水しぶき計算に使う重さ
+    /// @brief インスペクタに基底の HP と移動・射撃パラメータの編集欄を表示する
+    void OnImGui() override {
+        EnemyBaseScript::OnImGui();
+#if RC_ENABLE_IMGUI
+        ImGui::DragFloat("Move Speed##E", &moveSpeed_, 0.1f, 0.1f, 20.0f);
+        ImGui::DragFloat("Shoot Interval##E", &shootInterval_, 0.05f, 0.1f, 5.0f);
+        ImGui::DragFloat("Bullet Speed##E", &bulletSpeed_, 0.1f, 1.0f, 50.0f);
+        ImGui::DragFloat("Preferred Dist##E", &preferredDist_, 0.5f, 5.0f, 40.0f);
+        ImGui::DragFloat("Weight##E", &weight_, 0.1f, 0.1f, 50.0f);
+#endif
+    }
 
 protected:
     /// @brief 基底の初期化を行い、射撃タイマーと往復角を初期化する
     void OnCreate() override {
         EnemyBaseScript::OnCreate();
         std::cout << "[EnemyAI] OnCreate\n";
-        shootTimer_ = shootInterval * 0.5f; // 初弾は通常の半分の待ち時間で撃つ
+        shootTimer_ = shootInterval_ * 0.5f; // 初弾は通常の半分の待ち時間で撃つ
         strafeAngle_ = 0.0f;
     }
 
-    /// @brief 落下・着水処理、左右往復移動、カメラへの向き合わせ、水面波の発生、射撃を行う
+    /// @brief 撃破後の処理。重力で沈めるだけにして、移動・射撃は行わない
     /// @param deltaTime 前フレームからの経過秒数
-    void OnUpdate(float deltaTime) override {
-        EnemyBaseScript::OnUpdate(deltaTime);
-
+    void OnUpdateDefeated(float deltaTime) override {
         auto* tr = GetComponent<TransformComponent>();
         if (!tr) return;
 
         float prevY = tr->position.y;
 
-        // 撃破後は重力で沈めるだけにして、移動・射撃は行わない
-        if (isDead) {
-            verticalVel_ -= 9.8f * deltaTime; // 沈む時の重力（水中の抵抗などを考慮しても良いが一旦通常重力）
-            tr->position.y += verticalVel_ * deltaTime;
-            // 空中から水面に落ちた時だけ水しぶきを上げる
-            if (prevY > 0.1f && tr->position.y <= 0.1f) {
-                float impactSpeed = std::abs(verticalVel_);
-                SpawnSplash({tr->position.x, 0.0f, tr->position.z}, impactSpeed, weight);
-            }
-            return;
+        verticalVel_ -= 9.8f * deltaTime; // 沈む時の重力（水中の抵抗などを考慮しても良いが一旦通常重力）
+        tr->position.y += verticalVel_ * deltaTime;
+        // 空中から水面に落ちた時だけ水しぶきを上げる
+        if (prevY > 0.1f && tr->position.y <= 0.1f) {
+            float impactSpeed = std::abs(verticalVel_);
+            SpawnSplash({tr->position.x, 0.0f, tr->position.z}, impactSpeed, weight_);
         }
+    }
+
+    /// @brief 生存中の処理。落下・着水処理、左右往復移動、カメラへの向き合わせ、水面波の発生、射撃を行う
+    /// @param deltaTime 前フレームからの経過秒数
+    void OnUpdateAlive(float deltaTime) override {
+        auto* tr = GetComponent<TransformComponent>();
+        if (!tr) return;
+
+        float prevY = tr->position.y;
 
         // 生きている時も空中にいれば落下する
         if (tr->position.y > 0.0f) {
@@ -71,7 +88,7 @@ protected:
                 tr->position.y = 0.0f;
                 if (prevY > 0.1f) {
                     float impactSpeed = std::abs(verticalVel_);
-                    SpawnSplash({tr->position.x, 0.0f, tr->position.z}, impactSpeed, weight);
+                    SpawnSplash({tr->position.x, 0.0f, tr->position.z}, impactSpeed, weight_);
                 }
                 verticalVel_ = 0.0f;
             }
@@ -115,7 +132,7 @@ protected:
 
         // 初期位置を中心に X 方向へ sin で左右往復する。
         // 目標点との差に比例して寄せることで、急な位置の跳びを抑える
-        strafeAngle_ += deltaTime * moveSpeed * 0.5f;
+        strafeAngle_ += deltaTime * moveSpeed_ * 0.5f;
         float targetX = initialPos_.x + std::sin(strafeAngle_) * 8.0f; // 振れ幅 8m
         float targetZ = initialPos_.z;
 
@@ -154,7 +171,7 @@ protected:
         shootTimer_ -= deltaTime;
         if (shootTimer_ <= 0.0f && distToCam < 60.0f) {
             ShootAt(tr->position, camTr->position);
-            shootTimer_ = shootInterval + (std::sin(strafeAngle_ * 3.0f) * 0.5f);
+            shootTimer_ = shootInterval_ + (std::sin(strafeAngle_ * 3.0f) * 0.5f);
         }
     }
 
@@ -168,30 +185,32 @@ protected:
         std::cout << "[EnemyAI] OnDestroy\n";
     }
 
-public:
-    /// @brief インスペクタに基底の HP と移動・射撃パラメータの編集欄を表示する
-    void OnImGui() override {
-        EnemyBaseScript::OnImGui();
-#if RC_ENABLE_IMGUI
-        ImGui::DragFloat("Move Speed##E", &moveSpeed, 0.1f, 0.1f, 20.0f);
-        ImGui::DragFloat("Shoot Interval##E", &shootInterval, 0.05f, 0.1f, 5.0f);
-        ImGui::DragFloat("Bullet Speed##E", &bulletSpeed, 0.1f, 1.0f, 50.0f);
-        ImGui::DragFloat("Preferred Dist##E", &preferredDist, 0.5f, 5.0f, 40.0f);
-        ImGui::DragFloat("Weight##E", &weight, 0.1f, 0.1f, 50.0f);
-#endif
-    }
-
 private:
-    float shootTimer_ = 0.0f;
-    float strafeAngle_ = 0.0f;
-    RC::Vector3 initialPos_ = {0.0f, 0.0f, 0.0f};
-    RC::Vector3 prevPosition_ = {0.0f, 0.0f, 0.0f};
-    bool firstUpdate_ = true;
-    float verticalVel_ = 0.0f;
-    std::weak_ptr<Entity> cachedTarget_;
+    // --- パラメータ（以前は public で外から書き換えられた。インスペクタからのみ編集する） ---
+    float moveSpeed_ = 3.0f;      ///< 左右往復の速さ（往復角の進む速さに掛かる係数）
+    float shootInterval_ = 1.5f;  ///< 射撃間隔の基準秒数
+    float bulletSpeed_ = 10.0f;   ///< 水弾の速度
+    float preferredDist_ = 15.0f; ///< プレイヤーとの希望距離（現状の移動処理では未使用）
+    float weight_ = 5.0f;         ///< 着水時の水しぶき計算に使う重さ
 
-    uint64_t enemyBulletsFolderGuid_ = 0;
-    uint64_t effectsFolderGuid_ = 0;
+    // --- 実行時の状態 ---
+    float shootTimer_ = 0.0f;                       ///< 次弾までの残り秒数
+    float strafeAngle_ = 0.0f;                      ///< 左右往復の位相(rad)
+    RC::Vector3 initialPos_ = {0.0f, 0.0f, 0.0f};   ///< 往復の中心（最初の更新時の位置）
+    RC::Vector3 prevPosition_ = {0.0f, 0.0f, 0.0f}; ///< 前フレームの位置（航跡の波源に使う）
+    bool firstUpdate_ = true;                       ///< まだ initialPos_ を記録していないか
+    float verticalVel_ = 0.0f;                      ///< 落下・沈降の縦速度
+    std::weak_ptr<Entity> cachedTarget_;            ///< 狙う対象（カメラ）のキャッシュ
+
+    uint64_t enemyBulletsFolderGuid_ = 0; ///< "EnemyBullets" フォルダの GUID キャッシュ
+    uint64_t effectsFolderGuid_ = 0;      ///< "Effects" フォルダの GUID キャッシュ
+
+    /// @brief 敵弾の Object Pool
+    /// @details 弾は毎秒のように出ては消えるため、毎回 Entity を作ると生成・破棄のコストと
+    ///          GPU リソースの確保が積み重なる。以前はここで「非アクティブな EnemyBullet を探して
+    ///          再利用」を手書きしていたが、ShipEnemyScript・自機弾と同じ処理が重複していたので
+    ///          共通の EntityPool に取り出し規則を任せた（プールは船の砲弾と共有）。
+    EntityPool bulletPool_{"EnemyBullet"};
 
     /// @brief 敵弾をまとめるフォルダ "EnemyBullets" の GUID を取得する（無ければ作る）
     /// @param scene 検索・生成先のシーン
@@ -230,7 +249,7 @@ private:
     /// @brief 指定位置から目標へ向けて水弾を 1 発撃つ
     /// @param origin 発射元の位置（自身の位置）
     /// @param target 狙う位置（カメラの位置）
-    /// @note 非アクティブな "EnemyBullet" があれば再利用し、無ければ新規生成する。
+    /// @note 弾は bulletPool_ から取り出す（非アクティブな "EnemyBullet" があれば再利用、無ければ新規生成）。
     void ShootAt(const RC::Vector3& origin, const RC::Vector3& target) {
         Scene* scene = GetScene();
         if (!scene) return;
@@ -247,21 +266,11 @@ private:
         dir.y /= len;
         dir.z /= len;
 
-        // 弾エンティティを用意する。使い終わって非アクティブになった弾をプールとして再利用する
-        std::shared_ptr<Entity> bullet = nullptr;
-        for (auto& e : scene->GetEntities()) {
-            if (e->GetName() == "EnemyBullet" && !e->IsActive() && !e->IsPendingDestroy()) {
-                bullet = e;
-                bullet->SetActive(true);
-                bullet->SetTag("reused", 1);
-                break;
-            }
-        }
-        bool isNew = false;
-        if (!bullet) {
-            bullet = scene->CreateEntity("EnemyBullet");
-            isNew = true;
-        }
+        // 弾エンティティをプールから取り出す
+        EntityPool::Lease lease = bulletPool_.Acquire(*scene);
+        std::shared_ptr<Entity> bullet = lease.entity;
+        const bool isNew = lease.isNew;
+        if (!bullet) return;
 
         // 自身にめり込まないよう、少し前方・上方から発射する
         auto* tr = bullet->GetComponent<TransformComponent>();
@@ -307,7 +316,7 @@ private:
         bullet->SetTag("dir_x", static_cast<int>(dir.x * 1000.0f));
         bullet->SetTag("dir_y", static_cast<int>(dir.y * 1000.0f));
         bullet->SetTag("dir_z", static_cast<int>(dir.z * 1000.0f));
-        bullet->SetTag("bullet_speed", static_cast<int>(bulletSpeed * 10.0f));
+        bullet->SetTag("bullet_speed", static_cast<int>(bulletSpeed_ * 10.0f));
         // プールは船と共有。船の砲弾で立てた「撃ち落とせる」印を持ち越さない
         bullet->ClearTag("shootable");
 
