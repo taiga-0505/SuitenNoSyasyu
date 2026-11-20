@@ -6,6 +6,14 @@
 #include "ECS/Entity.h"
 #include "ECS/NativeScriptComponent.h"
 
+RailShooterGameMode::RailShooterGameMode()
+    // 敵の撃破を購読し、リザルトの「撃破数」を数える（Observer）。
+    // OnSceneEnter ではなく生成時に購読するのは、エディタの Stop / Restart では
+    // OnSceneEnter を通らずに GameMode だけが作り直されるため。
+    // 購読は GameMode の破棄とともに EventConnection が自動で解除する。
+    : enemyDefeatedConnection_(GameEvents::EnemyDefeated().Subscribe(
+          [](const EnemyDefeatedInfo&) { GameSession::Get().AddEnemyDefeated(); })) {}
+
 void RailShooterGameMode::OnSceneEnter(Scene& scene, SceneContext& ctx) {
     (void)ctx;
     const std::string sceneName = scene.Name();
@@ -15,13 +23,6 @@ void RailShooterGameMode::OnSceneEnter(Scene& scene, SceneContext& ctx) {
     if (StageProgress::IsPlayScene(sceneName)) {
         GameSession::Get().BeginRun();
         StageProgress::Get().SetCurrentScene(sceneName);
-
-        // 敵の撃破を購読し、リザルトの「撃破数」を数える（Observer）。
-        // 再入場で OnSceneEnter が再び呼ばれても、代入で古い購読は解除されるので二重に数えない。
-        enemyDefeatedConnection_ = GameEvents::EnemyDefeated().Subscribe(
-            [](const EnemyDefeatedInfo&) { GameSession::Get().AddEnemyDefeated(); });
-    } else {
-        enemyDefeatedConnection_.Disconnect();
     }
 }
 

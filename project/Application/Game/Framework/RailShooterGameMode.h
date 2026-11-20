@@ -9,6 +9,9 @@
 ///          すべてのシーンがこの GameMode で動く。プレイシーン以外では何もしない。
 class RailShooterGameMode : public GameModeBase {
 public:
+    /// @brief 敵撃破イベントの購読を開始する
+    RailShooterGameMode();
+
     /// @brief プレイシーン（Stage1〜5 / テスト用 Game）に入った瞬間を「1 プレイの開始」とする
     /// @details GameSession をリセットし、StageProgress に遊んでいるステージを記録する。
     /// @param scene 入ったシーン
