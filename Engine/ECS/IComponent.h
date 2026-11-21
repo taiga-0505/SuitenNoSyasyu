@@ -1,6 +1,16 @@
 #pragma once
 #include <nlohmann/json_fwd.hpp>
 
+/// @brief コンポーネントの更新順（Entity::UpdateAll はこの値の小さい順に Update を呼ぶ）
+/// @details 同じ値どうしは TypeName() の辞書順。これで毎フレーム・毎回の起動で順番が変わらない。
+///          自作コンポーネントで順番を指定したいときは IComponent::UpdateOrder() を override する。
+namespace ComponentUpdateOrder {
+inline constexpr int kEarly = -100;  ///< 他より先に動かしたいもの（入力の前処理など）
+inline constexpr int kScript = 0;    ///< スクリプト（NativeScriptComponent）。既定値
+inline constexpr int kPhysics = 100; ///< 剛体の積分（スクリプトが書いた速度をそのフレームで反映する）
+inline constexpr int kLate = 200;    ///< 移動が終わった後に動かしたいもの（追従・見た目の補正など）
+} // namespace ComponentUpdateOrder
+
 /// @class IComponent
 /// @brief すべてのコンポーネントの基底インターフェース
 /// @details Entity に付けるコンポーネントは必ずこのクラスを継承する。
@@ -11,6 +21,14 @@ public:
   /// @brief 毎フレームの更新
   /// @param deltaTime 前フレームからの経過時間（秒）
   virtual void Update(float deltaTime) { (void)deltaTime; }
+
+  /// @brief 更新順の優先度（小さいほど先に Update される）
+  /// @return ComponentUpdateOrder の値。既定は kScript
+  virtual int UpdateOrder() const { return ComponentUpdateOrder::kScript; }
+
+  /// @brief シーンファイル・Undo 履歴・プレハブに保存するか
+  /// @return 実行時だけのコンポーネント（TweenComponent など）は false を返す
+  virtual bool IsSerializable() const { return true; }
 
   /// @brief 所有する Entity がコンポーネントの表を破棄する直前に呼ばれる
   /// @details エンティティが破棄されるとき、components_ の破棄が始まる前に全コンポーネントへ

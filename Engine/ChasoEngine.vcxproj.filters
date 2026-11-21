@@ -342,6 +342,12 @@
     <ClCompile Include="..\Engine\Audio\AudioEngine.cpp">
       <Filter>Audio</Filter>
     </ClCompile>
+    <ClCompile Include="..\Engine\Audio\AudioStream.cpp">
+      <Filter>Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Engine\Audio\AudioHrtf.cpp">
+      <Filter>Audio</Filter>
+    </ClCompile>
     <ClCompile Include="..\Engine\Graphics\Skydome\Skydome.cpp">
       <Filter>Graphics\Skydome</Filter>
     </ClCompile>
@@ -521,6 +527,21 @@
     <ClInclude Include="..\Engine\Common\ResourcePath.h">
       <Filter>Common</Filter>
     </ClInclude>
+    <ClInclude Include="..\Engine\Common\GameTime.h">
+      <Filter>Common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Engine\Common\SaveData.h">
+      <Filter>Common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Engine\Common\FileWatcher.h">
+      <Filter>Common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Engine\Common\Tween\Easing.h">
+      <Filter>Common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Engine\Common\Tween\Tween.h">
+      <Filter>Common</Filter>
+    </ClInclude>
     <ClInclude Include="..\Engine\Common\Log\Log.h">
       <Filter>Common\Log</Filter>
     </ClInclude>
@@ -537,6 +558,12 @@
       <Filter>Render\Model</Filter>
     </ClInclude>
     <ClInclude Include="..\Engine\ECS\ColliderBroadphase.h">
+      <Filter>ECS</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Engine\ECS\PhysicsQuery.h">
+      <Filter>ECS</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Engine\ECS\TweenComponent.h">
       <Filter>ECS</Filter>
     </ClInclude>
     <ClInclude Include="..\Engine\Render\Effect\EffectParticleSystem.h">
@@ -644,6 +671,12 @@
     <ClInclude Include="..\Engine\Audio\AudioEngine.h">
       <Filter>Audio</Filter>
     </ClInclude>
+    <ClInclude Include="..\Engine\Audio\AudioStream.h">
+      <Filter>Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Engine\Audio\AudioHrtf.h">
+      <Filter>Audio</Filter>
+    </ClInclude>
     <ClInclude Include="..\Engine\Audio\Sound.h">
       <Filter>Audio</Filter>
     </ClInclude>
@@ -678,6 +711,9 @@
       <Filter>ImGuiManager</Filter>
     </ClInclude>
     <ClInclude Include="..\Engine\Input\Input.h">
+      <Filter>Input</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Engine\Input\InputActions.h">
       <Filter>Input</Filter>
     </ClInclude>
     <ClInclude Include="..\Engine\Particle\Circle\CircleParticle.h">

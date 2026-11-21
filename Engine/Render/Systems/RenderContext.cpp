@@ -795,10 +795,11 @@ bool RenderContext::BeginMaskPass() {
   }
   if (maskWidth_ != w || maskHeight_ != h) {
     // フォーマットはメインのレンダーターゲットと揃える。
-    // マスク用 PSO は PipelineManager::Init に渡した rtvFormat（= Dx12Core::Desc の既定値）で
-    // 作られているので、ここを変えると PSO と RTV のフォーマット不一致で描画されなくなる。
-    maskTexture_->Initialize(ctxRef_->core, w, h, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
-                             {0.0f, 0.0f, 0.0f, 0.0f});
+    // マスク用 PSO は PipelineManager::Init に渡した rtvFormat（HDR なら浮動小数点）で
+    // 作られているので、ここが違うと PSO と RTV のフォーマット不一致で描画されなくなる。
+    const DXGI_FORMAT maskFormat = ctxRef_->pipelineManager ? ctxRef_->pipelineManager->RtvFormat()
+                                                            : DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+    maskTexture_->Initialize(ctxRef_->core, w, h, maskFormat, {0.0f, 0.0f, 0.0f, 0.0f});
     maskWidth_ = w;
     maskHeight_ = h;
   }

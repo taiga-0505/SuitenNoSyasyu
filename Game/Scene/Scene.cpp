@@ -1,5 +1,6 @@
 #include "Scene.h"
 #include "SceneFlow.h"
+#include "Prefab.h"
 #include "ECS/Entity.h"
 #include "ECS/TransformComponent.h"
 #include "ECS/LightComponent.h"
@@ -14,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <unordered_map>
 #include <utility>
 #include <string>
 
@@ -339,6 +341,69 @@ bool VolumesOverlap(const ColliderVolume& a, const ColliderVolume& b) {
 /// @brief ResolveCollisions の距離による粗い除外に足す安全マージン（m）
 inline constexpr float kBroadPhaseDistanceMargin = 3.0f;
 
+/// @brief 衝突した 2 体の速度を直す（反発・摩擦）
+/// @param rb1   1 体目の剛体（無ければ nullptr）
+/// @param dyn1  1 体目が物理で動くか（Rigidbody あり・非 Kinematic）
+/// @param rb2   2 体目の剛体
+/// @param dyn2  2 体目が物理で動くか
+/// @param n     衝突の法線（1 → 2 向き、正規化済み）
+/// @details 反発係数・摩擦係数は 2 体のうち大きい方を使う（壁に Rigidbody が無くても、
+///          ボール側に設定すれば跳ねる・止まる）。
+///          両方とも 0（既定）のときは以前と同じく「相手に向かう速度だけを各自で打ち消す」。
+void ApplyContactVelocity(RigidbodyComponent* rb1, bool dyn1, RigidbodyComponent* rb2, bool dyn2,
+                          const RC::Vector3& n) {
+    const float e = (std::max)(rb1 ? rb1->restitution : 0.0f, rb2 ? rb2->restitution : 0.0f);
+    const float mu = (std::max)(rb1 ? rb1->friction : 0.0f, rb2 ? rb2->friction : 0.0f);
+
+    if (!(e > 0.0f) && !(mu > 0.0f)) {
+        // 以前の挙動（反発も摩擦も無し）
+        if (dyn1) {
+            const float vDotN = RC::Dot(rb1->velocity, n);
+            if (vDotN > 0.0f) rb1->velocity = RC::Sub(rb1->velocity, RC::Mul(n, vDotN)); // e1 が e2 へ向かっている
+        }
+        if (dyn2) {
+            const float vDotN = RC::Dot(rb2->velocity, n);
+            if (vDotN < 0.0f) rb2->velocity = RC::Sub(rb2->velocity, RC::Mul(n, vDotN)); // e2 が e1 へ向かっている
+        }
+        return;
+    }
+
+    // 力積による解決（動かない側は質量無限大 = 逆質量 0）
+    const float inv1 = dyn1 ? 1.0f / rb1->EffectiveMass() : 0.0f;
+    const float inv2 = dyn2 ? 1.0f / rb2->EffectiveMass() : 0.0f;
+    const float invSum = inv1 + inv2;
+    if (!(invSum > 0.0f)) return;
+
+    const RC::Vector3 zero{0.0f, 0.0f, 0.0f};
+    RC::Vector3 v1 = dyn1 ? rb1->velocity : zero;
+    RC::Vector3 v2 = dyn2 ? rb2->velocity : zero;
+    const RC::Vector3 vRel = RC::Sub(v2, v1);
+    const float vn = RC::Dot(vRel, n);
+    if (vn >= 0.0f) return; // 離れていく途中なら何もしない
+
+    // 遅い衝突は跳ねさせない（床に置いた物が細かく跳ね続けるのを防ぐ）
+    const float eUse = (-vn > PhysicsSettings::Get().bounceThreshold) ? std::clamp(e, 0.0f, 1.0f) : 0.0f;
+    const float jn = -(1.0f + eUse) * vn / invSum;
+    v1 = RC::Sub(v1, RC::Mul(n, jn * inv1));
+    v2 = RC::Add(v2, RC::Mul(n, jn * inv2));
+
+    // 摩擦（クーロン摩擦。接線方向の力積を「摩擦係数 × 法線方向の力積」までに抑える）
+    if (mu > 0.0f) {
+        const RC::Vector3 vRel2 = RC::Sub(v2, v1);
+        const RC::Vector3 vt = RC::Sub(vRel2, RC::Mul(n, RC::Dot(vRel2, n)));
+        const float vtLen = RC::Length(vt);
+        if (vtLen > 1e-6f) {
+            const RC::Vector3 t = RC::Mul(vt, 1.0f / vtLen);
+            const float jt = (std::max)(-vtLen / invSum, -mu * jn); // 負の値（滑る向きの逆）
+            v1 = RC::Sub(v1, RC::Mul(t, jt * inv1));
+            v2 = RC::Add(v2, RC::Mul(t, jt * inv2));
+        }
+    }
+
+    if (dyn1) rb1->velocity = v1;
+    if (dyn2) rb2->velocity = v2;
+}
+
 } // namespace
 
 bool Scene::TestBlockingOverlap(Entity* self, const RC::Vector3& testPos, float skin,
@@ -488,6 +553,414 @@ RC::Vector3 Scene::MoveWithCollision(Entity* self, const RC::Vector3& delta, flo
         broadphase_.Refresh(self);
     }
     return moved;
+}
+
+// ============================================================
+// 当たり判定クエリ（Raycast / SphereCast / Overlap）
+// ============================================================
+namespace {
+
+/// @brief 方向ベクトルの長さが 0 とみなす閾値（2 乗）
+inline constexpr float kQueryMinDirLenSq = 1e-12f;
+
+/// @brief SphereCast vs AABB の反復で「接した」とみなす距離（m）
+inline constexpr float kSweepContactEpsilon = 1e-4f;
+
+/// @brief SphereCast vs AABB の反復の上限回数（かすめるだけの軌道で打ち切るため）
+inline constexpr int kSweepMaxIterations = 64;
+
+/// @brief エンティティが絞り込み条件を満たし、判定できる形状を持つかを調べて形状を作る
+/// @param e      調べるエンティティ
+/// @param filter 絞り込み条件
+/// @param out    ワールド空間での形状
+/// @return 判定対象なら true
+bool BuildQueryVolume(Entity* e, const QueryFilter& filter, ColliderVolume& out) {
+    if (!e || e == filter.ignore) return false;
+    if (!e->IsActive() || e->IsPendingDestroy()) return false;
+    auto* col = e->GetComponent<ColliderComponent>();
+    if (!col || !col->IsEnabled()) return false;
+    if (col->isTrigger && !filter.includeTriggers) return false;
+    if ((col->layer & filter.layerMask) == 0) return false;
+    auto* tr = e->GetComponent<TransformComponent>();
+    if (!tr) return false;
+    return BuildColliderVolume(e, tr->position, 0.0f, out);
+}
+
+/// @brief レイと形状の交差（最初に入る位置）
+/// @param o     起点
+/// @param d     方向（正規化済み）
+/// @param maxT  最大距離
+/// @param vol   形状
+/// @param tOut  当たった距離
+/// @param nOut  当たった面の法線
+/// @return [0, maxT] で当たれば true
+bool RayVsVolume(const RC::Vector3& o, const RC::Vector3& d, float maxT, const ColliderVolume& vol,
+                 float& tOut, RC::Vector3& nOut) {
+    if (vol.isSphere) {
+        const RC::Vector3 oc = RC::Sub(o, vol.center);
+        const float c = RC::Dot(oc, oc) - vol.radius * vol.radius;
+        if (c <= 0.0f) { // 起点が球の中
+            tOut = 0.0f;
+            nOut = RC::Mul(d, -1.0f);
+            return true;
+        }
+        const float b = RC::Dot(oc, d);
+        if (b > 0.0f) return false; // 球から遠ざかる向き
+        const float disc = b * b - c;
+        if (disc < 0.0f) return false;
+        const float t = -b - std::sqrt(disc);
+        if (t < 0.0f || t > maxT) return false;
+        tOut = t;
+        nOut = RC::SafeNormalize(RC::Sub(RC::Add(o, RC::Mul(d, t)), vol.center), RC::Mul(d, -1.0f));
+        return true;
+    }
+
+    // AABB（スラブ法。どの軸の面から入ったかを覚えて法線にする）
+    const float oo[3] = {o.x, o.y, o.z};
+    const float dd[3] = {d.x, d.y, d.z};
+    const float lo[3] = {vol.center.x - vol.half.x, vol.center.y - vol.half.y, vol.center.z - vol.half.z};
+    const float hi[3] = {vol.center.x + vol.half.x, vol.center.y + vol.half.y, vol.center.z + vol.half.z};
+    float tEnter = 0.0f;
+    float tExit = maxT;
+    int enterAxis = -1;
+    float enterSign = 0.0f;
+    for (int a = 0; a < 3; ++a) {
+        if (std::abs(dd[a]) < 1e-8f) {
+            if (oo[a] < lo[a] || oo[a] > hi[a]) return false; // 平行かつスラブの外
+            continue;
+        }
+        const float inv = 1.0f / dd[a];
+        float tn = (lo[a] - oo[a]) * inv;
+        float tf = (hi[a] - oo[a]) * inv;
+        float sign = -1.0f; // lo 側の面（法線は -軸）から入る
+        if (tn > tf) {
+            std::swap(tn, tf);
+            sign = 1.0f;    // hi 側の面（法線は +軸）から入る
+        }
+        if (tn > tEnter) {
+            tEnter = tn;
+            enterAxis = a;
+            enterSign = sign;
+        }
+        if (tf < tExit) tExit = tf;
+        if (tEnter > tExit) return false;
+    }
+    tOut = tEnter;
+    if (enterAxis < 0) {
+        nOut = RC::Mul(d, -1.0f); // 起点が箱の中
+    } else {
+        float n[3] = {0.0f, 0.0f, 0.0f};
+        n[enterAxis] = enterSign;
+        nOut = {n[0], n[1], n[2]};
+    }
+    return true;
+}
+
+/// @brief 点に最も近い AABB 上の点
+RC::Vector3 ClosestPointOnBox(const RC::Vector3& p, const ColliderVolume& box) {
+    return {
+        std::clamp(p.x, box.center.x - box.half.x, box.center.x + box.half.x),
+        std::clamp(p.y, box.center.y - box.half.y, box.center.y + box.half.y),
+        std::clamp(p.z, box.center.z - box.half.z, box.center.z + box.half.z)};
+}
+
+/// @brief 球を飛ばしたときの形状との最初の接触
+/// @param o      球の中心の起点
+/// @param r      球の半径
+/// @param d      方向（正規化済み）
+/// @param maxT   最大距離
+/// @param vol    相手の形状
+/// @param tOut   接触したときに球の中心が進んだ距離
+/// @param pOut   接点（相手の表面上）
+/// @param nOut   接点の法線（相手の外向き）
+/// @return [0, maxT] で接触すれば true
+bool SphereSweepVsVolume(const RC::Vector3& o, float r, const RC::Vector3& d, float maxT,
+                         const ColliderVolume& vol, float& tOut, RC::Vector3& pOut, RC::Vector3& nOut) {
+    if (vol.isSphere) {
+        // 半径を足した球に対するレイと同じ
+        ColliderVolume grown = vol;
+        grown.radius = vol.radius + r;
+        if (!RayVsVolume(o, d, maxT, grown, tOut, nOut)) return false;
+        pOut = RC::Add(vol.center, RC::Mul(nOut, vol.radius));
+        if (tOut == 0.0f) { // 起点で重なっている：接点は相手の中心から自分へ向かう方向の表面
+            nOut = RC::SafeNormalize(RC::Sub(o, vol.center), RC::Mul(d, -1.0f));
+            pOut = RC::Add(vol.center, RC::Mul(nOut, vol.radius));
+        }
+        return true;
+    }
+
+    // 球 vs AABB：保守的前進法（Conservative Advancement）。
+    // 「今の球と箱の隙間」だけ進めば決して箱を突き抜けないので、それを繰り返して接触点に寄せる。
+    // 点と凸形状の距離は直線上で凸関数なので、隙間が広がり始めたら以後当たらない（早期打ち切り）。
+    float t = 0.0f;
+    for (int i = 0; i < kSweepMaxIterations; ++i) {
+        const RC::Vector3 p = RC::Add(o, RC::Mul(d, t));
+        const RC::Vector3 q = ClosestPointOnBox(p, vol);
+        const RC::Vector3 diff = RC::Sub(p, q);
+        const float dist = RC::Length(diff);
+        if (dist <= r + kSweepContactEpsilon) {
+            tOut = t;
+            pOut = q;
+            // 球の中心が箱の中にある（dist = 0）ときは進行方向の逆を法線にする
+            nOut = (dist > 1e-6f) ? RC::Mul(diff, 1.0f / dist) : RC::Mul(d, -1.0f);
+            return true;
+        }
+        // 箱から遠ざかっている（距離の微分 >= 0）なら以後は近づかない
+        if (RC::Dot(d, diff) >= 0.0f) return false;
+        t += dist - r;
+        if (t > maxT) return false;
+    }
+    return false; // かすめるだけの軌道で収束しなかった
+}
+
+} // namespace
+
+bool Scene::Raycast(const RC::Vector3& origin, const RC::Vector3& direction, float maxDistance,
+                    RaycastHit& outHit, const QueryFilter& filter) {
+    if (!(maxDistance > 0.0f) || RC::LengthSq(direction) <= kQueryMinDirLenSq) return false;
+    const RC::Vector3 dir = RC::SafeNormalize(direction);
+    if (broadphase_.IsDirty()) broadphase_.Sync(entities_);
+
+    bool found = false;
+    uint32_t bestOrder = UINT32_MAX;
+    broadphase_.QueryRay(origin, dir, maxDistance, 0.0f,
+        [&](const ColliderBroadphase::Entry& en, float currentMax) {
+            const std::shared_ptr<Entity> e = en.weak.lock();
+            ColliderVolume vol;
+            if (!e || !BuildQueryVolume(e.get(), filter, vol)) return currentMax;
+            float t = 0.0f;
+            RC::Vector3 n{};
+            if (!RayVsVolume(origin, dir, currentMax, vol, t, n)) return currentMax;
+            // 同じ距離なら entities_ の並びで前の物（毎回同じ結果になるように）
+            if (found && (t > outHit.distance || (t == outHit.distance && en.order > bestOrder))) {
+                return currentMax;
+            }
+            found = true;
+            bestOrder = en.order;
+            outHit.entity = e.get(); // entities_ が保持しているので、ここを抜けても生きている
+            outHit.distance = t;
+            outHit.point = RC::Add(origin, RC::Mul(dir, t));
+            outHit.normal = n;
+            // これより遠い候補は調べなくてよい（t = 0 だと打ち切りになるので少しだけ残す）
+            return (std::max)(t, 1e-6f);
+        });
+    return found;
+}
+
+size_t Scene::RaycastAll(const RC::Vector3& origin, const RC::Vector3& direction, float maxDistance,
+                         std::vector<RaycastHit>& outHits, const QueryFilter& filter) {
+    outHits.clear();
+    if (!(maxDistance > 0.0f) || RC::LengthSq(direction) <= kQueryMinDirLenSq) return 0;
+    const RC::Vector3 dir = RC::SafeNormalize(direction);
+    if (broadphase_.IsDirty()) broadphase_.Sync(entities_);
+
+    std::vector<std::pair<uint32_t, RaycastHit>> hits; // (entities_ の添え字, 当たり)
+    broadphase_.QueryRay(origin, dir, maxDistance, 0.0f,
+        [&](const ColliderBroadphase::Entry& en, float currentMax) {
+            const std::shared_ptr<Entity> e = en.weak.lock();
+            ColliderVolume vol;
+            if (!e || !BuildQueryVolume(e.get(), filter, vol)) return currentMax;
+            RaycastHit h;
+            if (!RayVsVolume(origin, dir, maxDistance, vol, h.distance, h.normal)) return currentMax;
+            h.entity = e.get();
+            h.point = RC::Add(origin, RC::Mul(dir, h.distance));
+            hits.emplace_back(en.order, h);
+            return currentMax; // 全部欲しいので範囲は縮めない
+        });
+
+    std::sort(hits.begin(), hits.end(), [](const auto& a, const auto& b) {
+        if (a.second.distance != b.second.distance) return a.second.distance < b.second.distance;
+        return a.first < b.first;
+    });
+    outHits.reserve(hits.size());
+    for (auto& [order, h] : hits) outHits.push_back(h);
+    return outHits.size();
+}
+
+bool Scene::SphereCast(const RC::Vector3& origin, float radius, const RC::Vector3& direction,
+                       float maxDistance, RaycastHit& outHit, const QueryFilter& filter) {
+    if (!(radius > 0.0f)) return Raycast(origin, direction, maxDistance, outHit, filter);
+    if (!(maxDistance >= 0.0f) || RC::LengthSq(direction) <= kQueryMinDirLenSq) return false;
+    const RC::Vector3 dir = RC::SafeNormalize(direction);
+    if (broadphase_.IsDirty()) broadphase_.Sync(entities_);
+
+    bool found = false;
+    uint32_t bestOrder = UINT32_MAX;
+    // maxDistance = 0（その場の重なりだけ調べる）でも BVH を辿れるよう、上限は少しだけ残す
+    const float searchMax = (std::max)(maxDistance, 1e-6f);
+    broadphase_.QueryRay(origin, dir, searchMax, radius,
+        [&](const ColliderBroadphase::Entry& en, float currentMax) {
+            const std::shared_ptr<Entity> e = en.weak.lock();
+            ColliderVolume vol;
+            if (!e || !BuildQueryVolume(e.get(), filter, vol)) return currentMax;
+            float t = 0.0f;
+            RC::Vector3 p{}, n{};
+            if (!SphereSweepVsVolume(origin, radius, dir, (std::min)(currentMax, maxDistance), vol, t, p, n)) {
+                return currentMax;
+            }
+            if (found && (t > outHit.distance || (t == outHit.distance && en.order > bestOrder))) {
+                return currentMax;
+            }
+            found = true;
+            bestOrder = en.order;
+            outHit.entity = e.get();
+            outHit.distance = t;
+            outHit.point = p;
+            outHit.normal = n;
+            return (std::max)(t, 1e-6f);
+        });
+    return found;
+}
+
+size_t Scene::OverlapSphere(const RC::Vector3& center, float radius, std::vector<Entity*>& out,
+                            const QueryFilter& filter) {
+    out.clear();
+    if (!(radius >= 0.0f)) return 0;
+    if (broadphase_.IsDirty()) broadphase_.Sync(entities_);
+
+    ColliderVolume self;
+    self.isSphere = true;
+    self.center = center;
+    self.radius = radius;
+
+    std::vector<std::pair<uint32_t, Entity*>> found;
+    broadphase_.QueryBox(RC::BoundingBox::FromCenterHalf(center, {radius, radius, radius}),
+        [&](const ColliderBroadphase::Entry& en) {
+            const std::shared_ptr<Entity> e = en.weak.lock();
+            ColliderVolume vol;
+            if (!e || !BuildQueryVolume(e.get(), filter, vol)) return true;
+            if (VolumesOverlap(self, vol)) found.emplace_back(en.order, e.get());
+            return true;
+        });
+    std::sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    out.reserve(found.size());
+    for (auto& [order, e] : found) out.push_back(e);
+    return out.size();
+}
+
+size_t Scene::OverlapBox(const RC::Vector3& center, const RC::Vector3& halfExtents,
+                         std::vector<Entity*>& out, const QueryFilter& filter) {
+    out.clear();
+    ColliderVolume self;
+    self.isSphere = false;
+    self.center = center;
+    self.half = {std::abs(halfExtents.x), std::abs(halfExtents.y), std::abs(halfExtents.z)};
+    if (broadphase_.IsDirty()) broadphase_.Sync(entities_);
+
+    std::vector<std::pair<uint32_t, Entity*>> found;
+    broadphase_.QueryBox(RC::BoundingBox::FromCenterHalf(center, self.half),
+        [&](const ColliderBroadphase::Entry& en) {
+            const std::shared_ptr<Entity> e = en.weak.lock();
+            ColliderVolume vol;
+            if (!e || !BuildQueryVolume(e.get(), filter, vol)) return true;
+            if (VolumesOverlap(self, vol)) found.emplace_back(en.order, e.get());
+            return true;
+        });
+    std::sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    out.reserve(found.size());
+    for (auto& [order, e] : found) out.push_back(e);
+    return out.size();
+}
+
+// ScriptableEntity::Raycast / SphereCast の実体（MoveAndSlide と同じ理由でこの翻訳単位に置く）
+bool ScriptableEntity::Raycast(const RC::Vector3& origin, const RC::Vector3& direction,
+                               float maxDistance, RaycastHit& outHit, QueryFilter filter) {
+    Scene* scene = GetScene();
+    if (!scene) return false;
+    if (!filter.ignore) filter.ignore = GetEntity(); // 自分自身には当てない
+    return scene->Raycast(origin, direction, maxDistance, outHit, filter);
+}
+
+bool ScriptableEntity::SphereCast(const RC::Vector3& origin, float radius, const RC::Vector3& direction,
+                                  float maxDistance, RaycastHit& outHit, QueryFilter filter) {
+    Scene* scene = GetScene();
+    if (!scene) return false;
+    if (!filter.ignore) filter.ignore = GetEntity();
+    return scene->SphereCast(origin, radius, direction, maxDistance, outHit, filter);
+}
+
+// ============================================================
+// プレハブの生成
+// ============================================================
+
+std::shared_ptr<Entity> Scene::InstantiatePrefab(const std::string& path, const RC::Vector3* position) {
+    const nlohmann::json* prefab = Prefab::Load(path);
+    if (!prefab) return nullptr;
+    return InstantiatePrefabJson(*prefab, position);
+}
+
+std::shared_ptr<Entity> Scene::InstantiatePrefabJson(const nlohmann::json& prefab,
+                                                     const RC::Vector3* position) {
+    // { "entities": [...] } でも、エンティティの配列そのものでも受け付ける
+    const nlohmann::json* arr = nullptr;
+    if (prefab.is_array()) {
+        arr = &prefab;
+    } else if (prefab.is_object()) {
+        auto it = prefab.find("entities");
+        if (it != prefab.end()) arr = &*it;
+    }
+    if (!arr || !arr->is_array() || arr->empty()) {
+        Log::Print("[Prefab] 形式が正しくないため生成できません");
+        return nullptr;
+    }
+
+    // プレハブ内の GUID を新しい GUID へ付け替える（同じプレハブを何個生成してもぶつからないように）
+    std::unordered_map<uint64_t, uint64_t> guidRemap;
+    for (const auto& ej : *arr) {
+        if (ej.is_object() && ej.contains("guid")) {
+            guidRemap[ej["guid"].get<uint64_t>()] = Entity::GenerateGUID();
+        }
+    }
+
+    std::vector<std::shared_ptr<Entity>> created;
+    created.reserve(arr->size());
+    RC::Vector3 offset{0.0f, 0.0f, 0.0f};
+    for (const auto& ej : *arr) {
+        if (!ej.is_object()) continue;
+        auto entity = std::make_shared<Entity>();
+        entity->Deserialize(ej);
+
+        if (auto it = guidRemap.find(entity->Guid()); it != guidRemap.end()) {
+            entity->SetGuid(it->second);
+        } else {
+            entity->SetGuid(Entity::GenerateGUID());
+        }
+        if (auto it = guidRemap.find(entity->ParentGuid()); it != guidRemap.end()) {
+            entity->SetParentGuid(it->second);
+        } else {
+            entity->SetParentGuid(0); // プレハブの外の親は持ち込まない（ルートはシーン直下に置く）
+        }
+
+        auto* tr = entity->GetComponent<TransformComponent>();
+        if (created.empty() && position && tr) {
+            // ルートを position に置き、子孫も同じだけずらす（位置はワールド座標で持っているため）
+            offset = RC::Sub(*position, tr->position);
+        }
+        if (tr) tr->position = RC::Add(tr->position, offset);
+
+        if (auto* nsc = entity->GetComponent<NativeScriptComponent>()) {
+            nsc->SetScene(this);
+            nsc->SetSceneContext(currentContext_);
+        }
+        created.push_back(std::move(entity));
+    }
+    if (created.empty()) return nullptr;
+
+    // 更新ループ中に呼ばれても安全なように pendingEntities_ 経由で追加する。
+    // ランタイム（モデル・テクスチャ等）の初期化は、スクリプトが CreateEntity した物と同じくその場で行う。
+    for (const auto& e : created) AddEntity(e);
+    for (const auto& e : created) InitDynamicEntityRuntime(*e);
+    return created.front();
+}
+
+std::shared_ptr<Entity> ScriptableEntity::InstantiatePrefab(const std::string& path,
+                                                            const RC::Vector3& position) {
+    Scene* scene = GetScene();
+    if (!scene) {
+        Log::Print("[Script] InstantiatePrefab: シーンが未設定です (" + path + ")");
+        return nullptr;
+    }
+    return scene->InstantiatePrefab(path, &position);
 }
 
 // ScriptableEntity::MoveAndSlide の実体。
@@ -745,23 +1218,10 @@ void Scene::ResolveCollisions() {
             RC::Vector3 push1 = RC::Mul(normal, -result.depth * ratio1);
             RC::Vector3 push2 = RC::Mul(normal, result.depth * ratio2);
 
-            // 押し出したうえで、相手に向かう法線方向の速度成分を打ち消す（反発はさせない）
-            if (isDynamic1) {
-                tr1->position = RC::Add(tr1->position, push1);
-                float vDotN = RC::Dot(rb1->velocity, normal);
-                if (vDotN > 0.0f) { // e1 が e2 に向かって動いている
-                    RC::Vector3 vNormal = RC::Mul(normal, vDotN);
-                    rb1->velocity = RC::Sub(rb1->velocity, vNormal);
-                }
-            }
-            if (isDynamic2) {
-                tr2->position = RC::Add(tr2->position, push2);
-                float vDotN = RC::Dot(rb2->velocity, normal);
-                if (vDotN < 0.0f) { // e2 が e1 に向かって動いている（法線は 1→2 向き）
-                    RC::Vector3 vNormal = RC::Mul(normal, vDotN);
-                    rb2->velocity = RC::Sub(rb2->velocity, vNormal);
-                }
-            }
+            // 押し出したうえで、速度を衝突に合わせて直す（反発・摩擦）
+            if (isDynamic1) tr1->position = RC::Add(tr1->position, push1);
+            if (isDynamic2) tr2->position = RC::Add(tr2->position, push2);
+            ApplyContactVelocity(rb1, isDynamic1, rb2, isDynamic2, normal);
         }
     }
 }

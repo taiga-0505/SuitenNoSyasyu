@@ -114,6 +114,8 @@ public:
                          ID3D12Resource *resource);
 
 private:
-  ID3D12PipelineState *pso_ = nullptr;   ///< コンピュート PSO（非所有）
+  ID3D12PipelineState *pso_ = nullptr;   ///< コンピュート PSO（非所有。Initialize 時点のもの）
   ID3D12RootSignature *root_ = nullptr;  ///< ルートシグネチャ（非所有）
+  PipelineManager *pm_ = nullptr;        ///< 取得元（ホットリロードで PSO が差し替わるので Bind のたびに引き直す）
+  std::string key_;                      ///< パイプラインの登録名
 };

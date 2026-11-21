@@ -77,6 +77,7 @@ inline constexpr const char *kSettingDir = "Resources/Setting";
 inline constexpr const char *kAppConfigPath = "Resources/Setting/AppConfig.json";       ///< 解像度・タイトル・起動シーン
 inline constexpr const char *kEditorConfigPath = "Resources/Setting/EditorConfig.json"; ///< エディタのウィンドウ表示状態
 inline constexpr const char *kGameSettingsPath = "Resources/Setting/GameSettings.json"; ///< プレイヤー設定（感度・音量）
+inline constexpr const char *kInputActionsPath = "Resources/Setting/InputActions.json"; ///< キーコンフィグ（InputActions の割り当て）
 
 /// @brief 設定ファイルのパスを用意する（読み書きの直前に呼ぶ）
 /// @details - Resources/Setting/ が無ければ作る（保存時に ofstream が失敗しないように）。

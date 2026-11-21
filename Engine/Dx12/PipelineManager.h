@@ -55,7 +55,15 @@ public:
   /// @param rtvFmt 既定のレンダーターゲットフォーマット
   /// @param dsvFmt 既定の深度ステンシルフォーマット
   /// @note シェーダーコンパイラの初期化に失敗した場合は Log::Fatal で停止する。
-  void Init(ID3D12Device *device, DXGI_FORMAT rtvFmt, DXGI_FORMAT dsvFmt);
+  void Init(ID3D12Device *device, DXGI_FORMAT rtvFmt, DXGI_FORMAT dsvFmt,
+            DXGI_FORMAT outputFmt = DXGI_FORMAT_UNKNOWN);
+
+  /// @brief パイプラインが描き込むレンダーターゲットのフォーマット（シーン描画先と同じ）
+  DXGI_FORMAT RtvFormat() const { return rtvFmt_; }
+
+  /// @brief 画面（スワップチェーン・エディタの Viewport）のフォーマット
+  /// @details HDR のときはシーン（浮動小数点）と違う。最後のコピー（copyimage.output）だけがこれで作られる。
+  DXGI_FORMAT OutputFormat() const { return outFmt_; }
 
   /// @brief 登録済みのパイプラインをすべて解放する
   void Term();
@@ -95,6 +103,17 @@ public:
 
   /// @brief 登録済みのすべてのパイプラインを再ビルドする
   void RebuildAll();
+
+  /// @brief コンピュートパイプラインをシェーダーから作り直す（ルートシグネチャはそのまま）
+  /// @param key 登録名
+  /// @return 成功すれば true（失敗したら前の PSO のまま）
+  bool RebuildCompute(const std::string &key);
+
+  /// @brief 変更されたシェーダーファイルを使っているパイプラインを作り直す（ホットリロード）
+  /// @param changedFile 変更されたファイル（"Resources/Shader/Sprite/Sprite.PS.hlsl" など）
+  /// @return 作り直しを試みたパイプラインの数
+  /// @details .hlsli（共通ヘッダー）が変わったときは、どのシェーダーが読んでいるか分からないので全部作り直す。
+  size_t ReloadShaderFile(const std::filesystem::path &changedFile);
 
   /// @brief エンジン既定のパイプライン群を一括登録する
   /// @note 登録の前に PSO キャッシュを読み込み、登録後に保存する。
@@ -168,7 +187,7 @@ private:
   /// @param key  登録名
   /// @param desc パイプライン設定（現状は未使用）
   /// @return キャッシュキー（現状は登録名そのまま）
-  static std::string makePsoCacheKey_(const std::string &key, const PipelineDesc &desc);
+  std::string makePsoCacheKey_(const std::string &key, const PipelineDesc &desc) const;
 
 private:
   /// @brief 登録済みパイプラインのエントリ
@@ -181,11 +200,16 @@ private:
   struct ComputeEntry {
     Microsoft::WRL::ComPtr<ID3D12RootSignature> root; ///< ルートシグネチャ
     Microsoft::WRL::ComPtr<ID3D12PipelineState> pso;  ///< パイプラインステート
+    std::wstring csPath;                              ///< シェーダーファイル（ホットリロード用）
   };
+
+  /// @brief ファイルパスを比較できる形にする（区切り・大文字小文字・"./" をそろえる）
+  static std::wstring normalizePathForCompare_(const std::filesystem::path &p);
 
   ID3D12Device *device_ = nullptr; ///< デバイス（非所有）
   DXGI_FORMAT rtvFmt_{DXGI_FORMAT_R8G8B8A8_UNORM_SRGB}; ///< 既定の RTV フォーマット
   DXGI_FORMAT dsvFmt_{DXGI_FORMAT_D24_UNORM_S8_UINT};   ///< 既定の DSV フォーマット
+  DXGI_FORMAT outFmt_{DXGI_FORMAT_R8G8B8A8_UNORM_SRGB}; ///< 画面のフォーマット（HDR の最終コピー用）
 
   ShaderCompiler compiler_; ///< シェーダーコンパイラ
   std::unordered_map<std::string, Entry> pipelines_; ///< 登録済みパイプラインマップ

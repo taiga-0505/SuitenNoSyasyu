@@ -1,13 +1,15 @@
 #include "PipelineManager.h"
 #include "Common/ResourcePath.h"
 #include "Common/Log/Log.h"
+#include "DeferredReleaseQueue/DeferredReleaseQueue.h"
+#include <cwctype>
 #include <d3d12.h>
 #include <cassert>
 #include <format>
 #include <fstream>
 
 void PipelineManager::Init(ID3D12Device *device, DXGI_FORMAT rtvFmt,
-                           DXGI_FORMAT dsvFmt) {
+                           DXGI_FORMAT dsvFmt, DXGI_FORMAT outputFmt) {
   // ====================
   // デバイス
   // ====================
@@ -15,6 +17,7 @@ void PipelineManager::Init(ID3D12Device *device, DXGI_FORMAT rtvFmt,
   device_ = device;
   rtvFmt_ = rtvFmt;
   dsvFmt_ = dsvFmt;
+  outFmt_ = (outputFmt != DXGI_FORMAT_UNKNOWN) ? outputFmt : rtvFmt;
 
   // ====================
   // コンパイラ
@@ -219,9 +222,12 @@ bool PipelineManager::Rebuild(const std::string &key) {
   // ====================
   // 再構築
   // ====================
-  // パイプライン再構築
-  it->second.pipeline->Term();
-  it->second.pipeline->Init(device_);
+  // パイプライン再構築。
+  // 別の GraphicsPipeline に作ってから中身だけ差し替える（PostProcess などが持っているポインタを
+  // 変えないため）。作れなかったら前の PSO のまま。古い PSO は GPU が使い終わってから解放される。
+  GraphicsPipeline fresh;
+  fresh.Init(device_);
+  fresh.SetAllowBuildFailure(true);
 
   D3D12_SHADER_BYTECODE vsBC{VS.Blob()->GetBufferPointer(),
                              VS.Blob()->GetBufferSize()};
@@ -230,11 +236,94 @@ bool PipelineManager::Rebuild(const std::string &key) {
 
   const D3D12_INPUT_ELEMENT_DESC *il =
       d.inputLayout.empty() ? nullptr : d.inputLayout.data();
-  it->second.pipeline->BuildEx(il, static_cast<UINT>(d.inputLayout.size()),
-                               vsBC, psBC, rtvFmt_, dsvFmt_, d.opt,
-                               D3D12_CACHED_PIPELINE_STATE{});
-
+  fresh.BuildEx(il, static_cast<UINT>(d.inputLayout.size()), vsBC, psBC,
+                rtvFmt_, dsvFmt_, d.opt, D3D12_CACHED_PIPELINE_STATE{});
+  if (!fresh.PSO() || !fresh.Root()) {
+    Log::Print(std::format("[PipelineManager] Rebuild 失敗 (PSO): {}", key));
+    return false;
+  }
+  it->second.pipeline->TakeOver(fresh);
   return true;
+}
+
+bool PipelineManager::RebuildCompute(const std::string &key) {
+  auto it = computePipelines_.find(key);
+  if (it == computePipelines_.end() || it->second.csPath.empty() || !it->second.root) return false;
+
+  ShaderDesc cs{};
+  cs.path = it->second.csPath.c_str();
+  cs.entry = L"main";
+  cs.target = L"cs_6_0";
+#ifdef _DEBUG
+  cs.optimize = false;
+  cs.debugInfo = true;
+#else
+  cs.optimize = true;
+  cs.debugInfo = false;
+#endif
+  CompiledShader CS = compiler_.Compile(cs);
+  if (!CS.HasBlob()) {
+    Log::Print(std::format("[PipelineManager] RebuildCompute 失敗 (CS): {}\n{}", key, CS.Log()));
+    return false;
+  }
+
+  D3D12_COMPUTE_PIPELINE_STATE_DESC psoDesc{};
+  psoDesc.pRootSignature = it->second.root.Get();
+  psoDesc.CS = {CS.Blob()->GetBufferPointer(), CS.Blob()->GetBufferSize()};
+  Microsoft::WRL::ComPtr<ID3D12PipelineState> pso;
+  HRESULT hr;
+  {
+    // 作れなかったとき（ルートシグネチャと合わない等）にデバッグレイヤーで止まらないようにする
+    ScopedNoBreakOnD3D12Error noBreak(device_);
+    hr = device_->CreateComputePipelineState(&psoDesc, IID_PPV_ARGS(&pso));
+  }
+  if (FAILED(hr)) {
+    Log::Print(std::format("[PipelineManager] RebuildCompute 失敗 (PSO): {}", key));
+    return false;
+  }
+  std::wstring psoName = std::wstring(key.begin(), key.end()) + L"::PSO";
+  pso->SetName(psoName.c_str());
+
+  // 古い PSO は GPU が使い終わってから解放する（ComputeShader は Bind のたびに引き直す）
+  Microsoft::WRL::ComPtr<ID3D12PipelineState> old = it->second.pso;
+  DeferredReleaseQueue::DeferCall([old]() mutable { old.Reset(); });
+  it->second.pso = std::move(pso);
+  return true;
+}
+
+std::wstring PipelineManager::normalizePathForCompare_(const std::filesystem::path &p) {
+  std::wstring s = p.lexically_normal().generic_wstring();
+  while (s.rfind(L"./", 0) == 0) s.erase(0, 2);
+  for (auto &c : s) c = static_cast<wchar_t>(std::towlower(c));
+  return s;
+}
+
+size_t PipelineManager::ReloadShaderFile(const std::filesystem::path &changedFile) {
+  const std::wstring changed = normalizePathForCompare_(changedFile);
+  std::wstring ext = changedFile.extension().wstring();
+  for (auto &c : ext) c = static_cast<wchar_t>(std::towlower(c));
+  const bool isHeader = (ext == L".hlsli");
+
+  size_t tried = 0;
+  size_t ok = 0;
+  for (auto &[key, entry] : pipelines_) {
+    if (isHeader || normalizePathForCompare_(entry.desc.vsPath) == changed ||
+        normalizePathForCompare_(entry.desc.psPath) == changed) {
+      ++tried;
+      if (Rebuild(key)) ++ok;
+    }
+  }
+  for (auto &[key, entry] : computePipelines_) {
+    if (isHeader || normalizePathForCompare_(entry.csPath) == changed) {
+      ++tried;
+      if (RebuildCompute(key)) ++ok;
+    }
+  }
+  if (tried > 0) {
+    Log::Print(std::format("[HotReload] シェーダー更新: {} → {} / {} 個のパイプラインを作り直しました",
+                           changedFile.generic_string(), ok, tried));
+  }
+  return tried;
 }
 
 void PipelineManager::RebuildAll() {
@@ -403,11 +492,14 @@ void PipelineManager::SaveCache(const std::string &filePath) {
 }
 
 std::string PipelineManager::makePsoCacheKey_(const std::string &key,
-                                              const PipelineDesc &desc) {
+                                              const PipelineDesc &desc) const {
   // 本来は desc の全メンバをハッシュ化すべきだが、
-  // 今回は簡易的に「パイプライン名」をキーとする。
+  // 今回は簡易的に「パイプライン名 + 出力フォーマット」をキーとする。
   // (シェーダーが変更された場合は key が変わるかキャッシュを消す運用)
-  return key;
+  // 出力フォーマットを含めるのは、HDR の切り替えで同じ名前の PSO の形式が変わるため
+  //（含めないと毎回キャッシュ不一致 → 作り直しになり、起動が遅くなる）。
+  const DXGI_FORMAT fmt = (desc.opt.rtvFormatOverride != DXGI_FORMAT_UNKNOWN) ? desc.opt.rtvFormatOverride : rtvFmt_;
+  return key + "@" + std::to_string(static_cast<int>(fmt));
 }
 
 std::vector<D3D12_INPUT_ELEMENT_DESC>
@@ -1145,6 +1237,28 @@ void PipelineManager::RegisterDefaultPipelines() {
                     fullscreenVs,
                     L"Resources/Shader/CopyImage/CopyImage.PS.hlsl",
                     InputLayoutType::None, opt);
+
+    // HDR の最後のコピー：シーン形式（浮動小数点）→ 画面形式（sRGB）。出力形式だけが違う
+    opt.rtvFormatOverride = outFmt_;
+    CreateFromFiles("copyimage.output",
+                    fullscreenVs,
+                    L"Resources/Shader/CopyImage/CopyImage.PS.hlsl",
+                    InputLayoutType::None, opt);
+  }
+
+  // tonemap：HDR の明るさを画面の 0〜1 に収める（HDR のときだけ使う）
+  {
+    GPipelineOptions opt{};
+    opt.rootType = RootSignatureType::PostProcess;
+    opt.enableDepth = false;
+    opt.enableDepthWrite = false;
+    opt.enableAlphaBlend = false;
+    opt.cull = D3D12_CULL_MODE_NONE;
+
+    CreateFromFiles("tonemap.none",
+                    fullscreenVs,
+                    L"Resources/Shader/Tonemap/Tonemap.PS.hlsl",
+                    InputLayoutType::None, opt);
   }
 
   // grayscale：グレースケール
@@ -1795,6 +1909,7 @@ void PipelineManager::CreateCompute(const std::string &key,
   }
 
   ComputeEntry entry{};
+  entry.csPath = csPath;
   hr = device_->CreateRootSignature(0, sig->GetBufferPointer(), sig->GetBufferSize(),
                                     IID_PPV_ARGS(&entry.root));
   if (FAILED(hr)) {

@@ -164,6 +164,8 @@
     <ClCompile Include="..\Engine\Particle\GPUParticle.cpp" />
     <ClCompile Include="..\Engine\Audio\Sound.cpp" />
     <ClCompile Include="..\Engine\Audio\AudioEngine.cpp" />
+    <ClCompile Include="..\Engine\Audio\AudioStream.cpp" />
+    <ClCompile Include="..\Engine\Audio\AudioHrtf.cpp" />
     <ClCompile Include="..\Engine\Graphics\Skydome\Skydome.cpp" />
     <ClCompile Include="..\Engine\Graphics\Skybox\Skybox.cpp" />
     <ClCompile Include="..\Engine\Graphics\Mesh\MeshGenerator.cpp" />
@@ -227,6 +229,11 @@
     <!-- Common -->
     <ClInclude Include="..\Engine\Common\function\function.h" />
     <ClInclude Include="..\Engine\Common\ResourcePath.h" />
+    <ClInclude Include="..\Engine\Common\GameTime.h" />
+    <ClInclude Include="..\Engine\Common\SaveData.h" />
+    <ClInclude Include="..\Engine\Common\FileWatcher.h" />
+    <ClInclude Include="..\Engine\Common\Tween\Easing.h" />
+    <ClInclude Include="..\Engine\Common\Tween\Tween.h" />
     <ClInclude Include="..\Engine\Common\Log\Log.h" />
     <ClInclude Include="..\Engine\Common\Math\Math.h" />
     <ClInclude Include="..\Engine\Common\Math\MathTypes.h" />
@@ -269,6 +276,8 @@
     <ClInclude Include="..\Engine\Particle\GPUParticle.h" />
     <ClInclude Include="..\Engine\Audio\AudioEngine.h" />
     <ClInclude Include="..\Engine\Audio\Sound.h" />
+    <ClInclude Include="..\Engine\Audio\AudioStream.h" />
+    <ClInclude Include="..\Engine\Audio\AudioHrtf.h" />
     <ClInclude Include="..\Engine\Graphics\Skydome\Skydome.h" />
     <ClInclude Include="..\Engine\Graphics\Mesh\MeshGenerator.h" />
     <ClInclude Include="..\Engine\Graphics\Mesh\PrimitiveMesh.h" />
@@ -282,6 +291,7 @@
     <ClInclude Include="..\Engine\ImGuiManager\ImGuiManager.h" />
     <!-- Input -->
     <ClInclude Include="..\Engine\Input\Input.h" />
+    <ClInclude Include="..\Engine\Input\InputActions.h" />
     <!-- Render -->
     <ClInclude Include="..\Engine\Render\Light\Area\AreaLightManager.h" />
     <ClInclude Include="..\Engine\Render\Light\Directional\DirectionalLightManager.h" />
@@ -319,6 +329,8 @@
     <ClInclude Include="..\Engine\ECS\ModelRendererComponent.h" />
     <ClInclude Include="..\Engine\ECS\ColliderComponent.h" />
     <ClInclude Include="..\Engine\ECS\ColliderBroadphase.h" />
+    <ClInclude Include="..\Engine\ECS\PhysicsQuery.h" />
+    <ClInclude Include="..\Engine\ECS\TweenComponent.h" />
     <ClInclude Include="..\Engine\ECS\WaterComponent.h" />
     <ClInclude Include="..\Engine\ECS\AudioSourceComponent.h" />
     <ClInclude Include="..\Engine\ECS\AudioListenerComponent.h" />

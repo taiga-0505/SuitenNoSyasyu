@@ -86,6 +86,15 @@ public:
   /// @brief このシーンでのログ出力履歴をクリアする（次のシーンでキャッシュ利用ログを再び出すため）
   void ClearLogHistory() { loggedPaths_.clear(); }
 
+  /// @brief 読み込み済みテクスチャのパス一覧（ホットリロードの監視対象）
+  std::vector<std::string> LoadedPaths() const;
+
+  /// @brief ファイルを読み直して、同じ SRV のまま中身を差し替える（ホットリロード）
+  /// @param path 読み直すテクスチャのパス
+  /// @return 差し替えたら true（未読み込み・読み込み失敗なら false で前の絵のまま）
+  /// @warning SRV をその場で書き換えるので、GPU が描画していないとき（Dx12Core::WaitForGPU の後）に呼ぶこと。
+  bool Reload(const std::string &path);
+
 private:
   /// @brief GPU 側のコピーが完了したアップロード用中間リソースを解放する
   void ReleasePendingUploads();

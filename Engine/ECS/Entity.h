@@ -1,7 +1,10 @@
 #pragma once
 #include "IComponent.h"
+#include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <functional>
+#include <vector>
 #include <memory>
 #include <string>
 #include <typeindex>
@@ -56,6 +59,7 @@ public:
     ptr->entity_ = this;
     T &ref = *ptr;
     components_[std::type_index(typeid(T))] = std::move(ptr);
+    MarkComponentsChanged_();
     return ref;
   }
 
@@ -92,17 +96,43 @@ public:
   /// @tparam T 取り除くコンポーネントの型
   /// @note OnEntityDestroy() は呼ばずにその場で破棄する。
   template <typename T> void RemoveComponent() {
-    components_.erase(std::type_index(typeid(T)));
+    if (components_.erase(std::type_index(typeid(T))) > 0) {
+      MarkComponentsChanged_();
+    }
   }
 
   /// @brief 有効なコンポーネントをすべて更新する
   /// @param deltaTime 前フレームからの経過時間（秒）
+  /// @details IComponent::UpdateOrder() の小さい順（同じなら TypeName() 順）に呼ぶ。
+  ///          以前は unordered_map の並び順で呼んでいたため、Rigidbody とスクリプトの
+  ///          どちらが先かが実行ごとに変わりえた。
+  ///          Update 中にスクリプトが AddComponent / RemoveComponent しても落ちないよう、
+  ///          並びのコピーを回し、構成が変わったら呼ぶ前に生存を確認する。
+  ///          そのフレームに追加されたコンポーネントは次のフレームから更新される。
   void UpdateAll(float deltaTime) {
-    for (auto &[type, comp] : components_) {
-      if (comp && comp->IsEnabled()) {
+    if (updateListDirty_) RebuildUpdateList_();
+    if (updateList_.empty()) return;
+
+    if (updating_) return; // Update の中から同じエンティティの UpdateAll を呼ばれても二重に回さない
+    updating_ = true;
+
+    // Update 中の構成変更で updateList_ が作り直されても回し続けられるようにコピーする
+    updatingList_.assign(updateList_.begin(), updateList_.end());
+    const uint32_t version = componentsVersion_;
+    for (IComponent *comp : updatingList_) {
+      if (componentsVersion_ != version && !OwnsComponent_(comp)) continue; // このフレーム中に外された
+      if (comp->IsEnabled()) {
         comp->Update(deltaTime);
       }
     }
+    updating_ = false;
+  }
+
+  /// @brief すべてのコンポーネントを更新順で列挙する
+  /// @param fn IComponent& を受け取る関数
+  template <class Fn> void ForEachComponent(Fn &&fn) {
+    if (updateListDirty_) RebuildUpdateList_();
+    for (IComponent *comp : updateList_) fn(*comp);
   }
 
   /// @brief アクティブかどうかを返す
@@ -221,15 +251,22 @@ public:
     j["guid"] = guid_;
     j["parentGuid"] = parentGuid_;
     j["isFolder"] = isFolder_;
-    nlohmann::json comps = nlohmann::json::array();
+    // 型名順に並べて書き出す（unordered_map の並びに依存させず、保存ファイルの差分を安定させる）
+    std::vector<const IComponent*> sorted;
+    sorted.reserve(components_.size());
     for (auto& [type, comp] : components_) {
-      if (comp) {
-        nlohmann::json c;
-        c["type"] = comp->TypeName();
-        c["data"] = comp->Serialize();
-        c["enabled"] = comp->IsEnabled();
-        comps.push_back(c);
-      }
+      if (comp && comp->IsSerializable()) sorted.push_back(comp.get()); // 実行時だけの物は保存しない
+    }
+    std::sort(sorted.begin(), sorted.end(), [](const IComponent* a, const IComponent* b) {
+      return std::strcmp(a->TypeName(), b->TypeName()) < 0;
+    });
+    nlohmann::json comps = nlohmann::json::array();
+    for (const IComponent* comp : sorted) {
+      nlohmann::json c;
+      c["type"] = comp->TypeName();
+      c["data"] = comp->Serialize();
+      c["enabled"] = comp->IsEnabled();
+      comps.push_back(c);
     }
     j["components"] = comps;
     j["tags"] = intTags_;
@@ -256,6 +293,7 @@ public:
           comp->Deserialize(cj["data"]);
           if (cj.contains("enabled")) comp->SetEnabled(cj["enabled"].get<bool>());
           components_[std::type_index(typeid(*comp))] = std::move(comp);
+          MarkComponentsChanged_();
         }
       }
     }
@@ -313,6 +351,43 @@ private:
 
   std::unordered_map<std::type_index, std::unique_ptr<IComponent>> components_; ///< 型 → コンポーネント（1 型につき 1 つ）
   std::unordered_map<std::string, int> intTags_; ///< スクリプト間のやり取り用の軽量タグ
+
+  std::vector<IComponent *> updateList_;   ///< 更新順に並べたコンポーネント（components_ の非所有ビュー）
+  std::vector<IComponent *> updatingList_; ///< UpdateAll 中に回しているコピー（毎フレームの確保を避けるため保持）
+  bool updateListDirty_ = true;            ///< components_ が変わり updateList_ の作り直しが必要か
+  bool updating_ = false;                  ///< UpdateAll の実行中か（再入防止）
+  uint32_t componentsVersion_ = 0;         ///< components_ が変わるたびに増える（Update 中の取り外し検出用）
+
+  /// @brief components_ の構成が変わったことを記録する
+  void MarkComponentsChanged_() {
+    updateListDirty_ = true;
+    ++componentsVersion_;
+  }
+
+  /// @brief updateList_ を UpdateOrder() → TypeName() の順で作り直す
+  void RebuildUpdateList_() {
+    updateList_.clear();
+    updateList_.reserve(components_.size());
+    for (auto &[type, comp] : components_) {
+      if (comp) updateList_.push_back(comp.get());
+    }
+    std::sort(updateList_.begin(), updateList_.end(), [](const IComponent *a, const IComponent *b) {
+      const int oa = a->UpdateOrder();
+      const int ob = b->UpdateOrder();
+      if (oa != ob) return oa < ob;
+      return std::strcmp(a->TypeName(), b->TypeName()) < 0;
+    });
+    updateListDirty_ = false;
+  }
+
+  /// @brief 指定したコンポーネントがまだこのエンティティに付いているかを返す
+  /// @param comp 調べるポインタ（解放済みでもよい。中身は読まず値だけ比べる）
+  bool OwnsComponent_(const IComponent *comp) const {
+    for (auto &[type, c] : components_) {
+      if (c.get() == comp) return true;
+    }
+    return false;
+  }
 
   /// @brief 次の一意 ID を発行する
   /// @return 発行した ID（1 から連番）

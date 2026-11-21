@@ -18,6 +18,8 @@ bool ComputeShader::Initialize(ID3D12Device * /*device*/, PipelineManager *pm,
 
   pso_ = pm->GetComputePSO(pipelineKey);
   root_ = pm->GetComputeRoot(pipelineKey);
+  pm_ = pm;
+  key_ = pipelineKey;
 
   if (!pso_ || !root_) {
     Log::Print(std::format(
@@ -38,8 +40,14 @@ bool ComputeShader::Initialize(ID3D12Device * /*device*/, PipelineManager *pm,
 void ComputeShader::Bind(ID3D12GraphicsCommandList *cl) const {
   assert(cl);
   assert(IsReady());
+  // ホットリロードで PSO が作り直されていることがあるので、毎回登録先から引き直す
+  //（Initialize 時点のポインタは古い PSO の解放後に無効になる）
+  ID3D12PipelineState *pso = pso_;
+  if (pm_) {
+    if (ID3D12PipelineState *latest = pm_->GetComputePSO(key_)) pso = latest;
+  }
   cl->SetComputeRootSignature(root_);
-  cl->SetPipelineState(pso_);
+  cl->SetPipelineState(pso);
 }
 
 // ============================================================================

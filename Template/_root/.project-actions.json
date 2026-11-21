@@ -55,9 +55,15 @@
       "color": "#98c379"
     },
     {
-      "text": "$(github) GitHub公開",
-      "command": "powershell -ExecutionPolicy Bypass -File project/Chaso/scripts/publish-github.ps1",
-      "tooltip": "このリポジトリを GitHub に作成して push します（origin 設定済みなら push だけ）",
+      "text": "$(new-folder) 新規ゲーム(外部)",
+      "command": "powershell -ExecutionPolicy Bypass -File project/Chaso/scripts/new-game.ps1 -External",
+      "tooltip": "学校以外のメンバーと作るゲームリポジトリを作成します（公開先の GitHub アカウントも聞かれます。ボタンは外部用の構成になります）",
+      "color": "#d19a66"
+    },
+    {
+      "text": "$(github) GitHub公開(学校)",
+      "command": "powershell -ExecutionPolicy Bypass -File project/Chaso/scripts/publish-github.ps1 -Mode school",
+      "tooltip": "このリポジトリを学校用アカウント (taiga-0505) の GitHub に作成して push します（origin 設定済みなら push だけ）",
       "color": "#98c379"
     },
     {

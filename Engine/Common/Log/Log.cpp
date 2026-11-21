@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <Windows.h>
+#include <DbgHelp.h> // クラッシュ時のスタックトレース
 #include <algorithm>
 #include <format>
 #include <string>
@@ -11,6 +12,8 @@
 #include <iomanip>
 #include <nlohmann/json.hpp>
 #include "Common/ResourcePath.h"
+
+#pragma comment(lib, "dbghelp.lib")
 
 namespace {
   /// @brief 配布 exe で残すログファイルの最大数（古いものから削除）
@@ -87,6 +90,81 @@ namespace {
     for (size_t i = 0; i < logs.size() - keep; ++i) fs::remove(logs[i], ec);
   }
 
+  /// @brief アドレスを「モジュール名+オフセット」で書き出す（ASLR があってもマップファイル / PDB で引ける形）
+  /// @param ss   出力先
+  /// @param addr アドレス
+  void AppendModuleOffset(std::stringstream &ss, DWORD64 addr) {
+    HMODULE mod = nullptr;
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCWSTR>(addr), &mod) &&
+        mod) {
+      wchar_t path[MAX_PATH]{};
+      GetModuleFileNameW(mod, path, MAX_PATH);
+      const wchar_t *name = wcsrchr(path, L'\\');
+      name = name ? name + 1 : path;
+      char narrow[MAX_PATH]{};
+      WideCharToMultiByte(CP_UTF8, 0, name, -1, narrow, MAX_PATH, nullptr, nullptr);
+      ss << narrow << "+0x" << std::hex << (addr - reinterpret_cast<DWORD64>(mod));
+    } else {
+      ss << "0x" << std::hex << addr;
+    }
+  }
+
+  /// @brief 例外が起きたスレッドのスタックトレースを書き出す（デバッグ情報があれば関数名と行番号も）
+  /// @param ss  出力先
+  /// @param ctx 例外発生時のコンテキスト
+  void AppendStackTrace(std::stringstream &ss, const CONTEXT *ctx) {
+#if defined(_M_X64)
+    if (!ctx) {
+      return;
+    }
+    const HANDLE process = GetCurrentProcess();
+    const HANDLE thread = GetCurrentThread();
+    SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
+    SymInitialize(process, nullptr, TRUE);
+
+    CONTEXT c = *ctx;
+    STACKFRAME64 frame{};
+    frame.AddrPC.Offset = c.Rip;
+    frame.AddrPC.Mode = AddrModeFlat;
+    frame.AddrFrame.Offset = c.Rbp;
+    frame.AddrFrame.Mode = AddrModeFlat;
+    frame.AddrStack.Offset = c.Rsp;
+    frame.AddrStack.Mode = AddrModeFlat;
+
+    ss << "Stack trace (thread " << std::dec << GetCurrentThreadId() << "):\n";
+    for (int i = 0; i < 48; ++i) {
+      if (!StackWalk64(IMAGE_FILE_MACHINE_AMD64, process, thread, &frame, &c, nullptr, SymFunctionTableAccess64,
+                       SymGetModuleBase64, nullptr) ||
+          frame.AddrPC.Offset == 0) {
+        break;
+      }
+      ss << "  #" << std::dec << i << " ";
+      AppendModuleOffset(ss, frame.AddrPC.Offset);
+
+      alignas(SYMBOL_INFO) char symBuf[sizeof(SYMBOL_INFO) + 512]{};
+      auto *sym = reinterpret_cast<SYMBOL_INFO *>(symBuf);
+      sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+      sym->MaxNameLen = 511;
+      DWORD64 disp = 0;
+      if (SymFromAddr(process, frame.AddrPC.Offset, &disp, sym)) {
+        ss << "  " << sym->Name;
+      }
+      IMAGEHLP_LINE64 line{};
+      line.SizeOfStruct = sizeof(line);
+      DWORD lineDisp = 0;
+      if (SymGetLineFromAddr64(process, frame.AddrPC.Offset, &lineDisp, &line) && line.FileName) {
+        ss << "  (" << line.FileName << ":" << std::dec << line.LineNumber << ")";
+      }
+      ss << "\n";
+    }
+    SymCleanup(process);
+#else
+    (void)ss;
+    (void)ctx;
+#endif
+  }
+
   /// @brief 未処理例外をログに書き出してからプロセスを終了させる例外フィルター
   /// @param exceptionPointers 例外情報
   /// @return EXCEPTION_EXECUTE_HANDLER（プロセスを終了させる）
@@ -95,7 +173,9 @@ namespace {
     ss << "========================================\n";
     ss << "Fatal Error: Unhandled Exception\n";
     ss << "Exception Code: 0x" << std::hex << std::uppercase << exceptionPointers->ExceptionRecord->ExceptionCode << "\n";
-    ss << "Exception Address: 0x" << exceptionPointers->ExceptionRecord->ExceptionAddress << "\n";
+    ss << "Exception Address: 0x" << exceptionPointers->ExceptionRecord->ExceptionAddress << " (";
+    AppendModuleOffset(ss, reinterpret_cast<DWORD64>(exceptionPointers->ExceptionRecord->ExceptionAddress));
+    ss << ")\n";
 
     if (exceptionPointers->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
       ss << "Access Violation: ";
@@ -104,6 +184,7 @@ namespace {
         ss << " at address 0x" << exceptionPointers->ExceptionRecord->ExceptionInformation[1] << "\n";
       }
     }
+    AppendStackTrace(ss, exceptionPointers->ContextRecord);
     ss << "========================================\n";
 
     Log::Print(ss.str());

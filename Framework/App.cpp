@@ -5,6 +5,10 @@
 #include "../Editor/DebugBridge.h"
 #include "Common/ResourcePath.h"
 #include "Common/FrameProfiler.h"
+#include "Common/GameTime.h"
+#include "Input/InputActions.h"
+#include "Render/RenderContext.h"
+#include "Graphics/Texture/TextureManager/TextureManager.h"
 #include <cassert>
 #include <chrono>
 #include <format>
@@ -84,7 +88,10 @@ bool App::Init() {
   stepStart = now;
 
   // パイプライン管理（PipelineManager）
-  pm_.Init(device_, coreDesc_.rtvFormat, coreDesc_.dsvFormat);
+  // HDR のときはシーン（とすべてのパイプラインの描き込み先）を浮動小数点にし、
+  // 画面（スワップチェーン・Viewport）は従来の sRGB のまま。最後のコピーだけが画面形式で書く。
+  const DXGI_FORMAT sceneFormat = appConfig_.hdr ? DXGI_FORMAT_R16G16B16A16_FLOAT : coreDesc_.rtvFormat;
+  pm_.Init(device_, sceneFormat, coreDesc_.dsvFormat, coreDesc_.rtvFormat);
   pm_.RegisterDefaultPipelines();
 
   now = std::chrono::high_resolution_clock::now();
@@ -93,9 +100,11 @@ bool App::Init() {
 
   // ポストプロセス
   // オフスクリーンレンダリング用のテクスチャを初期化（PSO と同じ RTV フォーマットを使用）
-  renderTexture_.Initialize(&core_, appConfig_.width, appConfig_.height, coreDesc_.rtvFormat);
+  // シーンの描画先はパイプラインと同じ形式（HDR なら浮動小数点）。Viewport は画面と同じ形式
+  renderTexture_.Initialize(&core_, appConfig_.width, appConfig_.height, pm_.RtvFormat());
   viewportTexture_.Initialize(&core_, appConfig_.width, appConfig_.height, coreDesc_.rtvFormat);
   postProcess_ = std::make_unique<PostProcess>();
+  postProcess_->SetHdr(appConfig_.hdr);
   postProcess_->Initialize(&core_, &pm_, appConfig_.width, appConfig_.height);
 
   now = std::chrono::high_resolution_clock::now();
@@ -124,6 +133,9 @@ bool App::Init() {
 
   // ゲーム（初期シーンのロード）。起動シーンは Resources/Setting/AppConfig.json の "bootScene"
   game_.SetBootScene(appConfig_.bootScene);
+  // キーコンフィグ（無ければゲーム側の InputActions::Define の既定値のまま）
+  Chaso::InputActions::Get().Load(Chaso::kInputActionsPath);
+
   game_.Init(sceneCtx_);
 
   // 撮影モード（F9）からシーンを飛ばせるようにする。
@@ -171,6 +183,9 @@ int App::Run() {
       if (sceneCtx_.deltaTime > 0.1f) sceneCtx_.deltaTime = 0.1f; // 経過時間は最大 0.1 秒に抑える
       prevTime = currentTime;
 
+      // シェーダー・テクスチャのホットリロード（前のフレームの描画が終わった後、次を記録する前に行う）
+      PollHotReload(sceneCtx_.deltaTime);
+
 #if RC_ENABLE_IMGUI
       // ImGui フレーム開始
       imgui_.NewFrame();
@@ -193,6 +208,7 @@ int App::Run() {
       if (editorManager_.IsRestartRequested()) {
           game_.RestoreCurrentScene(sceneCtx_);
           editorManager_.ClearRestartRequest();
+          Chaso::Time::Get().Reset(); // 前のプレイのスロー・ヒットストップを持ち越さない
           // リスタートしたら必ず再生状態になるようにする
           currentPlayState = PlayState::Playing;
           sceneCtx_.playState = PlayState::Playing;
@@ -201,12 +217,14 @@ int App::Run() {
               if (currentPlayState == PlayState::Playing && sceneCtx_.playState == PlayState::Stopped) {
                   // 停止中から再生開始した瞬間：現在のシーンのバックアップを取る
                   game_.BackupCurrentScene();
+                  Chaso::Time::Get().Reset();
                   if (sceneCtx_.camera) {
                       sceneCtx_.camera->SetUseDebug(false);
                   }
               } else if (currentPlayState == PlayState::Stopped) {
                   // 停止された場合、バックアップからシーンを復元する
                   game_.RestoreCurrentScene(sceneCtx_);
+                  Chaso::Time::Get().Reset();
                   // 鳴り残っている SE / BGM も止めて、編集モードは無音から始める
                   AudioEngine::Get().StopAll();
               }
@@ -288,6 +306,9 @@ int App::Run() {
       // PostProcess::Draw が最終出力先（バックバッファ）をレンダーターゲットにしたまま戻るので、
       // そのまま上に描く。2D パイプラインは深度を使わないので DSV は要らない。
       game_.RenderOverlay(sceneCtx_, cl_);
+
+      // HDR のとき：トーンマップ済みの絵（とオーバーレイ）を画面へ写す（HDR でなければ何もしない）
+      postProcess_->Resolve(cl_, nullptr);
 #endif
 
 #if RC_ENABLE_IMGUI
@@ -299,6 +320,9 @@ int App::Run() {
 
       // ポストプロセス後のオーバーレイ（viewportTexture_ がレンダーターゲットのまま）
       game_.RenderOverlay(sceneCtx_, cl_);
+
+      // HDR のとき：トーンマップ済みの絵（とオーバーレイ）を viewportTexture_ へ写す（HDR でなければ何もしない）
+      postProcess_->Resolve(cl_, &viewportTexture_);
 
       // Viewport 描画用に SRV 状態へ遷移
       viewportTexture_.TransitionToShaderResource(cl_);
@@ -346,6 +370,32 @@ void App::Update() {
   // 入力更新
   input_->Update();
 
+  // アクション入力（"Jump" などの論理名）を計算する
+  {
+    Chaso::InputSnapshot snap;
+    for (int k = 0; k < 256; ++k) snap.keys[k] = input_->IsKeyPressed(static_cast<uint8_t>(k));
+    for (int m = 0; m < 4; ++m) snap.mouse[m] = input_->IsMousePressed(m); // DIMOUSESTATE は 4 ボタン
+    for (const auto &[name, bit] : Chaso::InputBinding::PadButtonNames()) {
+      if (input_->IsXInputButtonPressed(static_cast<WORD>(bit))) snap.padButtons |= static_cast<uint16_t>(bit);
+    }
+    // 未接続時は XInput の状態が 0 のままなので、IsConnected（毎回 XInputGetState する）は呼ばない
+    const auto stick = [](SHORT v) { return (std::max)(-1.0f, static_cast<float>(v) / 32767.0f); };
+    snap.padAxes[Chaso::InputBinding::LX] = stick(input_->GetXInputThumbLX());
+    snap.padAxes[Chaso::InputBinding::LY] = stick(input_->GetXInputThumbLY());
+    snap.padAxes[Chaso::InputBinding::RX] = stick(input_->GetXInputThumbRX());
+    snap.padAxes[Chaso::InputBinding::RY] = stick(input_->GetXInputThumbRY());
+    snap.padAxes[Chaso::InputBinding::LT] = static_cast<float>(input_->GetXInputLeftTrigger()) / 255.0f;
+    snap.padAxes[Chaso::InputBinding::RT] = static_cast<float>(input_->GetXInputRightTrigger()) / 255.0f;
+    Chaso::InputActions::Get().Update(snap);
+  }
+
+  // ====================
+  // 時間
+  // ====================
+  // ゲーム時間（タイムスケール・ヒットストップ・スロー）を進める。
+  // シーンの更新は Chaso::Time::Get().DeltaTime() を使う（sceneCtx_.deltaTime は実時間のまま）。
+  Chaso::Time::Get().Tick(sceneCtx_.deltaTime, sceneCtx_.isSimulating(), sceneCtx_.isPlaying());
+
   // ====================
   // ゲーム
   // ====================
@@ -359,6 +409,55 @@ void App::Update() {
   // シーン遷移（OnExit → OnEnter → 新シーンの Update）が同じフレーム内で終わった後に
   // 呼ばれるので、次のシーンが同じ BGM を要求していれば途切れない。
   AudioEngine::Get().Update();
+}
+
+void App::PollHotReload(float deltaTime) {
+#if RC_ENABLE_IMGUI
+  if (!hotReloadReady_) {
+    // シェーダーは実行時に読む Resources/Shader を見る（Chaso/Resources 側はビルド時に同期される）
+    shaderWatcher_.AddDirectory("Resources/Shader", {".hlsl", ".hlsli"});
+    shaderWatcher_.SetInterval(0.5f);
+    // テクスチャは「今読み込んでいる物」だけを見る（Resources 全体を毎回なめない）
+    textureWatcher_.SetFileProvider([this]() {
+      std::vector<std::string> files;
+      textureResolvedToKey_.clear();
+      for (const auto &key : RC::GetRenderContext().Textures().LoadedPaths()) {
+        const std::string resolved =
+            std::filesystem::path(Chaso::ResolvePath(key)).lexically_normal().generic_string();
+        textureResolvedToKey_[resolved] = key;
+        files.push_back(resolved);
+      }
+      return files;
+    });
+    textureWatcher_.SetInterval(1.0f);
+    hotReloadReady_ = true;
+  }
+
+  const std::vector<std::string> shaders = shaderWatcher_.Poll(deltaTime);
+  const std::vector<std::string> textures = textureWatcher_.Poll(deltaTime);
+  if (shaders.empty() && textures.empty()) return;
+
+  // 描画中の PSO・SRV を書き換えないよう、GPU が前のフレームを終えるのを待つ
+  core_.WaitForGPU();
+
+  // .hlsli（共通ヘッダー）は全パイプラインを作り直すので、何個変わっても 1 回だけ
+  bool headerDone = false;
+  for (const auto &path : shaders) {
+    const bool isHeader = std::filesystem::path(path).extension() == ".hlsli";
+    if (isHeader) {
+      if (headerDone) continue;
+      headerDone = true;
+    }
+    pm_.ReloadShaderFile(path);
+  }
+
+  for (const auto &path : textures) {
+    auto it = textureResolvedToKey_.find(path);
+    RC::GetRenderContext().Textures().Reload(it != textureResolvedToKey_.end() ? it->second : path);
+  }
+#else
+  (void)deltaTime;
+#endif
 }
 
 void App::Render() {
@@ -480,6 +579,7 @@ void App::LoadAppConfig() {
       if (j.contains("width")) appConfig_.width = j["width"];
       if (j.contains("height")) appConfig_.height = j["height"];
       if (j.contains("fullscreen")) appConfig_.fullscreen = j["fullscreen"];
+      if (j.contains("hdr") && j["hdr"].is_boolean()) appConfig_.hdr = j["hdr"].get<bool>();
       appConfig_.title = ReadPerConfigString_(j, "title", appConfig_.title);
       appConfig_.bootScene = ReadPerConfigString_(j, "bootScene", appConfig_.bootScene);
       loaded = true;
@@ -494,9 +594,9 @@ void App::LoadAppConfig() {
   appConfig_.fullscreen = true;
 #endif
 
-  Log::Print(std::format("[App] {} AppConfig ({}): {}x{} Fullscreen:{} Title:\"{}\" BootScene:\"{}\"",
+  Log::Print(std::format("[App] {} AppConfig ({}): {}x{} Fullscreen:{} HDR:{} Title:\"{}\" BootScene:\"{}\"",
                          loaded ? "Loaded" : "Default", BuildConfigName_(),
-                         appConfig_.width, appConfig_.height, appConfig_.fullscreen,
+                         appConfig_.width, appConfig_.height, appConfig_.fullscreen, appConfig_.hdr,
                          appConfig_.title, appConfig_.bootScene));
 }
 
@@ -546,7 +646,7 @@ void App::ResizeWindow(int width, int height, bool fullscreen) {
   core_.Resize(appConfig_.width, appConfig_.height);
 
   // 4. RenderTexture のリサイズ（ディスクリプタを再利用して再初期化）
-  renderTexture_.Initialize(&core_, appConfig_.width, appConfig_.height, coreDesc_.rtvFormat);
+  renderTexture_.Initialize(&core_, appConfig_.width, appConfig_.height, pm_.RtvFormat());
   viewportTexture_.Initialize(&core_, appConfig_.width, appConfig_.height, coreDesc_.rtvFormat);
 
   // 5. PostProcess のリサイズ

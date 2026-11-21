@@ -10,9 +10,11 @@
 #include "imgui/ImGuizmo.h"
 #include "Log/Log.h"
 #include "Dx12/Dx12Core.h"
+#include "Dx12/PipelineManager.h"
 #include "Dx12/Utility/ScreenCapture.h"
 #include "RC.h"
 #include "../Game/Scene/Scene.h"
+#include "../Game/Scene/Prefab.h"
 #include "Render/RenderContext.h"
 #include "Graphics/PostProcess/PostProcess.h"
 #include "Graphics/Texture/TextureManager/TextureManager.h"
@@ -865,7 +867,42 @@ void EditorManager::Update(Dx12Core* core, std::function<void()> onMenuAppend, S
             selectedEntity_ = e;
           }
           if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("エンティティの位置から聞こえる SE（左右の定位・距離減衰・ドップラー）。\n聞き手は Audio Listener、無ければカメラ");
+            ImGui::SetTooltip("エンティティの位置から聞こえる SE（左右の定位・距離減衰）。\n聞き手は Audio Listener、無ければカメラ");
+          }
+          if (ImGui::MenuItem("Audio Source (ASMR 耳元ボイス)")) {
+            // 耳元で囁く声。Voice バス（鳴っている間 BGM / 環境音を自動で下げる）・3D・近接効果つき
+            auto e = currentScene->CreateEntity("ASMR Voice");
+            e->AddComponent<TransformComponent>();
+            auto& audio = e->AddComponent<AudioSourceComponent>();
+            audio.bus = AudioBus::Voice;
+            audio.spatialBlend = 1.0f;
+            audio.minDistance = 0.1f;
+            audio.maxDistance = 5.0f;
+            audio.innerRadius = 0.02f;
+            audio.nearFieldDistance = 0.5f;
+            audio.nearFieldIldDb = 6.0f; // HRTF 自体にも左右差があるので控えめに上乗せする
+            audio.dopplerLevel = 0.0f;
+            audio.fadeIn = 0.3f;
+            audio.fadeOut = 0.5f;
+            audio.reverbSend = 0.15f; // 部屋の響き（Mixer の Room）を少しだけ乗せる
+            selectedEntity_ = e;
+          }
+          if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("聞き手（Audio Listener / カメラ）の 5〜20cm 横に置くと、片耳に囁く声になります。\n"
+                              "モノラル素材を使ってください。バイノーラル録音の素材はスロットの Spatial を 2D に");
+          }
+          if (ImGui::MenuItem("Audio Source (環境音ループ)")) {
+            // 雨・焚き火・部屋鳴りなど。長い素材は自動でストリーミングになる
+            auto e = currentScene->CreateEntity("Ambience");
+            e->AddComponent<TransformComponent>();
+            auto& audio = e->AddComponent<AudioSourceComponent>();
+            audio.bus = AudioBus::Ambience;
+            audio.fadeIn = 2.0f;
+            audio.fadeOut = 2.0f;
+            selectedEntity_ = e;
+          }
+          if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Ambience バス・2D・フェードイン/アウト 2 秒。クリップを追加して Loop と Play On Awake を設定します");
           }
           ImGui::EndMenu();
         }
@@ -1229,6 +1266,11 @@ void EditorManager::DrawEntityNode(std::shared_ptr<Entity> e, Scene* currentScen
                         folder->SetParentGuid(e->Guid());
                         expandEntityGuid_ = e->Guid();
                     }
+                }
+                // 子孫ごと Resources/Prefabs/<名前>.prefab.json へ保存する（同名があれば上書き）
+                if (ImGui::MenuItem("Save as Prefab")) {
+                    const nlohmann::json prefab = Prefab::Capture(currentScene->GetEntities(), e);
+                    Prefab::Save(prefab, Prefab::SanitizeFileName(e->Name()));
                 }
                 if (ImGui::MenuItem("Delete")) {
                     currentScene->DestroyEntityRecursive(e);
@@ -1942,9 +1984,6 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
               std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
               if (currentScene) {
-                  auto e = currentScene->CreateEntity(p.stem().string());
-                  auto& tr = e->AddComponent<TransformComponent>();
-
                   // ドラッグ先の座標計算（スクリーン座標からワールド座標へ）
                   float mouseX = ImGui::GetMousePos().x - vMin.x;
                   float mouseY = ImGui::GetMousePos().y - vMin.y;
@@ -1982,30 +2021,40 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                           dropPos = ::Add(camPos, ::Multiply(rayDir, 10.0f)); // 水平に見ている場合は適当に前に置く
                       }
                   }
-                  tr.position = dropPos;
-
-                  if (ext == ".gltf" || ext == ".obj") {
-                      auto& ren = e->AddComponent<ModelRendererComponent>();
-                      ren.modelPath = droppedPath;
-                      ren.modelHandle = RC::LoadModel(p.string());
-                      // アニメーションを含むモデルには AnimationComponent を自動で付ける。
-                      // モデルのロードは非同期なので、ハンドル経由ではなくファイルを直接見て判定する。
-                      if (RC::GetAnimationCount(p.string()) > 0) {
-                          e->AddComponent<AnimationComponent>();
+                  // プレハブ（*.prefab.json）はドロップした位置に生成する
+                  if (Prefab::IsPrefabPath(droppedPath)) {
+                      if (auto root = currentScene->InstantiatePrefab(droppedPath, dropPos)) {
+                          currentScene->FlushPendingEntities();
+                          selectedEntity_ = root;
                       }
-                  } else if (ext == ".png" || ext == ".jpg" || ext == ".dds") {
-                      // 画像はスプライトとして追加。位置はドロップしたスクリーン座標（ピクセル）
-                      auto& spr = e->AddComponent<SpriteRendererComponent>();
-                      spr.spritePath = droppedPath;
-                      float gameW = width, gameH = height;
-                      if (core) { gameW = core->Viewport().Width; gameH = core->Viewport().Height; }
-                      const float gx = (width > 0.0f) ? mouseX / width * gameW : 0.0f;
-                      const float gy = (height > 0.0f) ? mouseY / height * gameH : 0.0f;
-                      tr.position = { gx - spr.size.x * 0.5f, gy - spr.size.y * 0.5f, 0.0f };
-                      tr.rotation = { 0.0f, 0.0f, 0.0f };
-                      tr.scale = { 1.0f, 1.0f, 1.0f };
-                      // 実際のロードは DataDrivenScene の描画ループで行われる（spritePath を見て遅延ロード）
-                      selectedEntity_ = e;
+                  } else {
+                      auto e = currentScene->CreateEntity(p.stem().string());
+                      auto& tr = e->AddComponent<TransformComponent>();
+                      tr.position = dropPos;
+
+                      if (ext == ".gltf" || ext == ".obj") {
+                          auto& ren = e->AddComponent<ModelRendererComponent>();
+                          ren.modelPath = droppedPath;
+                          ren.modelHandle = RC::LoadModel(p.string());
+                          // アニメーションを含むモデルには AnimationComponent を自動で付ける。
+                          // モデルのロードは非同期なので、ハンドル経由ではなくファイルを直接見て判定する。
+                          if (RC::GetAnimationCount(p.string()) > 0) {
+                              e->AddComponent<AnimationComponent>();
+                          }
+                      } else if (ext == ".png" || ext == ".jpg" || ext == ".dds") {
+                          // 画像はスプライトとして追加。位置はドロップしたスクリーン座標（ピクセル）
+                          auto& spr = e->AddComponent<SpriteRendererComponent>();
+                          spr.spritePath = droppedPath;
+                          float gameW = width, gameH = height;
+                          if (core) { gameW = core->Viewport().Width; gameH = core->Viewport().Height; }
+                          const float gx = (width > 0.0f) ? mouseX / width * gameW : 0.0f;
+                          const float gy = (height > 0.0f) ? mouseY / height * gameH : 0.0f;
+                          tr.position = { gx - spr.size.x * 0.5f, gy - spr.size.y * 0.5f, 0.0f };
+                          tr.rotation = { 0.0f, 0.0f, 0.0f };
+                          tr.scale = { 1.0f, 1.0f, 1.0f };
+                          // 実際のロードは DataDrivenScene の描画ループで行われる（spritePath を見て遅延ロード）
+                          selectedEntity_ = e;
+                      }
                   }
               }
           }
@@ -3588,6 +3637,11 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                ImGui::Checkbox("Is Kinematic (プログラムで動かす)", &rb->isKinematic);
                ImGui::DragFloat("Mass (質量)", &rb->mass, 0.1f, 0.001f, 10000.0f);
                ImGui::DragFloat3("Velocity (速度)", &rb->velocity.x, 0.1f);
+               ImGui::DragFloat("Gravity Scale (重力の倍率)", &rb->gravityScale, 0.05f, -10.0f, 10.0f);
+               ImGui::DragFloat("Damping (空気抵抗)", &rb->linearDamping, 0.01f, 0.0f, 100.0f);
+               ImGui::SliderFloat("Restitution (跳ね返り)", &rb->restitution, 0.0f, 1.0f);
+               ImGui::SliderFloat("Friction (摩擦)", &rb->friction, 0.0f, 1.0f);
+               ImGui::DragFloat("Max Speed (最高速度, 0=無制限)", &rb->maxSpeed, 0.1f, 0.0f, 1000.0f);
                ImGui::Unindent(8.0f);
             }
         }
@@ -3653,6 +3707,9 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                     const char* busItems[] = {
                         "BGM (1本だけ・シーンをまたいで継続)",
                         "SE (重ね再生)",
+                        "Voice (セリフ・囁き)",
+                        "Ambience (環境音)",
+                        "Foley (耳かき・ブラッシング等)",
                     };
                     int busIdx = static_cast<int>(audio->bus);
                     if (ImGui::Combo("Bus (バス)##Audio", &busIdx, busItems, IM_ARRAYSIZE(busItems))) {
@@ -3661,12 +3718,39 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                     }
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip(
-                            "BGM : 常に1本だけ鳴ります。同じ曲なら再要求しても継続、\n"
-                            "      次のシーンにも同じ曲を置いておけば途切れません\n"
-                            "SE  : Play() のたびに重ねて鳴り、鳴り終わると自動で回収されます");
+                            "BGM      : 常に1本だけ鳴ります。同じ曲なら再要求しても継続、\n"
+                            "           次のシーンにも同じ曲を置いておけば途切れません\n"
+                            "SE       : Play() のたびに重ねて鳴り、鳴り終わると自動で回収されます\n"
+                            "Voice    : SE と同じ重ね再生。鳴っている間は BGM / 環境音を自動で下げます（ダッキング）\n"
+                            "Ambience : 環境音。SE と同じ重ね再生\n"
+                            "Foley    : 耳かき・ブラッシングなどの効果音。SE と同じ重ね再生\n"
+                            "バスごとの音量は下の Mixer で調整できます（オプション画面の音量設定に対応）");
                     }
                 }
                 ImGui::SliderFloat("Volume (音量)##Audio", &audio->volume, 0.0f, 1.0f, "%.2f");
+                ImGui::DragFloat("Fade In (秒)##Audio", &audio->fadeIn, 0.01f, 0.0f, 30.0f, "%.2f");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Play() で鳴らし始めるときのフェードイン。\nBGM では曲を差し替えるときのクロスフェード時間になります");
+                }
+                ImGui::DragFloat("Fade Out (秒)##Audio", &audio->fadeOut, 0.01f, 0.0f, 30.0f, "%.2f");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Stop()・非アクティブ化・エンティティ破棄（ループ / ストリーミングの音）、\n"
+                                      "BGM の持ち主がいなくなったときのフェードアウト");
+                }
+                {
+                    // こもり（ローパス）: 0 = 無効。ドラッグで 0 にすると無効に戻る
+                    ImGui::DragFloat("Low Pass (こもり Hz)##Audio", &audio->lowPassHz, 10.0f, 0.0f, 8000.0f,
+                                     audio->lowPassHz > 0.0f ? "%.0f Hz" : "無効");
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("高い音を削ってこもらせます（布越し 800Hz / 壁越し 400Hz / 水中 300Hz 程度）。0 で無効。\n"
+                                          "鳴っている音にも約 0.1 秒かけて滑らかに反映されます。\n"
+                                          "XAudio2 の制限で 48kHz 出力なら約 8000Hz が上限です");
+                    }
+                    ImGui::SliderFloat("Reverb Send (響き)##Audio", &audio->reverbSend, 0.0f, 1.0f, "%.2f");
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("部屋の響きに送る量。響き方は下の Mixer の Room（エンジン全体で 1 つ）で決まります");
+                    }
+                }
 
                 {
                     // 再生開始時に自動で鳴らすスロット
@@ -3691,7 +3775,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                 }
 
                 // ============================================
-                // 3D 音響（SE バスのみ）
+                // 3D 音響（BGM 以外）
                 // ============================================
                 if (!audio->IsBgm()) {
                     ImGui::SeparatorText("3D Sound (3D 音響)");
@@ -3699,7 +3783,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip(
                             "0 = 2D（位置に関係なく鳴る。従来通り）\n"
-                            "1 = 3D（このエンティティの位置から聞こえる。左右の定位・距離減衰・ドップラー）\n"
+                            "1 = 3D（このエンティティの位置から聞こえる。左右の定位・距離減衰・耳元の近接効果）\n"
                             "聞き手は Audio Listener を付けたエンティティ、無ければ描画中のカメラ\n"
                             "スロットごとの Spatial で「常に 2D」「常に 3D」に上書きできます");
                     }
@@ -3715,9 +3799,16 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                             ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
                                                "この環境では 3D 音響を初期化できませんでした（2D で鳴ります。Console 参照）");
                         }
-                        ImGui::DragFloat("Min Distance (最大音量の距離)##Audio", &audio->minDistance, 0.1f, 0.0f, 10000.0f, "%.1f");
+                        ImGui::DragFloat("Min Distance (最大音量の距離)##Audio", &audio->minDistance, 0.01f, 0.0f, 10000.0f, "%.2f");
                         if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("この距離までは減衰しません。この内側では音が全方向から聞こえます（真横を通過してもパンが暴れない）");
+                            ImGui::SetTooltip("この距離までは減衰しません");
+                        }
+                        ImGui::DragFloat("Inner Radius (定位が滲む半径)##Audio", &audio->innerRadius, 0.005f, 0.0f, 10000.0f, "%.3f");
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip(
+                                "この半径の内側では音が全方向から聞こえます（真横を通過してもパンが暴れない）。\n"
+                                "耳元の囁きで左右をはっきりさせたいときは 0.01〜0.03 程度に小さくします\n"
+                                "（以前のバージョンでは Min Distance と同じ値でした）");
                         }
                         ImGui::DragFloat("Max Distance (無音になる距離)##Audio", &audio->maxDistance, 0.5f, 0.0f, 10000.0f, "%.1f");
                         if (audio->maxDistance < audio->minDistance) audio->maxDistance = audio->minDistance;
@@ -3738,7 +3829,21 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                         }
                         ImGui::SliderFloat("Doppler Level (ドップラー)##Audio", &audio->dopplerLevel, 0.0f, 5.0f, "%.2f");
                         if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("動く音源のピッチ変化。0 で無効、1 で物理的に正しい値（音速 343.5 ワールド単位/秒）");
+                            ImGui::SetTooltip("動く音源のピッチ変化。0 で無効、1 で物理的に正しい値（音速 343.5 ワールド単位/秒）。\n"
+                                              "耳元でゆっくり動く音では音程が揺れるので、ASMR では 0 を推奨");
+                        }
+                        ImGui::DragFloat("Near Field (耳元効果の距離)##Audio", &audio->nearFieldDistance, 0.01f, 0.0f, 10.0f, "%.2f");
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip(
+                                "この距離より近く、かつ横にある音ほど、遠い側の耳を下げます（頭が音を遮る効果の簡易版）。\n"
+                                "片耳だけに囁かれる感覚が出ます。0 で無効。ステレオ出力（ヘッドホン）のときだけ働きます。\n"
+                                "HRTF 使用時は HRTF 自体に左右差があるので 4〜8dB 程度の上乗せで十分です");
+                        }
+                        if (audio->nearFieldDistance > 0.0f) {
+                            ImGui::SliderFloat("Near Field ILD (遠い耳の減衰)##Audio", &audio->nearFieldIldDb, 0.0f, 30.0f, "%.1f dB");
+                            if (AudioEngine::Get().IsInitialized() && AudioEngine::Get().GetOutputChannels() != 2) {
+                                ImGui::TextDisabled("出力がステレオではないため、耳元効果は働きません");
+                            }
                         }
 
                         // 減衰カーブのプレビュー（横軸 = 距離 0 ~ Max、縦軸 = 音量）
@@ -3760,6 +3865,11 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                                                 dist, gain * 100.0f, std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z));
                         }
                         ImGui::TextDisabled("モノラルの音源が最も自然に定位します（ステレオは L/R を音源の左右に配置）");
+                        if (AudioEngine::Get().IsHrtfActive()) {
+                            ImGui::TextDisabled("HRTF: 有効（モノラルの 3D 音は Steam Audio で前後・上下まで立体化）");
+                        } else {
+                            ImGui::TextDisabled("HRTF: 無効（パンニングで定位。設定は下の Mixer）");
+                        }
                     }
                 }
 
@@ -3807,6 +3917,26 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                     ImGui::SliderFloat("Vol", &s.volume, 0.0f, 1.0f, "%.2f");
                     ImGui::SameLine();
                     ImGui::Checkbox("Loop (ループ)", &s.loop);
+                    {
+                        const char* loadItems[] = {
+                            "Auto (長さで自動)",
+                            "Memory (メモリに展開)",
+                            "Stream (ストリーミング)",
+                        };
+                        int loadIdx = static_cast<int>(s.loadMode);
+                        ImGui::SetNextItemWidth(230.0f);
+                        if (ImGui::Combo("Load (読み込み)", &loadIdx, loadItems, IM_ARRAYSIZE(loadItems))) {
+                            s.loadMode = static_cast<AudioLoadMode>(loadIdx);
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip(
+                                "Auto   : %.0f 秒より長ければストリーミング、短ければメモリに展開\n"
+                                "Memory : 全体を展開（短い SE 向け。何本重ねても軽い）\n"
+                                "Stream : 少しずつ読みながら再生（長いボイス・環境音・BGM 向け。メモリをほぼ使わない）\n"
+                                "変更は次にクリップを読み込んだとき（シーンの読み直しなど）に反映されます",
+                                AudioEngine::Get().GetStreamThreshold());
+                        }
+                    }
 
                     // スロットごとの 2D / 3D 上書き（SE バスのみ。再生中の音にもその場で反映される）
                     if (!audio->IsBgm()) {
@@ -3843,14 +3973,51 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                         ImGui::TextDisabled("ここに .wav / .mp3 をドロップしてください");
                     } else if (s.IsLoaded()) {
                         const int ch = AudioEngine::Get().ClipChannels(s.clipHandle);
-                        ImGui::TextDisabled("Loaded: %.1f sec / %s", AudioEngine::Get().ClipDuration(s.clipHandle),
-                                            ch == 1 ? "mono" : (ch == 2 ? "stereo" : "multi-ch"));
+                        ImGui::TextDisabled("Loaded: %.1f sec / %s / %s", AudioEngine::Get().ClipDuration(s.clipHandle),
+                                            ch == 1 ? "mono" : (ch == 2 ? "stereo" : "multi-ch"),
+                                            AudioEngine::Get().IsClipStreamed(s.clipHandle) ? "stream" : "memory");
                         if (audio->EffectiveBlend(s) > 0.0f && ch > 1 && ImGui::IsItemHovered()) {
                             ImGui::SetTooltip("3D 音響ではモノラル音源のほうが自然に定位します（ステレオでも鳴ります）");
                         }
                     } else {
                         ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "ロード失敗（パスや形式を確認。Console 参照）");
                     }
+                    // キュー（再生がこの時刻を通過するとスクリプトに通知される）
+                    if (ImGui::TreeNode("cues", "Cues (タイミング) %zu", s.cues.size())) {
+                        int removeCue = -1;
+                        for (size_t q = 0; q < s.cues.size(); ++q) {
+                            ImGui::PushID(static_cast<int>(q));
+                            ImGui::SetNextItemWidth(90.0f);
+                            ImGui::DragFloat("##cueTime", &s.cues[q].time, 0.01f, 0.0f, 36000.0f, "%.2f 秒");
+                            if (s.cues[q].time < 0.0f) s.cues[q].time = 0.0f;
+                            ImGui::SameLine();
+                            char cueNameBuf[256];
+                            strncpy_s(cueNameBuf, sizeof(cueNameBuf), s.cues[q].name.c_str(), _TRUNCATE);
+                            ImGui::SetNextItemWidth(200.0f);
+                            if (ImGui::InputText("##cueName", cueNameBuf, sizeof(cueNameBuf))) s.cues[q].name = cueNameBuf;
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("x")) removeCue = static_cast<int>(q);
+                            ImGui::PopID();
+                        }
+                        if (removeCue >= 0) s.cues.erase(s.cues.begin() + removeCue);
+                        const float nowSec = audio->SlotTime(s.name);
+                        if (ImGui::SmallButton(nowSec >= 0.0f ? "+ 今の位置に追加" : "+ 追加")) {
+                            AudioCue q;
+                            q.time = (nowSec >= 0.0f) ? nowSec : 0.0f;
+                            q.name = "cue" + std::to_string(s.cues.size() + 1);
+                            s.cues.push_back(std::move(q));
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("このスロットを試聴中なら、その再生位置にキューを追加します。\n"
+                                              "スクリプト: audio->SetCueCallback([](const AudioCueEvent& e) { ... e.cue ... });");
+                        }
+                        if (!audio->LastCueName().empty()) {
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("最後に通過: %s", audio->LastCueName().c_str());
+                        }
+                        ImGui::TreePop();
+                    }
+
                     if (ImGui::Button("Play (試聴)")) audio->Play(s.name);
                     ImGui::SameLine();
                     if (ImGui::Button("Stop (停止)")) audio->Stop();
@@ -3873,7 +4040,163 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                 } else {
                     ImGui::Text("State: %zu voice(s) playing (3D: %zu)", audio->ActiveSeCount(), audio->ActiveSpatialCount());
                 }
+                // 再生位置・一時停止（BGM なら自分の曲、それ以外なら最後に鳴らした音）
+                {
+                    auto& engine = AudioEngine::Get();
+                    const int vid = audio->MainVoiceId();
+                    const float dur = engine.GetVoiceDuration(vid);
+                    if (vid >= 0 && dur > 0.0f) {
+                        // ドラッグ中は毎フレームシークせず、離したときに 1 回だけシークする
+                        static int s_seekVoice = -1;
+                        static float s_seekTime = 0.0f;
+                        float t = (s_seekVoice == vid) ? s_seekTime : engine.GetVoiceTime(vid);
+                        const int cur = static_cast<int>(t);
+                        const int total = static_cast<int>(dur);
+                        char label[64];
+                        snprintf(label, sizeof(label), "%02d:%02d / %02d:%02d", cur / 60, cur % 60, total / 60, total % 60);
+                        ImGui::SliderFloat("Position (再生位置)##AudioSeek", &t, 0.0f, dur, label);
+                        if (ImGui::IsItemActive()) {
+                            s_seekVoice = vid;
+                            s_seekTime = t;
+                        }
+                        if (ImGui::IsItemDeactivatedAfterEdit()) {
+                            engine.SeekVoice(vid, t);
+                            s_seekVoice = -1;
+                        } else if (!ImGui::IsItemActive() && s_seekVoice == vid) {
+                            s_seekVoice = -1;
+                        }
+                        if (audio->IsPaused()) {
+                            if (ImGui::Button("Resume (再開)##Audio")) audio->Resume();
+                        } else {
+                            if (ImGui::Button("Pause (一時停止)##Audio")) audio->Pause();
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button("Stop (フェードアウト)##Audio")) audio->Stop();
+                    }
+                }
                 ImGui::TextDisabled("Script: GetComponent<AudioSourceComponent>()->Play(\"name\")");
+
+                // エンジン全体のミキサー（シーンには保存されない。ゲーム側はオプション画面から API で設定する）
+                if (ImGui::TreeNode("Mixer (エンジン全体の設定)##Audio")) {
+                    auto& engine = AudioEngine::Get();
+                    float master = engine.GetMasterVolume();
+                    if (ImGui::SliderFloat("Master##AudioMix", &master, 0.0f, 1.0f, "%.2f")) engine.SetMasterVolume(master);
+                    for (int b = 0; b < static_cast<int>(AudioBus::Count); ++b) {
+                        const AudioBus bus = static_cast<AudioBus>(b);
+                        float bv = engine.GetBusVolume(bus);
+                        ImGui::PushID(b);
+                        if (ImGui::SliderFloat(AudioBusName(bus), &bv, 0.0f, 1.0f, "%.2f")) engine.SetBusVolume(bus, bv);
+                        ImGui::PopID();
+                    }
+
+                    ImGui::SeparatorText("Ducking (Voice 中に他を下げる)");
+                    AudioDuckingSettings duck = engine.GetDucking();
+                    bool duckChanged = false;
+                    duckChanged |= ImGui::Checkbox("Enabled##AudioDuck", &duck.enabled);
+                    duckChanged |= ImGui::SliderFloat("Depth##AudioDuck", &duck.depthDb, -30.0f, 0.0f, "%.1f dB");
+                    duckChanged |= ImGui::DragFloat("Attack (秒)##AudioDuck", &duck.attackSec, 0.01f, 0.0f, 5.0f, "%.2f");
+                    duckChanged |= ImGui::DragFloat("Release (秒)##AudioDuck", &duck.releaseSec, 0.01f, 0.0f, 10.0f, "%.2f");
+                    ImGui::TextUnformatted("下げるバス:");
+                    for (int b = 0; b < static_cast<int>(AudioBus::Count); ++b) {
+                        const AudioBus bus = static_cast<AudioBus>(b);
+                        if (bus == AudioBus::Voice) continue;
+                        bool on = (duck.targetMask & AudioBusBit(bus)) != 0;
+                        ImGui::SameLine();
+                        ImGui::PushID(100 + b);
+                        if (ImGui::Checkbox(AudioBusName(bus), &on)) {
+                            duck.targetMask = on ? (duck.targetMask | AudioBusBit(bus)) : (duck.targetMask & ~AudioBusBit(bus));
+                            duckChanged = true;
+                        }
+                        ImGui::PopID();
+                    }
+                    if (duckChanged) engine.SetDucking(duck);
+                    ImGui::TextDisabled("現在の倍率: %.0f%%", engine.CurrentDuckGain() * 100.0f);
+
+                    ImGui::SeparatorText("Room / Low Pass (部屋の響き・こもり)");
+                    {
+                        if (engine.IsReverbAvailable()) {
+                            const AudioRoom room = engine.GetRoom();
+                            if (ImGui::BeginCombo("Room##AudioMix", AudioRoomName(room))) {
+                                for (int r = 0; r < static_cast<int>(AudioRoom::Count); ++r) {
+                                    const AudioRoom rr = static_cast<AudioRoom>(r);
+                                    if (ImGui::Selectable(AudioRoomName(rr), rr == room)) engine.SetRoom(rr);
+                                }
+                                ImGui::EndCombo();
+                            }
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetTooltip("エンジン全体で共有する響き。各 Audio Source の Reverb Send の量だけ響きます");
+                            }
+                        } else if (engine.IsInitialized()) {
+                            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "リバーブを作成できませんでした（出力が 48kHz 超など。Console 参照）");
+                        }
+                        ImGui::TextUnformatted("バスのこもり（0 で無効）:");
+                        for (int b = 0; b < static_cast<int>(AudioBus::Count); ++b) {
+                            const AudioBus bus = static_cast<AudioBus>(b);
+                            float hz = engine.GetBusLowPass(bus);
+                            if (hz >= AudioEngine::kLowPassOpenHz) hz = 0.0f;
+                            ImGui::PushID(200 + b);
+                            if (ImGui::DragFloat(AudioBusName(bus), &hz, 10.0f, 0.0f, 8000.0f, hz > 0.0f ? "%.0f Hz" : "無効")) {
+                                engine.SetBusLowPass(bus, hz);
+                            }
+                            ImGui::PopID();
+                        }
+                    }
+
+                    ImGui::SeparatorText("Limiter (音割れ防止)");
+                    AudioLimiterSettings lim = engine.GetLimiter();
+                    bool limChanged = ImGui::Checkbox("Enabled##AudioLim", &lim.enabled);
+                    int release = static_cast<int>(lim.release);
+                    int loudness = static_cast<int>(lim.loudness);
+                    if (ImGui::SliderInt("Release##AudioLim", &release, 1, 20)) { lim.release = static_cast<uint32_t>(release); limChanged = true; }
+                    if (ImGui::SliderInt("Loudness##AudioLim", &loudness, 1, 1800)) { lim.loudness = static_cast<uint32_t>(loudness); limChanged = true; }
+                    if (limChanged) engine.SetLimiter(lim);
+                    if (engine.IsInitialized() && !engine.IsLimiterAvailable()) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "リミッターを作成できませんでした（Console 参照）");
+                    }
+
+                    ImGui::SeparatorText("3D Spatializer (立体音響の方式)");
+                    {
+                        const char* spItems[] = {
+                            "Auto (ヘッドホンなら HRTF)",
+                            "Panning (左右の音量差のみ)",
+                            "HRTF (常に Steam Audio)",
+                        };
+                        int spIdx = static_cast<int>(engine.GetSpatializer());
+                        if (ImGui::Combo("Spatializer##AudioMix", &spIdx, spItems, IM_ARRAYSIZE(spItems))) {
+                            engine.SetSpatializer(static_cast<AudioSpatializer>(spIdx));
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip(
+                                "Auto    : 出力がステレオ（ヘッドホン想定）で Steam Audio が使えれば HRTF\n"
+                                "Panning : X3DAudio の左右パンのみ（軽い。前後・上下は分からない）\n"
+                                "HRTF    : 常に HRTF（スピーカーでは不自然になります）\n"
+                                "HRTF はモノラルの 3D 音にだけ使われます。鳴っている音にもその場で反映されます");
+                        }
+                        const std::string hrtfStatus = AudioHrtf::StatusText();
+                        ImGui::TextDisabled("Steam Audio: %s", hrtfStatus.c_str());
+                        ImGui::TextDisabled("現在: %s / HRTF で鳴っている音: %zu", engine.IsHrtfActive() ? "HRTF" : "Panning",
+                                            engine.ActiveHrtfCount());
+                    }
+
+                    ImGui::SeparatorText("Output (出力デバイス)");
+                    const AudioOutputType outType = engine.GetOutputType();
+                    ImGui::Text("%s / %u ch / %u Hz",
+                                outType == AudioOutputType::Headphones ? "Headphones (ヘッドホン)"
+                                : outType == AudioOutputType::Speakers ? "Speakers (スピーカー)"
+                                                                       : "Unknown (不明)",
+                                engine.GetOutputChannels(), engine.GetOutputSampleRate());
+                    if (outType == AudioOutputType::Speakers) {
+                        ImGui::TextDisabled("ASMR の定位はヘッドホン前提です。ゲーム内で「ヘッドホン推奨」の案内を出すと親切です");
+                    }
+                    ImGui::TextDisabled("Voices: %zu (stream %zu) / Clips: %zu / Device resets: %d",
+                                        engine.ActiveSeCount(), engine.ActiveStreamCount(), engine.ClipCount(),
+                                        engine.DeviceResetCount());
+                    if (ImGui::Button("出力デバイスを再検出##Audio")) engine.RequestDeviceReset();
+                    bool pauseBgm = engine.GetPauseAffectsBgm();
+                    if (ImGui::Checkbox("一時停止で BGM も止める##Audio", &pauseBgm)) engine.SetPauseAffectsBgm(pauseBgm);
+                    ImGui::TextDisabled("ここの設定はシーンに保存されません");
+                    ImGui::TreePop();
+                }
                 ImGui::Unindent(8.0f);
             }
         }
@@ -4067,7 +4390,9 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
           peParticle_ = std::make_unique<GPUParticle>();
           if (core) {
             // リソース初期化（背景色: 暗いグレー）
-            peRenderTexture_.Initialize(core, 512, 512, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, {0.1f, 0.1f, 0.1f, 1.0f});
+            // パーティクルの PSO と同じ形式（HDR なら浮動小数点）にする
+            const DXGI_FORMAT peFormat = pm ? pm->RtvFormat() : DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+            peRenderTexture_.Initialize(core, 512, 512, peFormat, {0.1f, 0.1f, 0.1f, 1.0f});
 
             // カメラ初期化
             peCamera_.Initialize(nullptr, {0.0f, 2.0f, -15.0f}, {0.0f, 0.0f, 0.0f}, 0.45f, 1.0f, 0.1f, 100.0f);

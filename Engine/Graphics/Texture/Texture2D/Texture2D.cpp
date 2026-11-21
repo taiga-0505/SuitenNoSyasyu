@@ -4,6 +4,7 @@
 #include "function/function.h"
 #include "Dx12/CommandContext/CommandContext.h"
 #include "Common/Log/Log.h"
+#include "DeferredReleaseQueue/DeferredReleaseQueue.h"
 #include <format>
 #include <filesystem>
 #include <system_error>
@@ -78,6 +79,7 @@ bool Texture2D::LoadCPU(const std::string &path, bool srgb) {
   }
 
   metadata_ = mipImages_.GetMetadata();
+  srgb_ = srgb;
 
   // sRGB 設定の反映
   if (srgb) {
@@ -90,6 +92,66 @@ bool Texture2D::LoadCPU(const std::string &path, bool srgb) {
 }
 
 Microsoft::WRL::ComPtr<ID3D12Resource> Texture2D::Upload(SRVManager &srv, CommandContext &cmd) {
+  auto uploadRes = CreateAndUpload_(srv, cmd);
+  if (!uploadRes) return nullptr;
+
+  // SRV 作成（Cubemap と 2D で分岐）
+  if (metadata_.IsCubemap()) {
+    srv_ = srv.CreateTextureCube(resource_.Get(), metadata_.format, (UINT)metadata_.mipLevels);
+  } else {
+    srv_ = srv.CreateTexture2D(resource_.Get(), metadata_.format, (UINT)metadata_.mipLevels);
+  }
+
+  return uploadRes;
+}
+
+void Texture2D::WriteSrv_(SRVManager &srv, D3D12_CPU_DESCRIPTOR_HANDLE cpu) const {
+  D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
+  desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+  desc.Format = metadata_.format;
+  if (metadata_.IsCubemap()) {
+    desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+    desc.TextureCube.MostDetailedMip = 0;
+    desc.TextureCube.MipLevels = (UINT)metadata_.mipLevels;
+    desc.TextureCube.ResourceMinLODClamp = 0.0f;
+  } else {
+    desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    desc.Texture2D.MostDetailedMip = 0;
+    desc.Texture2D.MipLevels = (UINT)metadata_.mipLevels;
+    desc.Texture2D.ResourceMinLODClamp = 0.0f;
+  }
+  srv.Device()->CreateShaderResourceView(resource_.Get(), &desc, cpu);
+}
+
+Microsoft::WRL::ComPtr<ID3D12Resource> Texture2D::ReloadFrom(SRVManager &srv, CommandContext &cmd,
+                                                             Texture2D &fresh) {
+  if (!srv_.IsValid() || fresh.mipImages_.GetImageCount() == 0) return nullptr;
+
+  // 失敗したら元に戻せるよう、今の中身を退避してから入れ替える
+  Microsoft::WRL::ComPtr<ID3D12Resource> oldResource = std::move(resource_);
+  DirectX::ScratchImage oldImages = std::move(mipImages_);
+  const DirectX::TexMetadata oldMeta = metadata_;
+
+  mipImages_ = std::move(fresh.mipImages_);
+  metadata_ = fresh.metadata_;
+
+  auto uploadRes = CreateAndUpload_(srv, cmd);
+  if (!uploadRes) {
+    resource_ = std::move(oldResource);
+    mipImages_ = std::move(oldImages);
+    metadata_ = oldMeta;
+    return nullptr;
+  }
+
+  isFallback_ = fresh.isFallback_;
+  srgb_ = fresh.srgb_;
+  WriteSrv_(srv, srv_.cpu); // 同じスロットを書き換えるので、使っている側は何も変えなくてよい
+  DeferredReleaseQueue::DeferRelease(std::move(oldResource));
+  fresh.metadata_ = {};
+  return uploadRes;
+}
+
+Microsoft::WRL::ComPtr<ID3D12Resource> Texture2D::CreateAndUpload_(SRVManager &srv, CommandContext &cmd) {
   ID3D12Device *device = srv.Device();
   if (mipImages_.GetImageCount() == 0) {
     Log::Print("[Texture2D] LoadCPU must be called before Upload (or texture was cleared during load).");
@@ -194,13 +256,6 @@ Microsoft::WRL::ComPtr<ID3D12Resource> Texture2D::Upload(SRVManager &srv, Comman
 
   uploadRes->Unmap(0, nullptr);
   cmd.Transition(resource_.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-
-  // SRV 作成（Cubemap と 2D で分岐）
-  if (metadata_.IsCubemap()) {
-    srv_ = srv.CreateTextureCube(resource_.Get(), metadata_.format, (UINT)metadata_.mipLevels);
-  } else {
-    srv_ = srv.CreateTexture2D(resource_.Get(), metadata_.format, (UINT)metadata_.mipLevels);
-  }
 
   return uploadRes;
 }

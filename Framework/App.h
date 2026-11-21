@@ -12,7 +12,10 @@
 #include "PipelineManager.h"
 #include "Scene.h"
 #include "Window/Window.h"
+#include "Common/FileWatcher.h"
 #include <memory>
+#include <string>
+#include <unordered_map>
 
 class TitleScene;
 class SelectScene;
@@ -66,6 +69,10 @@ private:
   /// @brief フレーム描画処理
   void Render();
 
+  /// @brief シェーダー・テクスチャの書き換えを見て作り直す（Debug / Development ビルドだけ）
+  /// @param deltaTime 実時間の経過秒
+  void PollHotReload(float deltaTime);
+
 private:
   ID3D12GraphicsCommandList *cl_ = nullptr; ///< 現在のフレームのコマンドリスト
   ID3D12Device *device_ = nullptr;            ///< D3D12 デバイス
@@ -100,6 +107,12 @@ private:
 
   // 起動引数 --autotest によるシーン自動巡回
   AutoTest autoTest_; ///< 自動テスト（無効なら何もしない）
+
+  // ホットリロード（Debug / Development ビルドだけ動く）
+  Chaso::FileWatcher shaderWatcher_;  ///< Resources/Shader の監視
+  Chaso::FileWatcher textureWatcher_; ///< 読み込み済みテクスチャの監視
+  std::unordered_map<std::string, std::string> textureResolvedToKey_; ///< 実ファイルのパス → TextureManager のキー
+  bool hotReloadReady_ = false;       ///< 監視の初期化が済んだか
 
   // Win32 メッセージ
   MSG msg_{}; ///< Win32 メッセージ構造体
