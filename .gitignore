@@ -114,8 +114,9 @@ project/Resources/desktop.ini
 pso_cache.bin
 .agents/workflows/
 
-# ステージ進行のセーブデータ（StageProgress）
+# ステージ進行のセーブデータ（StageProgress。旧形式と SaveData の Saves/）
 project/StageProgress.json
+project/Saves/
 
 # Engine design notes (local only)
 EngineNotes/

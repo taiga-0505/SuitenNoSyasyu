@@ -1,5 +1,6 @@
 #pragma once
 #include "Common/Log/Log.h"
+#include "Common/SaveData.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <array>
@@ -23,8 +24,9 @@
 ///     StageSelectScript      -> IsUnlocked / IsCleared / BestScore を読んで一覧を描く
 ///     ResultScreenScript     -> Current() / NextSceneName() で「次のステージへ」「もう一度」を決める
 ///
-///   保存先は project/StageProgress.json（セーブデータなので Resources/Setting/ には置かない。.gitignore 済み）。
-///   ファイルが無ければ「ステージ 1 だけ解放」で始まる。
+///   保存はエンジンの SaveData（作業フォルダの Saves/default.json の "stageProgress" 以下。.gitignore 済み）。
+///   一時ファイル経由の書き込み・.bak・チェックサムで、保存中に落ちても進行が壊れない。
+///   ファイルが無ければ「ステージ 1 だけ解放」で始まる（旧 project/StageProgress.json があれば一度だけ取り込む）。
 ///
 ///   Singleton にしている理由: セーブデータ（解放・クリア・ベスト記録）はゲーム全体で 1 つであり、
 ///   GameMode・セレクト・リザルト・クリア演出というシーンの異なる利用者が同じ進行を見る必要があるため。
@@ -211,51 +213,46 @@ public:
   // ------------------------------------------------------------------
 
   /// @brief セーブデータを読み込む（無ければ「ステージ 1 だけ解放」のまま）
-  /// @return ファイルを開けたら true（パースに失敗して初期状態へ戻した場合も true）
+  /// @details エンジンの SaveData（Saves/default.json）の "stageProgress" 以下から読む。
+  ///          まだ無ければ、旧形式の project/StageProgress.json を一度だけ取り込んで SaveData へ書き直す。
+  /// @return 進行データが見つかったら true（新規なら false）
   bool Load() {
     loaded_ = true;
-    std::ifstream ifs(kPath);
-    if (!ifs.is_open()) return false;
-    // 項目ごとに型を確かめて読み、壊れたファイルなら初期状態から始める
-    try {
-      nlohmann::json j;
-      ifs >> j;
-      if (j.contains("unlocked") && j["unlocked"].is_number_integer()) {
-        unlocked_ = std::clamp(j["unlocked"].get<int>(), 0, kStageCount - 1);
-      }
-      if (j.contains("stages") && j["stages"].is_array()) {
-        const auto &arr = j["stages"];
-        for (size_t i = 0; i < arr.size() && i < static_cast<size_t>(kStageCount); ++i) {
-          const auto &s = arr[i];
-          if (s.contains("cleared") && s["cleared"].is_boolean()) cleared_[i] = s["cleared"].get<bool>();
-          if (s.contains("best") && s["best"].is_number_integer()) bestScore_[i] = s["best"].get<int>();
-        }
-      }
-      Log::Print(std::string("[StageProgress] loaded ") + kPath);
-    } catch (...) {
-      Log::Print(std::string("[StageProgress] failed to parse ") + kPath + " (starting fresh)");
-      unlocked_ = 0;
-      cleared_.fill(false);
-      bestScore_.fill(0);
+    unlocked_ = 0;
+    cleared_.fill(false);
+    bestScore_.fill(0);
+
+    auto &save = Chaso::SaveData::Get();
+    save.Load(kSlot); // 無ければ空から（新規ゲーム）。壊れていれば SaveData が .bak から読む
+    if (save.Has(kKey)) {
+      FromJson(save.Get<nlohmann::json>(kKey, nlohmann::json::object()));
+      Log::Print(std::string("[StageProgress] loaded Saves/") + kSlot + ".json");
+      return true;
     }
+
+    // 旧形式（project/StageProgress.json）からの移行
+    std::ifstream ifs(kLegacyPath);
+    if (!ifs.is_open()) return false;
+    const nlohmann::json legacy = nlohmann::json::parse(ifs, nullptr, /*allow_exceptions=*/false);
+    if (!legacy.is_object()) {
+      Log::Print(std::string("[StageProgress] failed to parse legacy ") + kLegacyPath + " (starting fresh)");
+      return false;
+    }
+    FromJson(legacy);
+    Save();
+    Log::Print(std::string("[StageProgress] migrated ") + kLegacyPath + " -> Saves/" + kSlot + ".json");
     return true;
   }
 
-  /// @brief セーブデータを書き出す
+  /// @brief セーブデータを書き出す（SaveData の "stageProgress" 以下を置き換えて保存する）
   /// @return 書けたら true
   bool Save() const {
-    std::ofstream ofs(kPath);
-    if (!ofs.is_open()) {
-      Log::Print(std::string("[StageProgress] failed to open for write: ") + kPath);
+    auto &save = Chaso::SaveData::Get();
+    save.Set(kKey, ToJson());
+    if (!save.Save()) {
+      Log::Print(std::string("[StageProgress] failed to write Saves/") + save.CurrentSlot() + ".json");
       return false;
     }
-    nlohmann::json stages = nlohmann::json::array();
-    for (int i = 0; i < kStageCount; ++i) {
-      stages.push_back({{"scene", Info(i).sceneName},
-                        {"cleared", cleared_[static_cast<size_t>(i)]},
-                        {"best", bestScore_[static_cast<size_t>(i)]}});
-    }
-    ofs << nlohmann::json{{"unlocked", unlocked_}, {"stages", stages}}.dump(2);
     return true;
   }
 
@@ -267,7 +264,39 @@ private:
     if (!loaded_) const_cast<StageProgress *>(this)->Load();
   }
 
-  static constexpr const char *kPath = "../project/StageProgress.json"; ///< セーブデータ（配布パッケージには含めない）
+  /// @brief 進行の値を JSON にする
+  /// @return {"unlocked": n, "stages": [{"scene", "cleared", "best"}, ...]}
+  nlohmann::json ToJson() const {
+    nlohmann::json stages = nlohmann::json::array();
+    for (int i = 0; i < kStageCount; ++i) {
+      stages.push_back({{"scene", Info(i).sceneName},
+                        {"cleared", cleared_[static_cast<size_t>(i)]},
+                        {"best", bestScore_[static_cast<size_t>(i)]}});
+    }
+    return nlohmann::json{{"unlocked", unlocked_}, {"stages", stages}};
+  }
+
+  /// @brief JSON から進行の値を読む（項目ごとに型を確かめ、合わない項目は初期値のまま）
+  /// @param j ToJson と同じ形の JSON
+  void FromJson(const nlohmann::json &j) {
+    if (!j.is_object()) return;
+    if (j.contains("unlocked") && j["unlocked"].is_number_integer()) {
+      unlocked_ = std::clamp(j["unlocked"].get<int>(), 0, kStageCount - 1);
+    }
+    if (j.contains("stages") && j["stages"].is_array()) {
+      const auto &arr = j["stages"];
+      for (size_t i = 0; i < arr.size() && i < static_cast<size_t>(kStageCount); ++i) {
+        const auto &s = arr[i];
+        if (!s.is_object()) continue;
+        if (s.contains("cleared") && s["cleared"].is_boolean()) cleared_[i] = s["cleared"].get<bool>();
+        if (s.contains("best") && s["best"].is_number_integer()) bestScore_[i] = s["best"].get<int>();
+      }
+    }
+  }
+
+  static constexpr const char *kSlot = "default";        ///< SaveData のスロット名（Saves/default.json）
+  static constexpr const char *kKey = "stageProgress";   ///< スロット内のキー
+  static constexpr const char *kLegacyPath = "../project/StageProgress.json"; ///< 旧形式の保存先（移行用に読むだけ）
 
   bool loaded_ = false;    ///< Load 済みか
   bool unlockAll_ = false; ///< デバッグ用の全解放フラグ（保存しない）

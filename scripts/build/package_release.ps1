@@ -12,7 +12,7 @@
                 Resources/        … .blend などの制作用データは除外
                     Setting/      … AppConfig.json, GameSettings.json
 
-    含めないもの: pdb / map / lib、Resources/Setting/EditorConfig.json、imgui.ini、StageProgress.json（開発中のセーブ）、
+    含めないもの: pdb / map / lib、Resources/Setting/EditorConfig.json、imgui.ini、StageProgress.json / Saves/（開発中のセーブ）、
                   pso_cache.bin（GPU 依存のキャッシュ）、Resources/blender、*.blend、*.py
 .PARAMETER Configuration
     ビルド構成（Debug, Development, Release）。既定: Release
