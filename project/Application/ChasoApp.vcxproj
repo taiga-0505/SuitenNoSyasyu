@@ -260,6 +260,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClInclude Include="..\Application\Game\Framework\GameSettings.h" />
     <ClInclude Include="..\Application\Game\Framework\UnderwaterLook.h" />
     <ClInclude Include="..\Application\Game\Framework\GameAudioFx.h" />
+    <ClInclude Include="..\Application\Game\Framework\GameInput.h" />
     <ClInclude Include="..\Application\Game\Framework\InkScreenFx.h" />
     <ClInclude Include="..\Application\Game\Framework\DeathScreenFx.h" />
     <ClInclude Include="..\Application\Game\Framework\ClearChartFx.h" />

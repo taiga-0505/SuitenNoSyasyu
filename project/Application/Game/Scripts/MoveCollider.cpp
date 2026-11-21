@@ -2,6 +2,7 @@
 #include "ECS/ScriptRegistry.h"
 #include "ECS/TransformComponent.h"
 #include "Input/Input.h"
+#include "Game/Framework/GameInput.h"
 #include "Common/EngineConfig.h"
 #if RC_ENABLE_IMGUI
 #include "imgui/imgui.h"
@@ -38,64 +39,21 @@ public:
     virtual void Accumulate(const Input& input, float& moveX, float& moveZ) const = 0;
 };
 
-/// @brief キーボード（WASD / 矢印）
-class KeyboardMoveInput final : public MoveInputSource {
+/// @brief 入力アクション（MoveX / MoveY）
+/// @details 以前はキーボード（WASD / 矢印）とコントローラー（左スティック・十字キー）を
+///          別々のクラスで読んでいたが、どのキー・ボタンで動かすかは InputActions の割り当て
+///          （GameInput::DefineDefaults）に移したので、ここはアクションの値を足すだけになった。
+///          スティックのデッドゾーンも InputActions 側で掛かる。
+class ActionMoveInput final : public MoveInputSource {
 public:
-    /// @brief WASD / 矢印キーの入力を足し込む
-    /// @param input 入力管理
+    /// @brief MoveX / MoveY の値を足し込む
+    /// @param input 入力管理（未使用。アクションは App が毎フレーム計算済み）
     /// @param moveX X 方向の移動量（足し込み先）
     /// @param moveZ Z 方向の移動量（足し込み先）
     void Accumulate(const Input& input, float& moveX, float& moveZ) const override {
-        if (input.IsKeyPressed(DIK_W) || input.IsKeyPressed(DIK_UP)) {
-            moveZ += 1.0f;
-        }
-        if (input.IsKeyPressed(DIK_S) || input.IsKeyPressed(DIK_DOWN)) {
-            moveZ -= 1.0f;
-        }
-        if (input.IsKeyPressed(DIK_D) || input.IsKeyPressed(DIK_RIGHT)) {
-            moveX += 1.0f;
-        }
-        if (input.IsKeyPressed(DIK_A) || input.IsKeyPressed(DIK_LEFT)) {
-            moveX -= 1.0f;
-        }
-    }
-};
-
-/// @brief コントローラー（左スティック・十字キー）
-class GamepadMoveInput final : public MoveInputSource {
-public:
-    /// @brief 接続されていれば左スティックと十字キーの入力を足し込む
-    /// @param input 入力管理
-    /// @param moveX X 方向の移動量（足し込み先）
-    /// @param moveZ Z 方向の移動量（足し込み先）
-    void Accumulate(const Input& input, float& moveX, float& moveZ) const override {
-        if (!input.IsXInputConnected()) return;
-
-        SHORT thumbX = input.GetXInputThumbLX();
-        SHORT thumbY = input.GetXInputThumbLY();
-
-        // デッドゾーンを設けて -1〜1 に正規化（32767 は SHORT の最大値）
-        const float deadZone = 8000.0f;
-        if (abs(thumbX) > deadZone) {
-            moveX += static_cast<float>(thumbX) / 32767.0f;
-        }
-        if (abs(thumbY) > deadZone) {
-            moveZ += static_cast<float>(thumbY) / 32767.0f; // Y軸スティックでZ移動
-        }
-
-        // 十字キー（D-Pad）
-        if (input.IsXInputButtonPressed(XINPUT_GAMEPAD_DPAD_UP)) {
-            moveZ += 1.0f;
-        }
-        if (input.IsXInputButtonPressed(XINPUT_GAMEPAD_DPAD_DOWN)) {
-            moveZ -= 1.0f;
-        }
-        if (input.IsXInputButtonPressed(XINPUT_GAMEPAD_DPAD_RIGHT)) {
-            moveX += 1.0f;
-        }
-        if (input.IsXInputButtonPressed(XINPUT_GAMEPAD_DPAD_LEFT)) {
-            moveX -= 1.0f;
-        }
+        (void)input;
+        moveX += GameInput::Actions().GetValue(GameInput::kMoveX);
+        moveZ += GameInput::Actions().GetValue(GameInput::kMoveY);
     }
 };
 
@@ -180,12 +138,11 @@ protected:
 
 private:
     /// @brief 移動入力の読み取り元の一覧（足し込む順）
-    /// @return キーボード → コントローラーの順に並んだ読み取り元
+    /// @return 読み取り元（今は入力アクションの 1 つだけ。タッチなどを足すときはここに並べる）
     /// @note 読み取り元は状態を持たないので、全インスタンスで共有する
-    static const std::array<const MoveInputSource*, 2>& InputSources() {
-        static const KeyboardMoveInput kKeyboard{};
-        static const GamepadMoveInput kGamepad{};
-        static const std::array<const MoveInputSource*, 2> kSources = {&kKeyboard, &kGamepad};
+    static const std::array<const MoveInputSource*, 1>& InputSources() {
+        static const ActionMoveInput kActions{};
+        static const std::array<const MoveInputSource*, 1> kSources = {&kActions};
         return kSources;
     }
 

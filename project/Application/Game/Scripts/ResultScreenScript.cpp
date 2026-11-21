@@ -5,6 +5,7 @@
 #include "RenderCommon.h"
 #include "Engine/Render/RenderContext.h"
 #include "Framework/App.h"
+#include "Game/Framework/GameInput.h"
 #include "Game/Framework/GameSession.h"
 #include "Game/Framework/StageProgress.h"
 #include "Game/Framework/StateMachine.h"
@@ -421,7 +422,6 @@ private:
   static constexpr float kAnimEnd = 1.7f;        ///< ここまで進んだら演出終了
   static constexpr float kPulsePeriod = 1.4f;    ///< 選択中ボタンの明滅周期
   static constexpr float kBumpTime = 0.16f;      ///< 選択切替時の弾み
-  static constexpr SHORT kStickThreshold = 16000;
 
   // 色
   static constexpr RC::Vector4 kInk = {0.95f, 0.93f, 0.87f, 1.0f};     ///< 生成り（文字）
@@ -870,8 +870,7 @@ private:
     Input *in = ctx->input;
 
     // 決定系の入力をまとめる（演出中はスキップに使う）
-    bool confirm = in->IsKeyTrigger(DIK_SPACE) || in->IsKeyTrigger(DIK_RETURN);
-    if (in->IsXInputConnected() && in->IsXInputButtonTrigger(XINPUT_GAMEPAD_A)) confirm = true;
+    bool confirm = GameInput::Triggered(GameInput::kConfirm);
 
     if (!InputReady()) {
       if (confirm || in->IsMouseTrigger(0)) {
@@ -881,33 +880,10 @@ private:
       return;
     }
 
-    // 左右（上下でも切り替えられるようにしておく）
-    int move = 0;
-    if (in->IsKeyTrigger(DIK_LEFT) || in->IsKeyTrigger(DIK_A) || in->IsKeyTrigger(DIK_UP) ||
-        in->IsKeyTrigger(DIK_W)) {
-      move -= 1;
-    }
-    if (in->IsKeyTrigger(DIK_RIGHT) || in->IsKeyTrigger(DIK_D) || in->IsKeyTrigger(DIK_DOWN) ||
-        in->IsKeyTrigger(DIK_S)) {
-      move += 1;
-    }
-    if (in->IsXInputConnected()) {
-      if (in->IsXInputButtonTrigger(XINPUT_GAMEPAD_DPAD_LEFT) ||
-          in->IsXInputButtonTrigger(XINPUT_GAMEPAD_DPAD_UP)) {
-        move -= 1;
-      }
-      if (in->IsXInputButtonTrigger(XINPUT_GAMEPAD_DPAD_RIGHT) ||
-          in->IsXInputButtonTrigger(XINPUT_GAMEPAD_DPAD_DOWN)) {
-        move += 1;
-      }
-      // スティックは倒した瞬間だけ 1 つ動かす（倒しっぱなしで連続移動しないよう前フレームと比べる）
-      const SHORT lx = in->GetXInputThumbLX();
-      int stickDir = 0;
-      if (lx > kStickThreshold) stickDir = 1;
-      else if (lx < -kStickThreshold) stickDir = -1;
-      if (stickDir != 0 && stickDir != prevStickDir_) move += stickDir;
-      prevStickDir_ = stickDir;
-    }
+    // 左右（上下でも切り替えられるようにしておく）。スティックも倒した瞬間だけ 1 つ動く
+    int move = GameInput::TriggeredAxis(GameInput::kMenuLeft, GameInput::kMenuRight) +
+               GameInput::TriggeredAxis(GameInput::kMenuUp, GameInput::kMenuDown);
+    move = std::clamp(move, -1, 1);
 
     // マウス：動かしたときだけホバーで選択を移す（キー操作を邪魔しない）
     float mx = lastMouseX_, my = lastMouseY_;
@@ -1079,7 +1055,6 @@ private:
   float bump_ = 0.0f;
   float demoT_ = 0.0f; ///< 見せ用デモ：操作できるようになってからの経過（TransitionDemo）
   int selected_ = 0;
-  int prevStickDir_ = 0;
   float lastMouseX_ = 0.0f;
   float lastMouseY_ = 0.0f;
 

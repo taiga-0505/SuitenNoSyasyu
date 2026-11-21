@@ -9,6 +9,7 @@
 // ============================================================================
 
 #include "AutoTest.h"
+#include "Game/Framework/GameInput.h"
 #include "Game/Framework/GameModeBase.h"
 #include "Game/Framework/RailShooterGameMode.h"
 #include "Game/Framework/StageProgress.h"
@@ -24,7 +25,7 @@ namespace {
 /// @brief 静的初期化のタイミングでゲーム固有の設定をエンジンの登録口へ流し込む
 /// @details グローバル変数 g_gameSetup のコンストラクタとして main より前に一度だけ実行される。
 struct GameSetup {
-  /// @brief GameMode のファクトリ・Dive 遷移の画面色・遷移表の変数をエンジンへ登録する
+  /// @brief GameMode のファクトリ・Dive 遷移の画面色・遷移表の変数・入力アクションをエンジンへ登録する
   GameSetup() {
     // すべてのシーンを『水天の射手』のルールで動かす
     GameModeBase::SetFactory([](const std::string & /*sceneName*/) {
@@ -43,6 +44,10 @@ struct GameSetup {
     flow.RegisterVariable("$nextStage", "次のステージ（最終面・ステージ外なら行き先なし）", []() {
       return StageProgress::Get().NextSceneName();
     });
+
+    // 入力アクション（"Fire" / "Confirm" など）の既定の割り当て。
+    // キーコンフィグで変えた割り当て（Resources/Setting/InputActions.json）は App の起動時に読まれ、こちらより優先される
+    GameInput::DefineDefaults();
 
     // 起動引数 --autotest で巡る順路（タイトル → ゲーム → リザルト → タイトル）
     AutoTest::SetDefaultRoute({"Title", "Stage1", "Result", "Title"});

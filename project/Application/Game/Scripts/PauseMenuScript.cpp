@@ -5,6 +5,7 @@
 #include "RenderCommon.h"
 #include "Engine/Render/RenderContext.h"
 #include "Framework/App.h"
+#include "Game/Framework/GameInput.h"
 #include "Game/Framework/GameSettings.h"
 #include "Game/Framework/StateMachine.h"
 #include "Game/Framework/UnderwaterLook.h"
@@ -28,9 +29,12 @@
 /// @brief ESC（コントローラーは START）で開くポーズメニュー
 /// @details
 ///   構成:
-///     - メイン: つづける / 設定 / はじめから / タイトルへ
-///     - 設定  : マウス感度 / スティック感度 / 上下反転 / 全体音量 / BGM 音量 / SE 音量 / もどる
+///     - メイン   : つづける / 設定 / キー設定 / はじめから / タイトルへ
+///     - 設定     : マウス感度 / スティック感度 / 上下反転 / 全体音量 / BGM 音量 / SE 音量 / もどる
 ///       値は GameSettings が持ち、変更があれば設定画面を閉じるときに保存する。
+///     - キー設定 : 射撃 / 前の武器 / 次の武器 / ポーズ / 決定 / 戻る / 初期設定に戻す / もどる
+///       行を決定すると次に押したキー・ボタンをその操作に割り当てる（キーボード・マウスとパッドは別々に持つ）。
+///       割り当ては Chaso::InputActions が持ち、ページを閉じるときに Resources/Setting/InputActions.json へ保存する。
 ///   設計（クラス設計の課題として導入したパターン）:
 ///     - State パターン: メニューの状態（閉じている / メイン / 設定 / 深海へ沈む幕 / 遷移待ち）を
 ///       StateMachine<PauseMenuScript> の状態クラスに分けた。以前は open_ / decided_ / sinking_ の bool と
@@ -51,7 +55,7 @@
 ///       このスクリプト自身も OnUpdate の引数は 0 になるため、ctx.deltaTime を直接読んで動く。
 ///     - マウスカーソルは RailShooterController が「deltaTime = 0 のフレームはロックを外す」ので、
 ///       メニューが開くと自然に表示され、閉じると次のフレームで再びロックされる。
-///   入力:
+///   入力（GameInput のアクション。既定の割り当て。決定・戻る・ポーズはキー設定で変えられる）:
 ///     - ↑↓ / W S / 十字キー / 左スティック で選択、←→ / A D で値の増減、
 ///       Enter / Space / A ボタンで決定、ESC / B ボタンで戻る（メインなら再開）。
 ///     - マウスはホバーで選択、クリックで決定。スライダーはバーをクリックした位置の値になる。
@@ -114,6 +118,7 @@ protected:
     // シーンをまたいでポーズが残らないように必ず下ろす
     if (SceneContext *ctx = GetSceneContext()) ctx->gamePaused = false;
     SaveSettingsIfDirty(false);
+    SaveKeyConfigIfDirty();
     auto unload = [](int &handle) {
       if (handle >= 0) {
         RC::UnloadFont(handle);
@@ -147,6 +152,7 @@ private:
   class PageState;         ///< 開いているページの共通の親（メイン / 設定）
   class MainPageState;     ///< メインページ
   class SettingsPageState; ///< 設定ページ
+  class KeyConfigPageState; ///< キー設定ページ
   class SinkingState;      ///< 深海色へ沈めてから Dive 遷移する幕
   class DecidedState;      ///< 遷移を要求済み（フェード待ち）
 
@@ -156,6 +162,7 @@ private:
   class MainCommand;         ///< 項目の基底
   class ResumeCommand;       ///< つづける
   class OpenSettingsCommand; ///< 設定
+  class OpenKeyConfigCommand; ///< キー設定
   class TransitionCommand;   ///< 遷移表のきっかけを引く項目の共通部分
   class RetryCommand;        ///< はじめから
   class ExitCommand;         ///< タイトルへ / セレクトへ
@@ -170,6 +177,8 @@ private:
   class VolumeRow;      ///< 音量（% 表示）
   class InvertYRow;     ///< 上下反転（ON / OFF）
   class BackRow;        ///< もどる
+  class KeyBindRow;     ///< キー設定：操作 1 つの割り当て
+  class ResetBindingsRow; ///< キー設定：初期設定に戻す
 
   /// @brief 1 フレーム分のメニュー操作（HandleInput がまとめ、ページへ渡す）
   /// @details 不変条件の無い受け渡し用のデータなので struct のまま。
@@ -183,6 +192,7 @@ private:
   };
 
   static constexpr int kMainSettingsIndex = 1;  ///< メインページで「設定」が並ぶ行（設定から戻ったときの選択位置）
+  static constexpr int kMainKeyConfigIndex = 2; ///< メインページで「キー設定」が並ぶ行
   static constexpr int kSettingsFirstIndex = 0; ///< 設定ページを開いたときの選択行
 
   // ------------------------------------------------------------------
@@ -213,7 +223,6 @@ private:
 
   static constexpr float kFadeTime = 0.15f;
   static constexpr float kBumpTime = 0.16f;
-  static constexpr SHORT kStickThreshold = 16000;
   static constexpr float kRepeatDelay = 0.35f;   ///< ←→ 長押しで値を動かし始めるまで
   static constexpr float kRepeatInterval = 0.06f; ///< 長押し中の刻み
 
@@ -339,17 +348,17 @@ private:
     return ctx ? ctx->input : nullptr;
   }
 
-  /// @brief メニューを開く操作（ESC / START ボタン）がこのフレームにあったか調べる
+  /// @brief メニューを開く操作（アクション "Pause"。既定は ESC / START ボタン）がこのフレームにあったか調べる
   /// @param in 入力
   /// @return 開く操作があれば true
   bool WantOpen(Input *in) const {
-    bool key = in->IsKeyTrigger(DIK_ESCAPE);
+    (void)in;
+    if (!GameInput::Triggered(GameInput::kPause)) return false;
 #if RC_ENABLE_IMGUI
-    // インスペクタのテキスト入力中の ESC はエディタのもの
-    if (ImGui::GetIO().WantCaptureKeyboard) key = false;
+    // インスペクタのテキスト入力中のキー（ESC など）はエディタのもの。パッドで押したときだけ開く
+    if (ImGui::GetIO().WantCaptureKeyboard) return GameInput::PressedOnPad(GameInput::kPause);
 #endif
-    if (in->IsXInputConnected() && in->IsXInputButtonTrigger(XINPUT_GAMEPAD_START)) key = true;
-    return key;
+    return true;
   }
 
   /// @brief いまメニューを開いてよいか調べる
@@ -372,9 +381,22 @@ private:
   /// @brief 未保存の設定を保存し、ポーズを解除してメニューを閉じる
   /// @param machine 遷移を予約するステートマシン
   void CloseMenu(StateMachine<PauseMenuScript> &machine);
-  /// @brief 設定ページから、変更を保存してメインページの「設定」へ戻る
+  /// @brief 設定・キー設定ページから、変更を保存してメインページへ戻る
   /// @param machine 遷移を予約するステートマシン
-  void BackToMain(StateMachine<PauseMenuScript> &machine);
+  /// @param index 戻ったときに選ぶメインページの行（既定は「設定」）
+  void BackToMain(StateMachine<PauseMenuScript> &machine, int index = kMainSettingsIndex);
+
+  /// @brief キーの割り当てに変更があれば Resources/Setting/InputActions.json へ保存する
+  void SaveKeyConfigIfDirty() {
+    if (!keyConfigDirty_) return;
+    keyConfigDirty_ = false;
+    if (!GameInput::Save()) Log::Print("[PauseMenuScript] failed to save InputActions.json");
+  }
+
+  /// @brief キー設定の「入力を待っている」状態を始める
+  /// @param row 割り当てを変える行
+  /// @details 決定したフレームの押下を拾わないよう、実際に拾うのは次のフレームから（KeyConfigPageState）
+  void BeginCapture(int row) { capturingRow_ = row; }
 
   /// @brief 設定に変更があれば GameSettings を保存する
   /// @param force true なら変更が無くても保存する
@@ -602,6 +624,13 @@ private:
 
   StateMachine<PauseMenuScript> fsm_; ///< 閉じている / メイン / 設定 / 沈む幕 / 遷移待ち
   bool settingsDirty_ = false;
+  bool keyConfigDirty_ = false; ///< キーの割り当てを変えたが、まだ保存していないか
+  int capturingRow_ = -1;       ///< キー設定で入力を待っている行（待っていなければ -1）
+  /// @brief 割り当てた直後、そのキーを離すまでメニュー操作を止めるための記録
+  /// @details 「決定」を K に割り当てた直後は K が押されたままなので、次のフレームに決定として扱われ、
+  ///          また入力待ちに戻ってしまう。離すまで待つ。
+  const char *waitReleaseAction_ = nullptr;
+  Chaso::InputBinding waitReleaseBinding_{};
   bool draggingSlider_ = false;
   int selected_ = 0;
 
@@ -610,8 +639,6 @@ private:
   float bump_ = 0.0f;
   int holdDir_ = 0;
   float holdTime_ = 0.0f;
-  int prevStickY_ = 0;
-  int prevStickX_ = 0;
   float lastMouseX_ = 0.0f;
   float lastMouseY_ = 0.0f;
 };
@@ -720,6 +747,19 @@ public:
     return "設定";
   }
   /// @brief 設定ページへ切り替える
+  void Execute(PauseMenuScript &owner, StateMachine<PauseMenuScript> &machine) override;
+};
+
+/// @brief 「キー設定」: キー設定ページを開く
+class PauseMenuScript::OpenKeyConfigCommand : public PauseMenuScript::MainCommand {
+public:
+  /// @brief 表示文字列
+  /// @return "キー設定"
+  std::string Label(const PauseMenuScript &owner) const override {
+    (void)owner;
+    return "キー設定";
+  }
+  /// @brief キー設定ページへ切り替える
   void Execute(PauseMenuScript &owner, StateMachine<PauseMenuScript> &machine) override;
 };
 
@@ -968,11 +1008,84 @@ protected:
 /// @brief 「もどる」の行（決定・クリックでメインページへ）
 class PauseMenuScript::BackRow : public PauseMenuScript::SettingRow {
 public:
-  BackRow() : SettingRow("もどる") {}
+  /// @brief 戻ったときに選ぶメインページの行を受け取る
+  /// @param returnIndex メインページの行（既定は「設定」）
+  explicit BackRow(int returnIndex = kMainSettingsIndex) : SettingRow("もどる"), returnIndex_(returnIndex) {}
 
   /// @brief 決定・クリックでメインページへ戻る
   bool Handle(PauseMenuScript &owner, StateMachine<PauseMenuScript> &machine, const MenuInput &input) override {
-    if (input.confirm || input.mouseClick) owner.BackToMain(machine);
+    if (input.confirm || input.mouseClick) owner.BackToMain(machine, returnIndex_);
+    return false;
+  }
+
+protected:
+  /// @brief 項目名を行の中央に描く
+  void DrawContents(const PauseMenuScript &owner, const DrawContext &c) const override {
+    owner.Text(owner.itemFont_, Label(), owner.X((c.l + c.r) * 0.5f), c.textY, c.ink, TextAlign::Center);
+  }
+
+private:
+  int returnIndex_; ///< 戻ったときに選ぶメインページの行
+};
+
+/// @brief キー設定の 1 行（操作 1 つ。左に操作名、右にキーボード・マウスとパッドの割り当て）
+/// @details 決定・クリックで「入力待ち」になり、次に押したキー・ボタンをその操作に割り当てる
+///          （KeyConfigPageState が拾う）。値はこの行ではなく Chaso::InputActions が持つ。
+class PauseMenuScript::KeyBindRow : public PauseMenuScript::SettingRow {
+public:
+  /// @brief 対象の操作を受け取る
+  /// @param action アクション名（GameInput::kFire など）
+  /// @param label 画面に出す操作名
+  KeyBindRow(const char *action, const char *label) : SettingRow(label), action_(action) {}
+
+  /// @brief アクション名
+  /// @return GameInput のアクション名
+  const char *Action() const { return action_; }
+
+  /// @brief 決定・クリックで入力待ちを始める
+  bool Handle(PauseMenuScript &owner, StateMachine<PauseMenuScript> &machine, const MenuInput &input) override {
+    (void)machine;
+    if (input.confirm || input.mouseClick) owner.BeginCapture(owner.selected_);
+    return false;
+  }
+
+protected:
+  /// @brief 操作名と、キーボード・マウス／パッドの割り当て（入力待ちなら案内）を描く
+  void DrawContents(const PauseMenuScript &owner, const DrawContext &c) const override {
+    DrawLabelLeft(owner, c);
+    const float lh = owner.LineH(owner.labelFont_);
+    const float y = owner.Y((c.t + c.b) * 0.5f) - lh * 0.5f;
+    if (owner.capturingRow_ == c.index) {
+      // 点滅させて「押してください」を目立たせる
+      const float blink = 0.6f + 0.4f * std::sin(owner.pulse_ * 8.0f);
+      owner.Text(owner.labelFont_, "キー・ボタンを押してください（ESC / BACK で取り消し）", owner.X(c.r - 18.0f), y,
+                 WithAlpha(owner.accentColor_, blink * c.a), TextAlign::Right);
+      return;
+    }
+    // 中：キーボード・マウス　右：パッド
+    owner.Text(owner.labelFont_, GameInput::BindingsText(action_, true), owner.X(c.l + kKeyColumnX), y, c.ink,
+               TextAlign::Left);
+    owner.Text(owner.labelFont_, GameInput::BindingsText(action_, false), owner.X(c.r - 18.0f), y,
+               WithAlpha(kMuted, c.a), TextAlign::Right);
+  }
+
+private:
+  static constexpr float kKeyColumnX = 250.0f; ///< キーボード・マウスの割り当てを書き始める位置（行の左端から）
+  const char *action_;                         ///< 対象のアクション名
+};
+
+/// @brief 「初期設定に戻す」の行（決定・クリックですべての割り当てを既定に戻す）
+class PauseMenuScript::ResetBindingsRow : public PauseMenuScript::SettingRow {
+public:
+  ResetBindingsRow() : SettingRow("初期設定に戻す") {}
+
+  /// @brief 決定・クリックで既定の割り当てへ戻し、保存を予約する
+  bool Handle(PauseMenuScript &owner, StateMachine<PauseMenuScript> &machine, const MenuInput &input) override {
+    (void)machine;
+    if (!(input.confirm || input.mouseClick)) return false;
+    GameInput::Actions().ResetAllToDefault();
+    owner.keyConfigDirty_ = true;
+    owner.bump_ = 1.0f;
     return false;
   }
 
@@ -1056,7 +1169,7 @@ protected:
   virtual void DrawRows(const PauseMenuScript &owner, float a) const = 0;
 };
 
-/// @brief メインページ（つづける / 設定 / はじめから / タイトルへ）
+/// @brief メインページ（つづける / 設定 / キー設定 / はじめから / タイトルへ）
 class PauseMenuScript::MainPageState : public PauseMenuScript::PageState {
 public:
   /// @brief 項目のコマンドを並べる（並び順 = 表示順）
@@ -1122,6 +1235,42 @@ protected:
 
 private:
   std::vector<std::unique_ptr<SettingRow>> rows_; ///< 行（ポリモーフィズム）
+};
+
+/// @brief キー設定ページ（GameInput::Rebindable の操作 / 初期設定に戻す / もどる）
+/// @details 行の入力待ち（capturingRow_）の間はメニュー操作を止め、次に押されたキー・ボタンを拾って割り当てる。
+class PauseMenuScript::KeyConfigPageState : public PauseMenuScript::PageState {
+public:
+  /// @brief 行を並べる（並び順 = 表示順）
+  KeyConfigPageState();
+
+  int RowCount() const override { return static_cast<int>(rows_.size()); }
+  float PanelW() const override { return kSettingsPanelW; }
+  float RowH() const override { return kSettingsRowH; }
+  float RowGap() const override { return kSettingsRowGap; }
+
+  /// @brief 入力待ちなら次の入力を拾い、それ以外は通常のメニュー操作をする
+  void OnUpdate(PauseMenuScript &owner, StateMachine<PauseMenuScript> &machine, float deltaTime) override;
+
+  /// @brief 戻るでメインへ、それ以外は選択中の行に処理させる
+  void HandlePageInput(PauseMenuScript &owner, StateMachine<PauseMenuScript> &machine,
+                       const MenuInput &input) override;
+
+  /// @brief 状態名
+  /// @return "KeyConfig"
+  const char *Name() const override { return "KeyConfig"; }
+
+protected:
+  const char *Heading() const override { return "キー設定"; }
+  const char *SubHeading() const override { return "CONTROLS"; }
+  const char *Hint() const override { return "↑↓ 選択　　決定 で割り当てを変更　　ESC もどる"; }
+  /// @brief 各行に自分を描かせる
+  void DrawRows(const PauseMenuScript &owner, float a) const override {
+    for (int i = 0; i < RowCount(); ++i) rows_[static_cast<size_t>(i)]->Draw(owner, i, a);
+  }
+
+private:
+  std::vector<std::unique_ptr<SettingRow>> rows_; ///< 行（KeyBindRow ×操作数 / ResetBindingsRow / BackRow）
 };
 
 // ======================================================================
@@ -1234,8 +1383,6 @@ void PauseMenuScript::OpenMenu(StateMachine<PauseMenuScript> &machine) {
   bump_ = 0.0f;
   holdDir_ = 0;
   holdTime_ = 0.0f;
-  prevStickY_ = 0;
-  prevStickX_ = 0;
   if (Input *in = Input::GetInstance()) in->GetGameMousePosition(lastMouseX_, lastMouseY_);
   machine.ChangeState<MainPageState>();
   Log::Print("[PauseMenuScript] pause");
@@ -1248,59 +1395,29 @@ void PauseMenuScript::CloseMenu(StateMachine<PauseMenuScript> &machine) {
   Log::Print("[PauseMenuScript] resume");
 }
 
-void PauseMenuScript::BackToMain(StateMachine<PauseMenuScript> &machine) {
+void PauseMenuScript::BackToMain(StateMachine<PauseMenuScript> &machine, int index) {
   SaveSettingsIfDirty(false);
-  selected_ = kMainSettingsIndex;
+  SaveKeyConfigIfDirty();
+  capturingRow_ = -1;
+  waitReleaseAction_ = nullptr;
+  selected_ = index;
   bump_ = 1.0f;
   machine.ChangeState<MainPageState>();
 }
 
 void PauseMenuScript::HandleInput(Input *in, PageState &page, StateMachine<PauseMenuScript> &machine) {
-  // --- 決定 / 戻る ---
-  bool confirm = in->IsKeyTrigger(DIK_RETURN) || in->IsKeyTrigger(DIK_SPACE);
-  bool back = in->IsKeyTrigger(DIK_ESCAPE);
-  if (in->IsXInputConnected()) {
-    if (in->IsXInputButtonTrigger(XINPUT_GAMEPAD_A)) confirm = true;
-    if (in->IsXInputButtonTrigger(XINPUT_GAMEPAD_B) || in->IsXInputButtonTrigger(XINPUT_GAMEPAD_START)) back = true;
-  }
+  // --- 決定 / 戻る（アクション。割り当ては GameInput::DefineDefaults / キーコンフィグ） ---
+  const bool confirm = GameInput::Triggered(GameInput::kConfirm);
+  const bool back = GameInput::Triggered(GameInput::kBack) || GameInput::Triggered(GameInput::kPause);
 
-  // --- 上下 ---
-  int move = 0;
-  if (in->IsKeyTrigger(DIK_UP) || in->IsKeyTrigger(DIK_W)) move -= 1;
-  if (in->IsKeyTrigger(DIK_DOWN) || in->IsKeyTrigger(DIK_S)) move += 1;
-  // --- 左右（設定の値を動かす。長押しで連続） ---
-  int adjust = 0;
-  const bool leftHeld = in->IsKeyPressed(DIK_LEFT) || in->IsKeyPressed(DIK_A);
-  const bool rightHeld = in->IsKeyPressed(DIK_RIGHT) || in->IsKeyPressed(DIK_D);
-  if (in->IsKeyTrigger(DIK_LEFT) || in->IsKeyTrigger(DIK_A)) adjust -= 1;
-  if (in->IsKeyTrigger(DIK_RIGHT) || in->IsKeyTrigger(DIK_D)) adjust += 1;
-
-  // ゲームパッド: 十字キーはトリガー、スティックは倒した瞬間だけ 1 回（前フレームと比べる）
-  int stickX = 0;
-  if (in->IsXInputConnected()) {
-    if (in->IsXInputButtonTrigger(XINPUT_GAMEPAD_DPAD_UP)) move -= 1;
-    if (in->IsXInputButtonTrigger(XINPUT_GAMEPAD_DPAD_DOWN)) move += 1;
-    if (in->IsXInputButtonTrigger(XINPUT_GAMEPAD_DPAD_LEFT)) adjust -= 1;
-    if (in->IsXInputButtonTrigger(XINPUT_GAMEPAD_DPAD_RIGHT)) adjust += 1;
-    const SHORT ly = in->GetXInputThumbLY();
-    int stickY = 0;
-    if (ly > kStickThreshold) stickY = -1;      // スティック上 = 上の項目
-    else if (ly < -kStickThreshold) stickY = 1;
-    if (stickY != 0 && stickY != prevStickY_) move += stickY;
-    prevStickY_ = stickY;
-
-    const SHORT lx = in->GetXInputThumbLX();
-    if (lx > kStickThreshold) stickX = 1;
-    else if (lx < -kStickThreshold) stickX = -1;
-    if (stickX != 0 && stickX != prevStickX_) adjust += stickX;
-    prevStickX_ = stickX;
-  }
+  // --- 上下・左右（キー・十字キー・スティックの片側がそれぞれのアクションに割り当ててある。
+  //     スティックも倒した瞬間だけ IsTriggered になるので、前フレームとの比較は要らない） ---
+  int move = GameInput::TriggeredAxis(GameInput::kMenuUp, GameInput::kMenuDown);
+  int adjust = GameInput::TriggeredAxis(GameInput::kMenuLeft, GameInput::kMenuRight);
 
   // 長押しリピート（キー・十字キー・スティックのどれでも）。
   // 同じ向きを kRepeatDelay 秒押し続けたら、以後 kRepeatInterval 秒ごとに 1 刻み動かす
-  int heldDir = 0;
-  if (leftHeld || (in->IsXInputConnected() && in->IsXInputButtonPressed(XINPUT_GAMEPAD_DPAD_LEFT)) || stickX < 0) heldDir = -1;
-  if (rightHeld || (in->IsXInputConnected() && in->IsXInputButtonPressed(XINPUT_GAMEPAD_DPAD_RIGHT)) || stickX > 0) heldDir = 1;
+  const int heldDir = GameInput::PressedAxis(GameInput::kMenuLeft, GameInput::kMenuRight);
   if (heldDir != 0 && heldDir == holdDir_) {
     SceneContext *ctx = GetSceneContext();
     holdTime_ += ctx ? (std::max)(ctx->deltaTime, 0.0f) : 0.0f;
@@ -1407,6 +1524,7 @@ void PauseMenuScript::SinkingState::OnUpdate(PauseMenuScript &owner, StateMachin
 PauseMenuScript::MainPageState::MainPageState() {
   commands_.push_back(std::make_unique<ResumeCommand>());
   commands_.push_back(std::make_unique<OpenSettingsCommand>()); // kMainSettingsIndex
+  commands_.push_back(std::make_unique<OpenKeyConfigCommand>()); // kMainKeyConfigIndex
   commands_.push_back(std::make_unique<RetryCommand>());
   commands_.push_back(std::make_unique<ExitCommand>());
 }
@@ -1464,6 +1582,73 @@ void PauseMenuScript::SettingsPageState::HandlePageInput(PauseMenuScript &owner,
   if (rows_[static_cast<size_t>(i)]->Handle(owner, machine, input)) owner.MarkSettingsChanged();
 }
 
+// ---- キー設定ページ ----
+
+PauseMenuScript::KeyConfigPageState::KeyConfigPageState() {
+  for (const auto &a : GameInput::Rebindable()) rows_.push_back(std::make_unique<KeyBindRow>(a.action, a.label));
+  rows_.push_back(std::make_unique<ResetBindingsRow>());
+  rows_.push_back(std::make_unique<BackRow>(kMainKeyConfigIndex));
+}
+
+void PauseMenuScript::KeyConfigPageState::OnUpdate(PauseMenuScript &owner, StateMachine<PauseMenuScript> &machine,
+                                                   float deltaTime) {
+  // 割り当てた直後：そのキー・ボタンを離すまではメニュー操作をしない（アニメーションだけ進める）
+  if (owner.waitReleaseAction_) {
+    const Chaso::InputBinding held = owner.waitReleaseBinding_;
+    const bool stillHeld = GameInput::PressedIf(
+        owner.waitReleaseAction_, [&held](const Chaso::InputBinding &b) { return b == held; });
+    if (stillHeld) {
+      owner.pulse_ += deltaTime;
+      return;
+    }
+    owner.waitReleaseAction_ = nullptr;
+  }
+
+  const int row = owner.capturingRow_;
+  if (row < 0 || row >= RowCount()) {
+    PageState::OnUpdate(owner, machine, deltaTime);
+    return;
+  }
+
+  // 入力待ち：ESC / パッドの BACK で取り消し、それ以外に押されたキー・マウスボタン・パッドのボタン／トリガーを割り当てる
+  owner.pulse_ += deltaTime;
+  Input *in = owner.CurrentInput();
+  if (in && (in->IsKeyTrigger(DIK_ESCAPE) || in->IsXInputButtonTrigger(XINPUT_GAMEPAD_BACK))) {
+    owner.capturingRow_ = -1;
+    return;
+  }
+  // 先頭から GameInput::Rebindable() の順に KeyBindRow が並んでいる（コンストラクタ）
+  const auto &list = GameInput::Rebindable();
+  if (row >= static_cast<int>(list.size())) {
+    owner.capturingRow_ = -1;
+    return;
+  }
+  Chaso::InputBinding binding;
+  if (!GameInput::Actions().CaptureNextBinding(binding, /*includeAxes=*/true)) return;
+  // マウスを割り当てられない操作では、クリック・ホイールは無視して待ち続ける
+  if (GameInput::IsMouse(binding) && !list[static_cast<size_t>(row)].allowMouse) return;
+  const char *action = list[static_cast<size_t>(row)].action;
+  GameInput::Rebind(action, binding);
+  owner.keyConfigDirty_ = true;
+  owner.capturingRow_ = -1;
+  owner.waitReleaseAction_ = action;
+  owner.waitReleaseBinding_ = binding;
+  owner.bump_ = 1.0f;
+  Log::Print(std::string("[PauseMenuScript] rebind ") + action + " -> " + binding.ToString());
+}
+
+void PauseMenuScript::KeyConfigPageState::HandlePageInput(PauseMenuScript &owner,
+                                                          StateMachine<PauseMenuScript> &machine,
+                                                          const MenuInput &input) {
+  if (input.back) {
+    owner.BackToMain(machine, kMainKeyConfigIndex);
+    return;
+  }
+  const int i = owner.selected_;
+  if (i < 0 || i >= RowCount()) return;
+  rows_[static_cast<size_t>(i)]->Handle(owner, machine, input);
+}
+
 // ---- コマンド ----
 
 void PauseMenuScript::ResumeCommand::Execute(PauseMenuScript &owner, StateMachine<PauseMenuScript> &machine) {
@@ -1475,6 +1660,15 @@ void PauseMenuScript::OpenSettingsCommand::Execute(PauseMenuScript &owner,
   owner.selected_ = kSettingsFirstIndex;
   owner.bump_ = 1.0f;
   machine.ChangeState<SettingsPageState>();
+}
+
+void PauseMenuScript::OpenKeyConfigCommand::Execute(PauseMenuScript &owner,
+                                                    StateMachine<PauseMenuScript> &machine) {
+  owner.selected_ = 0;
+  owner.capturingRow_ = -1;
+  owner.waitReleaseAction_ = nullptr;
+  owner.bump_ = 1.0f;
+  machine.ChangeState<KeyConfigPageState>();
 }
 
 void PauseMenuScript::TransitionCommand::Execute(PauseMenuScript &owner,

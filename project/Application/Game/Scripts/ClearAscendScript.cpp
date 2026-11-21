@@ -8,6 +8,7 @@
 #include "Framework/App.h"
 #include "Scene.h"
 #include "Game/Framework/ClearChartFx.h"
+#include "Game/Framework/GameInput.h"
 #include "Game/Framework/GameSession.h"
 #include "Game/Framework/StageProgress.h"
 #include "Game/Framework/StateMachine.h"
@@ -370,14 +371,12 @@ private:
     self.SetTag(kChartTag, 1);
   }
 
-  /// @brief 早送りの決定入力（Space / Enter / 左クリック / A ボタン）があったか
+  /// @brief 早送りの決定入力（アクション "Confirm" か左クリック）があったか
   /// @return このフレームに押されたら true
   bool SkipPressed() const {
     SceneContext *ctx = GetSceneContext();
     if (!ctx || !ctx->input) return false;
-    Input *in = ctx->input;
-    if (in->IsKeyTrigger(DIK_SPACE) || in->IsKeyTrigger(DIK_RETURN) || in->IsMouseTrigger(0)) return true;
-    return in->IsXInputConnected() && in->IsXInputButtonTrigger(XINPUT_GAMEPAD_A);
+    return GameInput::Triggered(GameInput::kConfirm) || ctx->input->IsMouseTrigger(0);
   }
 
   // ---- 設定項目（JSON / インスペクタから変える。外からは触らせない）----

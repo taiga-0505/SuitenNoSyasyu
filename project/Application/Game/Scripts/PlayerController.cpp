@@ -5,6 +5,7 @@
 #include "ECS/NativeScriptComponent.h"
 #include "ECS/PrimitiveMeshComponent.h"
 #include "Input/Input.h"
+#include "Game/Framework/GameInput.h"
 #include "Common/EngineConfig.h"
 #include "RenderCommon.h"
 #include "Render/Systems/RenderInteractiveWater.h"
@@ -161,25 +162,10 @@ private:
         float moveX = 0.0f;
         float moveZ = 0.0f;
 
-        // キーボード（WASD / 矢印キー）入力
-        if (input->IsKeyPressed(DIK_W) || input->IsKeyPressed(DIK_UP))    moveZ += 1.0f;
-        if (input->IsKeyPressed(DIK_S) || input->IsKeyPressed(DIK_DOWN))  moveZ -= 1.0f;
-        if (input->IsKeyPressed(DIK_D) || input->IsKeyPressed(DIK_RIGHT)) moveX += 1.0f;
-        if (input->IsKeyPressed(DIK_A) || input->IsKeyPressed(DIK_LEFT))  moveX -= 1.0f;
-
-        // ゲームパッド入力（左スティックはデッドゾーン 8000 を超えたときだけ -1〜1 に正規化して加算、十字キーも加算）
-        if (input->IsXInputConnected()) {
-            SHORT thumbX = input->GetXInputThumbLX();
-            SHORT thumbY = input->GetXInputThumbLY();
-            const float deadZone = 8000.0f;
-            if (abs(thumbX) > deadZone) moveX += static_cast<float>(thumbX) / 32767.0f;
-            if (abs(thumbY) > deadZone) moveZ += static_cast<float>(thumbY) / 32767.0f;
-
-            if (input->IsXInputButtonPressed(XINPUT_GAMEPAD_DPAD_UP))    moveZ += 1.0f;
-            if (input->IsXInputButtonPressed(XINPUT_GAMEPAD_DPAD_DOWN))  moveZ -= 1.0f;
-            if (input->IsXInputButtonPressed(XINPUT_GAMEPAD_DPAD_RIGHT)) moveX += 1.0f;
-            if (input->IsXInputButtonPressed(XINPUT_GAMEPAD_DPAD_LEFT))  moveX -= 1.0f;
-        }
+        // 入力アクション（MoveX / MoveY。WASD / 矢印キー / 左スティック / 十字キー）。
+        // スティックのデッドゾーンと -1〜1 への丸めは InputActions が行う
+        moveX += GameInput::Actions().GetValue(GameInput::kMoveX);
+        moveZ += GameInput::Actions().GetValue(GameInput::kMoveY);
 
         // キーボードとパッドの同時入力で 1 を超えないよう各軸をクランプしてから移動
         if (moveX >  1.0f) moveX =  1.0f;

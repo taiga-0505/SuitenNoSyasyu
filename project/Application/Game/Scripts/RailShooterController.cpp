@@ -24,6 +24,7 @@
 #include "ECS/WaterComponent.h"
 #include "ECS/LightComponent.h"
 #include "Scene.h"
+#include "Game/Framework/GameInput.h"
 #include "Game/Framework/GameSession.h"
 #include "Game/Framework/GameSettings.h"
 #include "Game/Framework/StageProgress.h"
@@ -769,7 +770,8 @@ protected:
             wasInactive_ = false;
             suppressFireUntilRelease_ = true;
         }
-        if (suppressFireUntilRelease_ && !input->IsMousePressed(0)) {
+        // 左クリック（メニューの操作）と "Fire" の割り当て（決定と同じキーにしている場合など）の両方が離れるまで
+        if (suppressFireUntilRelease_ && !input->IsMousePressed(0) && !GameInput::Pressed(GameInput::kFire)) {
             suppressFireUntilRelease_ = false;
         }
 
@@ -926,21 +928,13 @@ protected:
         // 開始演出中は操作を受け付けない（浮上が終わって GAME START が出てから）
         if (introPlaying) return;
 
-        // 武器切り替え（ホイール上 / LB で前の武器、ホイール下 / RB で次の武器。3 種を循環）
-        long wheel = input->GetMouseZ();
-        if (wheel > 0) {
+        // 武器切り替え（"WeaponPrev" で前の武器、"WeaponNext" で次の武器。3 種を循環）
+        // 既定はホイール奥 / LB と ホイール手前 / RB。キー設定で変えられる
+        if (GameInput::Triggered(GameInput::kWeaponPrev)) {
             weapons_.SelectPrevious();
-        } else if (wheel < 0) {
-            weapons_.SelectNext();
         }
-
-        if (input->IsXInputConnected()) {
-            if (input->IsXInputButtonTrigger(XINPUT_GAMEPAD_LEFT_SHOULDER)) {
-                weapons_.SelectPrevious();
-            }
-            if (input->IsXInputButtonTrigger(XINPUT_GAMEPAD_RIGHT_SHOULDER)) {
-                weapons_.SelectNext();
-            }
+        if (GameInput::Triggered(GameInput::kWeaponNext)) {
+            weapons_.SelectNext();
         }
 
         // === 視点操作（画面中央固定エイム） ===
@@ -1031,19 +1025,20 @@ protected:
             currentCooldown -= deltaTime;
 
             bool isFirePressed = false;
+            // アクション "Fire"（既定は左クリック / 右トリガー）。マウスの割り当ては、
             // エディタ操作中のクリック、ポーズを閉じたクリックの残りでは撃たない
             if (mouseForGame && !suppressFireUntilRelease_) {
 #if RC_ENABLE_IMGUI
                 // ImGuiがマウスをキャプチャしていても、Viewport上なら射撃を許可する
                 if (!ImGui::GetIO().WantCaptureMouse || input->IsViewportHovered() || input->IsCursorLocked()) {
-                    isFirePressed = input->IsMousePressed(0);
+                    isFirePressed = GameInput::PressedByMouse(GameInput::kFire);
                 }
 #else
-                isFirePressed = input->IsMousePressed(0);
+                isFirePressed = GameInput::PressedByMouse(GameInput::kFire);
 #endif
             }
-            // 右トリガーは半分程度（0〜255 の 128 超）押し込んだら射撃
-            if (input->GetXInputRightTrigger() > 128) {
+            // キー・パッドの割り当て（トリガーはデッドゾーンの外側で半分を越えたら）
+            if (!suppressFireUntilRelease_ && GameInput::PressedWithoutMouse(GameInput::kFire)) {
                 isFirePressed = true;
             }
             // 見せ用デモ（ClearRunDemo）が照準を合わせたら撃つ

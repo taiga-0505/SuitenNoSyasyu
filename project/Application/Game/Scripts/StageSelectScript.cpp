@@ -5,6 +5,7 @@
 #include "RenderCommon.h"
 #include "Engine/Render/RenderContext.h"
 #include "Framework/App.h"
+#include "Game/Framework/GameInput.h"
 #include "Game/Framework/StageProgress.h"
 #include "Game/Framework/StateMachine.h"
 #include "Game/Framework/TransitionDemo.h"
@@ -297,7 +298,6 @@ private:
   static constexpr float kBumpTime = 0.16f;
   static constexpr float kShakeTime = 0.3f;
   static constexpr float kPulsePeriod = 1.4f;
-  static constexpr SHORT kStickThreshold = 16000;
   static constexpr float kLeaveRetrySeconds = 1.0f;
 
   static constexpr RC::Vector4 kInk = {0.95f, 0.93f, 0.87f, 1.0f};
@@ -642,25 +642,10 @@ private:
     if (!ctx || !ctx->input) return;
     Input *in = ctx->input;
 
-    // キーボードとゲームパッドの入力を「決定 / 戻る / 左右移動」にまとめる
-    bool confirm = in->IsKeyTrigger(DIK_SPACE) || in->IsKeyTrigger(DIK_RETURN);
-    bool back = in->IsKeyTrigger(DIK_ESCAPE);
-    int move = 0;
-    if (in->IsKeyTrigger(DIK_LEFT) || in->IsKeyTrigger(DIK_A)) move -= 1;
-    if (in->IsKeyTrigger(DIK_RIGHT) || in->IsKeyTrigger(DIK_D)) move += 1;
-    if (in->IsXInputConnected()) {
-      if (in->IsXInputButtonTrigger(XINPUT_GAMEPAD_A)) confirm = true;
-      if (in->IsXInputButtonTrigger(XINPUT_GAMEPAD_B)) back = true;
-      if (in->IsXInputButtonTrigger(XINPUT_GAMEPAD_DPAD_LEFT)) move -= 1;
-      if (in->IsXInputButtonTrigger(XINPUT_GAMEPAD_DPAD_RIGHT)) move += 1;
-      // スティックは倒した瞬間だけ 1 面動かす（倒しっぱなしで連続移動しないよう前フレームと比べる）
-      const SHORT lx = in->GetXInputThumbLX();
-      int stickDir = 0;
-      if (lx > kStickThreshold) stickDir = 1;
-      else if (lx < -kStickThreshold) stickDir = -1;
-      if (stickDir != 0 && stickDir != prevStickDir_) move += stickDir;
-      prevStickDir_ = stickDir;
-    }
+    // アクションを「決定 / 戻る / 左右移動」にまとめる（スティックも倒した瞬間だけ 1 面動く）
+    bool confirm = GameInput::Triggered(GameInput::kConfirm);
+    const bool back = GameInput::Triggered(GameInput::kBack);
+    int move = GameInput::TriggeredAxis(GameInput::kMenuLeft, GameInput::kMenuRight);
 
     // マウス：動かしたときだけホバーで選択を移す
     float mx = lastMouseX_, my = lastMouseY_;
@@ -861,7 +846,6 @@ private:
   float bump_ = 0.0f;
   float shake_ = 0.0f;
   float demoT_ = 0.0f; ///< 見せ用デモ：UI が出てからの経過（TransitionDemo）
-  int prevStickDir_ = 0;
   float lastMouseX_ = 0.0f;
   float lastMouseY_ = 0.0f;
 

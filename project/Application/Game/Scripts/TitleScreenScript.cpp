@@ -16,6 +16,7 @@
 #include "RenderCommon.h"
 #include "Engine/Render/RenderContext.h"
 #include "Framework/App.h"
+#include "Game/Framework/GameInput.h"
 #include "Game/Framework/StateMachine.h"
 #include "Game/Framework/TitleBlackboard.h"
 #include "Game/Framework/TransitionDemo.h"
@@ -1950,18 +1951,9 @@ private:
     SceneContext *ctx = GetSceneContext();
     if (!ctx || !ctx->input) return false;
     Input *in = ctx->input;
-    if (in->IsKeyTrigger(DIK_SPACE) || in->IsKeyTrigger(DIK_RETURN) || in->IsKeyTrigger(DIK_UP) ||
-        in->IsKeyTrigger(DIK_DOWN) || in->IsKeyTrigger(DIK_W) || in->IsKeyTrigger(DIK_S)) {
-      return true;
-    }
-    if (mouseEnabled && in->IsMouseTrigger(mouseConfirmButton)) return true;
-    if (in->IsXInputConnected()) {
-      if (in->IsXInputButtonTrigger(XINPUT_GAMEPAD_A) || in->IsXInputButtonTrigger(XINPUT_GAMEPAD_START) ||
-          in->IsXInputButtonTrigger(XINPUT_GAMEPAD_DPAD_UP) || in->IsXInputButtonTrigger(XINPUT_GAMEPAD_DPAD_DOWN)) {
-        return true;
-      }
-    }
-    return false;
+    using namespace GameInput;
+    if (Triggered(kConfirm) || Triggered(kPause) || Triggered(kMenuUp) || Triggered(kMenuDown)) return true;
+    return mouseEnabled && in->IsMouseTrigger(mouseConfirmButton);
   }
 
   /// @brief 起動演出の飛沫用エミッタ（spray / foam）を生成する
@@ -2327,20 +2319,8 @@ private:
     if (!ctx || !ctx->input) return;
     Input *in = ctx->input;
 
-    // 上下（キーボード / 十字キー / 左スティックのエッジ）
-    int move = 0;
-    if (in->IsKeyTrigger(DIK_UP) || in->IsKeyTrigger(DIK_W)) move -= 1;
-    if (in->IsKeyTrigger(DIK_DOWN) || in->IsKeyTrigger(DIK_S)) move += 1;
-    if (in->IsXInputConnected()) {
-      if (in->IsXInputButtonTrigger(XINPUT_GAMEPAD_DPAD_UP)) move -= 1;
-      if (in->IsXInputButtonTrigger(XINPUT_GAMEPAD_DPAD_DOWN)) move += 1;
-      const SHORT ly = in->GetXInputThumbLY();
-      int stickDir = 0;
-      if (ly > kStickThreshold) stickDir = -1;       // 上
-      else if (ly < -kStickThreshold) stickDir = 1;  // 下
-      if (stickDir != 0 && stickDir != prevStickDir_) move += stickDir;
-      prevStickDir_ = stickDir;
-    }
+    // 上下（アクション MenuUp / MenuDown。キーボード / 十字キー / 左スティックの倒した瞬間）
+    const int move = GameInput::TriggeredAxis(GameInput::kMenuUp, GameInput::kMenuDown);
     if (move != 0) {
       mouseMode_ = false; // キー／パッドで動かしたら、マウスを再び動かすまでホバーで上書きしない
       SetSelected((selected_ + move + MenuCount()) % MenuCount());
@@ -2374,8 +2354,7 @@ private:
     }
 
     // 決定
-    bool confirm = mouseConfirm || in->IsKeyTrigger(DIK_SPACE) || in->IsKeyTrigger(DIK_RETURN);
-    if (in->IsXInputConnected() && in->IsXInputButtonTrigger(XINPUT_GAMEPAD_A)) confirm = true;
+    bool confirm = mouseConfirm || GameInput::Triggered(GameInput::kConfirm);
     // 見せ用デモ：kTitleHold 秒たったら「スタート」を選んで決定する
     if (TransitionDemo::kEnabled && TransitionDemo::kTitleAutoStart && demoT_ >= TransitionDemo::kTitleHold) {
       if (selected_ != kMenuStart) SetSelected(kMenuStart);
@@ -2490,7 +2469,6 @@ private:
   static constexpr float kShakeFreq = 1.6f;    ///< 揺れの速さ（Hz）
   static constexpr float kTwoPi = 6.28318530718f;
   static constexpr float kPulsePeriod = 1.4f; ///< 選択中メニューの明滅周期（秒）
-  static constexpr SHORT kStickThreshold = 16000; ///< 左スティックを上下に倒したとみなす閾値（最大 32767）
 
   std::vector<Floater> letters_;
   std::vector<Floater> menu_;
@@ -2515,7 +2493,6 @@ private:
   int splashFramesLeft_ = 0;     ///< 射出を止めるまでのフレーム数
   int hintFont_ = -1;
   int selected_ = kMenuStart;
-  int prevStickDir_ = 0;
   // マウス操作
   bool mouseMode_ = false;       ///< 最後に操作したのがマウスか（ヒントの切り替え・ホバー選択の有効化）
   bool mousePrevValid_ = false;  ///< prevMouse が有効か（初回フレームを「動いた」と誤判定しない）
