@@ -1,6 +1,7 @@
 #include "RailShooterGameMode.h"
 
 #include "Common/GameTime.h"
+#include "Game/Framework/GameAudioFx.h"
 #include "Game/Framework/GameSession.h"
 #include "Game/Framework/StageProgress.h"
 #include "Scene.h"
@@ -19,6 +20,8 @@ void RailShooterGameMode::OnSceneEnter(Scene& scene, SceneContext& ctx) {
     (void)ctx;
     const std::string sceneName = scene.Name();
 
+    // 前のシーンの水中のこもりを外し、洞窟のステージなら響きを入れる
+    GameAudioFx::ResetForScene(sceneName);
     // ポーズ中に止まったスロー・ヒットストップの残りを次のシーンへ持ち越さない
     Chaso::Time::Get().CancelEffects();
 

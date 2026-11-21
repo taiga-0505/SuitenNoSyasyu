@@ -14,6 +14,7 @@ public:
 
     /// @brief プレイシーン（Stage1〜5 / テスト用 Game）に入った瞬間を「1 プレイの開始」とする
     /// @details GameSession をリセットし、StageProgress に遊んでいるステージを記録する。
+    ///          どのシーンでも、音の環境（水中のこもり・洞窟の響き）を GameAudioFx で初期化する。
     /// @param scene 入ったシーン
     /// @param ctx   シーンコンテキスト（未使用）
     void OnSceneEnter(Scene& scene, SceneContext& ctx) override;

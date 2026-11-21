@@ -10805,6 +10805,7 @@
                 "fromZ": 172.0,
                 "toZ": 205.0,
                 "a": {
+                  "cave": false,
                   "intensity": 1.0,
                   "color": [
                     1.0,
@@ -10833,6 +10834,7 @@
                   ]
                 },
                 "b": {
+                  "cave": true,
                   "intensity": 0.05,
                   "color": [
                     0.55,

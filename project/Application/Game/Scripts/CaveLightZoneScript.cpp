@@ -5,6 +5,7 @@
 #include "ECS/WaterComponent.h"
 #include "ECS/CameraComponent.h"
 #include "Game/Framework/WaterCameraFx.h"
+#include "Game/Framework/GameAudioFx.h"
 #include "Scene.h"
 #include "CameraZoneScript.h"
 
@@ -28,11 +29,12 @@
 ///   再生中だけ書き換える。編集中に書き換えると、その値がシーンの保存で JSON に焼き付くため。
 ///   「再生中だけ・カメラの z で 0〜1」の流れは基底の CameraZoneScript（Template Method）が持ち、
 ///   このクラスは照明と水面への書き込み（OnZoneBlend）だけを担当する。
+///   音の響き（洞窟のリバーブ）も、補間率が半分を越えた側の "cave" で GameAudioFx に切り替えさせる。
 ///
 ///   JSON (scriptDataList):
 ///     "fromZ" / "toZ" : 補間を始める／終える z（fromZ > toZ でもよい）
-///     "a" / "b"       : { "intensity", "color"[4], "ambientColor"[3], "ambientIntensity", "waterEnvironment",
-///                          "waterShallow"[4], "waterDeep"[4] }（水面の色は a / b 両方にあるときだけ補間）
+///     "a" / "b"       : { "cave", "intensity", "color"[4], "ambientColor"[3], "ambientIntensity", "waterEnvironment",
+///                          "waterShallow"[4], "waterDeep"[4] }（"cave": その側が洞窟内なら true。響きの切り替えに使う）（水面の色は a / b 両方にあるときだけ補間）
 class CaveLightZoneScript : public CameraZoneScript {
 public:
   /// @brief 既定の補間範囲（z = 0 → 30）で作る
@@ -60,6 +62,7 @@ public:
     DrawZoneImGui();
     auto edit = [](const char *label, Look &l) {
       if (ImGui::TreeNode(label)) {
+        ImGui::Checkbox("Cave (reverb)", &l.cave);
         ImGui::DragFloat("Intensity", &l.intensity, 0.01f, 0.0f, 4.0f);
         ImGui::ColorEdit4("Color", &l.color.x);
         ImGui::ColorEdit3("Ambient Color", &l.ambientColor.x);
@@ -87,6 +90,8 @@ protected:
   void OnZoneBlend(const TransformComponent &camTr, float t, float dt) override {
     (void)camTr;
     (void)dt;
+    // 音の響き: 補間率が半分を越えた側が洞窟なら Cave の響きにする（変わったときだけ切り替わる）
+    GameAudioFx::SetCave(t < 0.5f ? a_.cave : b_.cave);
     // 自分（Directional Light）の強さ・色・環境光を補間
     if (auto *light = GetComponent<DirectionalLightComponent>()) {
       light->intensity = Lerp(a_.intensity, b_.intensity, t);
@@ -121,6 +126,7 @@ private:
   /// @details シーン JSON の "a" / "b" と 1 対 1 の素朴な設定値の束なので struct のままにしている
   ///          （不変条件が無く、ImGui から各値を直接編集するため）。外からは見えないよう private に置く。
   struct Look {
+    bool cave = false;                            ///< 洞窟内の側か（音の響きを Cave にする）
     float intensity = 1.0f;                       ///< 平行光源の強さ
     RC::Vector4 color = {1.0f, 1.0f, 1.0f, 1.0f}; ///< 平行光源の色
     RC::Vector3 ambientColor = {1.0f, 1.0f, 1.0f}; ///< 環境光の色
@@ -134,7 +140,8 @@ private:
     /// @brief JSON に書き出す
     /// @return 照明の値を持つ JSON オブジェクト（水面の色は hasWaterColor のときだけ含める）
     nlohmann::json ToJson() const {
-      nlohmann::json j = {{"intensity", intensity},
+      nlohmann::json j = {{"cave", cave},
+              {"intensity", intensity},
               {"color", {color.x, color.y, color.z, color.w}},
               {"ambientColor", {ambientColor.x, ambientColor.y, ambientColor.z}},
               {"ambientIntensity", ambientIntensity},
@@ -150,6 +157,7 @@ private:
     /// @note waterShallow / waterDeep が両方そろっているときだけ hasWaterColor が true になる。
     void FromJson(const nlohmann::json &j) {
       if (!j.is_object()) return;
+      if (j.contains("cave") && j["cave"].is_boolean()) cave = j["cave"].get<bool>();
       if (j.contains("intensity")) intensity = j["intensity"].get<float>();
       if (j.contains("color") && j["color"].size() >= 4) {
         const auto &c = j["color"];
@@ -181,7 +189,7 @@ private:
   static float Lerp(float x, float y, float t) { return x + (y - x) * t; }
 
   Look a_; ///< fromZ 側の見た目（既定は屋外）
-  Look b_{0.3f, {0.7f, 0.72f, 0.8f, 1.0f}, {0.5f, 0.5f, 0.58f}, 0.25f, 0.12f}; ///< toZ 側の見た目（既定は洞窟内）
+  Look b_{true, 0.3f, {0.7f, 0.72f, 0.8f, 1.0f}, {0.5f, 0.5f, 0.58f}, 0.25f, 0.12f}; ///< toZ 側の見た目（既定は洞窟内）
 };
 
 REGISTER_SCRIPT(CaveLightZoneScript)

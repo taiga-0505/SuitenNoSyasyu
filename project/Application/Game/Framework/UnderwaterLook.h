@@ -2,6 +2,7 @@
 #include "Common/EngineConfig.h"
 #include "Common/Math/MathTypes.h"
 #include "Graphics/PostProcess/PostProcess.h"
+#include "Game/Framework/GameAudioFx.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cmath>
@@ -214,9 +215,11 @@ inline void RemoveStack(PostProcess *pp) {
   pp->RemoveEffect(PostEffectType::Caustics);
   pp->RemoveEffect(PostEffectType::LightShaft);
   pp->RemoveEffect(PostEffectType::Vignette);
+  GameAudioFx::SetUnderwater(0.0f); // 見た目の水中を外したら音のこもりも外す
 }
 
-/// @brief 水上⇔水中のブレンド率をまとめて書く（Underwater / Caustics / LightShaft）
+/// @brief 水上⇔水中のブレンド率をまとめて書く（Underwater / Caustics / LightShaft と音のこもり）
+/// @details 見た目と音の「水中」がずれないよう、同じブレンド率でバスのローパス（GameAudioFx）も動かす。
 /// @param pp   対象の PostProcess（nullptr なら何もしない）
 /// @param lerp ブレンド率（0: 水上 〜 1: 完全に水中。範囲外は丸める）
 inline void SetLerp(PostProcess *pp, float lerp) {
@@ -225,6 +228,7 @@ inline void SetLerp(PostProcess *pp, float lerp) {
   pp->SetUnderwaterLerpFactor(lerp);
   pp->SetCausticsLerpFactor(lerp);
   pp->SetLightShaftLerpFactor(lerp);
+  GameAudioFx::SetUnderwater(lerp);
 }
 
 /// @brief 0〜1 の直線的な進行度を S 字にする（水面の出入りのブレンドに使う）
