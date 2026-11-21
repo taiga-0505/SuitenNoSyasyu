@@ -26,7 +26,7 @@
 ///   人が操作した場合はそちらが優先される（自動決定までの待ち時間中に通常どおり操作できる）。
 ///   見せ終わったら kEnabled を false に戻すだけで元の挙動になる。
 namespace TransitionDemo {
-inline constexpr bool kEnabled = true; ///< デモを有効にするか（見せ終わったら false に戻す）
+inline constexpr bool kEnabled = false; ///< デモを有効にするか（見せ終わったら false に戻す）
 
 /// @brief デモの種類
 /// @details これは「どちらのデモを流すか」を選ぶコンパイル時の設定値としてだけ使う。
