@@ -23,6 +23,7 @@
 // 割り当ての書き方: [-]デバイス:名前[*倍率]
 //   Key:A / Key:SPACE / Key:LSHIFT / Key:F1 ...（KeyNames() の表）
 //   Mouse:Left / Mouse:Right / Mouse:Middle
+//   Mouse:WheelUp / Mouse:WheelDown … ホイールを回したフレームだけ押している扱い（回すたびに IsTriggered）
 //   Pad:A / Pad:B / Pad:X / Pad:Y / Pad:LB / Pad:RB / Pad:START / Pad:BACK / Pad:UP ...
 //   Pad:LX / Pad:LY / Pad:RX / Pad:RY（-1〜1）/ Pad:LT / Pad:RT（0〜1）
 //   Pad:LY+ / Pad:LY-   … スティックの片側だけ（メニューの上下など。値は 0〜1）
@@ -57,6 +58,7 @@ namespace Chaso {
 struct InputSnapshot {
   std::array<bool, 256> keys{};   ///< DirectInput のキー（DIK_*）ごとの押下
   std::array<bool, 8> mouse{};    ///< マウスボタン（0 = 左, 1 = 右, 2 = 中, 3〜 = 拡張）
+  int mouseWheel = 0;             ///< このフレームのホイールの回転量（奥へ回すと正。0 なら回していない）
   uint16_t padButtons = 0;        ///< XInput のボタン（XINPUT_GAMEPAD_* のビット）
   std::array<float, 6> padAxes{}; ///< LX, LY, RX, RY（-1〜1）, LT, RT（0〜1）。デッドゾーン適用前
 };
@@ -64,11 +66,11 @@ struct InputSnapshot {
 /// @struct InputBinding
 /// @brief アクションへの割り当て 1 つ
 struct InputBinding {
-  enum class Device : uint8_t { Key, Mouse, PadButton, PadAxis };
+  enum class Device : uint8_t { Key, Mouse, PadButton, PadAxis, MouseWheel };
   enum Axis : int { LX = 0, LY, RX, RY, LT, RT };
 
   Device device = Device::Key; ///< 入力の種類
-  int code = 0;                ///< キー: DIK、マウス: ボタン番号、パッド: ボタンのビット / 軸番号
+  int code = 0;                ///< キー: DIK、マウス: ボタン番号、パッド: ボタンのビット / 軸番号、ホイール: +1（奥）/ -1（手前）
   int half = 0;                ///< 軸の片側だけ使うとき +1 / -1（0 なら両側）
   float scale = 1.0f;          ///< 倍率（負なら向きを逆にする）
 
@@ -165,6 +167,12 @@ struct InputBinding {
       return false;
     }
     if (dev == "MOUSE") {
+      if (name == "WHEELUP" || name == "WHEELDOWN") {
+        b.device = Device::MouseWheel;
+        b.code = (name == "WHEELUP") ? 1 : -1;
+        out = b;
+        return true;
+      }
       b.device = Device::Mouse;
       for (int i = 0; i < 3; ++i) {
         if (name == Upper_(MouseName(i))) { b.code = i; out = b; return true; }
@@ -211,6 +219,9 @@ struct InputBinding {
       break;
     case Device::Mouse:
       name = std::string("Mouse:") + (MouseName(code) ? MouseName(code) : "Left");
+      break;
+    case Device::MouseWheel:
+      name = (code > 0) ? "Mouse:WheelUp" : "Mouse:WheelDown";
       break;
     case Device::PadButton:
       name = "Pad:?";
@@ -260,6 +271,7 @@ public:
       st.prevPressed = st.pressed;
       st.value = Evaluate_(name);
       st.pressed = std::abs(st.value) >= pressThreshold_;
+      st.wheelPulse = st.pressed && WheelMoved_(name);
     }
   }
 
@@ -269,10 +281,10 @@ public:
 
   /// @brief 押している間 true
   bool IsPressed(const std::string &action) const { return State_(action).pressed; }
-  /// @brief 押した瞬間だけ true
+  /// @brief 押した瞬間だけ true（ホイールの割り当ては、回したフレームごとに true）
   bool IsTriggered(const std::string &action) const {
     const auto &s = State_(action);
-    return s.pressed && !s.prevPressed;
+    return (s.pressed && !s.prevPressed) || s.wheelPulse;
   }
   /// @brief 離した瞬間だけ true
   bool IsReleased(const std::string &action) const {
@@ -373,6 +385,10 @@ public:
         out = {InputBinding::Device::Mouse, m, 0, 1.0f};
         return true;
       }
+    }
+    if (snap_.mouseWheel != 0) {
+      out = {InputBinding::Device::MouseWheel, snap_.mouseWheel > 0 ? 1 : -1, 0, 1.0f};
+      return true;
     }
     for (const auto &[n, bit] : InputBinding::PadButtonNames()) {
       if ((snap_.padButtons & bit) && !(prevSnap_.padButtons & bit)) {
@@ -487,6 +503,7 @@ private:
     float value = 0.0f;
     bool pressed = false;
     bool prevPressed = false;
+    bool wheelPulse = false; ///< このフレームにホイールの割り当てで押された（連続で回しても毎フレーム IsTriggered にする）
   };
 
   const State &State_(const std::string &action) const {
@@ -518,6 +535,9 @@ private:
     case InputBinding::Device::PadButton:
       v = (snap_.padButtons & b.code) ? 1.0f : 0.0f;
       break;
+    case InputBinding::Device::MouseWheel:
+      v = ((b.code > 0 && snap_.mouseWheel > 0) || (b.code < 0 && snap_.mouseWheel < 0)) ? 1.0f : 0.0f;
+      break;
     case InputBinding::Device::PadAxis: {
       if (b.code < 0 || b.code >= 6) break;
       v = ApplyDeadZone(snap_.padAxes[b.code], deadZone_);
@@ -527,6 +547,18 @@ private:
     }
     }
     return v * b.scale;
+  }
+
+  /// @brief アクションのホイールの割り当てが、このフレームに回した向きと合っているか
+  bool WheelMoved_(const std::string &action) const {
+    if (snap_.mouseWheel == 0) return false;
+    auto it = current_.find(action);
+    if (it == current_.end()) return false;
+    for (const auto &b : it->second) {
+      if (b.device != InputBinding::Device::MouseWheel) continue;
+      if ((b.code > 0) == (snap_.mouseWheel > 0)) return true;
+    }
+    return false;
   }
 
   float Evaluate_(const std::string &action) const {

@@ -375,6 +375,7 @@ void App::Update() {
     Chaso::InputSnapshot snap;
     for (int k = 0; k < 256; ++k) snap.keys[k] = input_->IsKeyPressed(static_cast<uint8_t>(k));
     for (int m = 0; m < 4; ++m) snap.mouse[m] = input_->IsMousePressed(m); // DIMOUSESTATE は 4 ボタン
+    snap.mouseWheel = static_cast<int>(input_->GetMouseZ()); // ホイールの回転量（このフレーム分）
     for (const auto &[name, bit] : Chaso::InputBinding::PadButtonNames()) {
       if (input_->IsXInputButtonPressed(static_cast<WORD>(bit))) snap.padButtons |= static_cast<uint16_t>(bit);
     }
