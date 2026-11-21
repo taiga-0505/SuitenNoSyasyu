@@ -351,6 +351,14 @@ protected:
   /// @return 0.15 秒
   float DamageFlashDuration() const override { return 0.15f; }
 
+  /// @brief 開封の瞬間にごく短く止めて「取った」手応えを出す
+  /// @return 0.04 秒ほぼ停止
+  TimeFx DefeatTimeFx() const override {
+    TimeFx fx;
+    fx.hitStop = 0.04f;
+    return fx;
+  }
+
   /// @brief 開封後は HP タグ（current_hp / max_hp）を公開しない（開封時に消し、以後は出さない）
   /// @return false
   bool PublishesHpAfterDefeat() const override { return false; }

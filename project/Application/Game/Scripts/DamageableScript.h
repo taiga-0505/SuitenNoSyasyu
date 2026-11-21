@@ -6,6 +6,7 @@
 #include "ECS/PrimitiveMeshComponent.h"
 #include "RenderCommon.h"
 #include "Common/Log/Log.h"
+#include "Common/GameTime.h"
 
 #if RC_ENABLE_IMGUI
 #include "imgui/imgui.h"
@@ -47,9 +48,24 @@ public:
       defeated_ = true;
       defeatTimer_ = 0.0f;
       OnDefeated();
+      ApplyTimeFx(DefeatTimeFx());
+    } else {
+      ApplyTimeFx(DamageTimeFx());
     }
     OnDamaged(damage);
   }
+
+  /// @brief 被弾・撃破の瞬間に掛ける時間演出（ヒットストップ・スロー）
+  /// @details 秒数が 0 の項目は使わない。ヒットストップは実行中なら長い方が残るので、連射で積み上がることはない。
+  ///          倍率を 0（完全停止）にしないのは、deltaTime = 0 のフレームを「ポーズ中」とみなす
+  ///          スクリプト（RailShooterController のカーソルロック解除など）があるため。
+  struct TimeFx {
+    float hitStop = 0.0f;       ///< ヒットストップの長さ（実時間の秒）
+    float hitStopScale = 0.02f; ///< ヒットストップ中の倍率（見た目はほぼ停止。0 にはしないこと）
+    float slowScale = 1.0f;    ///< スロー倍率（1 ならスローしない）
+    float slowDuration = 0.0f; ///< スローの長さ（実時間の秒）
+    float slowRecover = 0.0f;  ///< 終わりの何秒で等速へ戻すか
+  };
 
   /// @brief 現在の HP
   /// @return 現在の HP
@@ -139,6 +155,14 @@ protected:
   /// @brief 被弾フラッシュの長さ
   /// @return 秒数（既定 0.2 秒）
   virtual float DamageFlashDuration() const { return 0.2f; }
+
+  /// @brief 撃破されずに被弾したときの時間演出
+  /// @return 既定は何もしない（連射の弾が当たるたびに止まると操作感が悪くなるため）
+  virtual TimeFx DamageTimeFx() const { return {}; }
+
+  /// @brief 撃破（宝箱なら開封）した瞬間の時間演出
+  /// @return 既定は何もしない。派生クラスが手応えに合わせて決める
+  virtual TimeFx DefeatTimeFx() const { return {}; }
 
   /// @brief 撃破後も HP タグ（current_hp / max_hp）を公開し続けるか
   /// @return 公開し続けるなら true（既定 true）
@@ -280,6 +304,17 @@ protected:
   }
 
 private:
+  /// @brief 時間演出を Chaso::Time へ渡す
+  /// @param fx 掛ける演出（秒数が 0 の項目は無視する）
+  static void ApplyTimeFx(const TimeFx& fx) {
+    auto& time = Chaso::Time::Get();
+    if (fx.slowDuration > 0.0f && fx.slowScale < 1.0f) {
+      time.SlowMotion(fx.slowScale, fx.slowDuration, fx.slowRecover);
+    }
+    // 止まっている最中（自機の被弾・撃破など）は上書きしない（HitStop は新しい倍率で上書きするため、弱い止めで緩むのを防ぐ）
+    if (fx.hitStop > 0.0f && !time.IsHitStopping()) time.HitStop(fx.hitStop, fx.hitStopScale);
+  }
+
   int hp_ = 10;                 ///< 現在の HP
   int maxHp_ = 10;              ///< 最大 HP
   bool hpFromData_ = false;     ///< HP が JSON / スポナーから与えられたか

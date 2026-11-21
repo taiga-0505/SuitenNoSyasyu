@@ -1,5 +1,6 @@
 #include "RailShooterGameMode.h"
 
+#include "Common/GameTime.h"
 #include "Game/Framework/GameSession.h"
 #include "Game/Framework/StageProgress.h"
 #include "Scene.h"
@@ -17,6 +18,9 @@ RailShooterGameMode::RailShooterGameMode()
 void RailShooterGameMode::OnSceneEnter(Scene& scene, SceneContext& ctx) {
     (void)ctx;
     const std::string sceneName = scene.Name();
+
+    // ポーズ中に止まったスロー・ヒットストップの残りを次のシーンへ持ち越さない
+    Chaso::Time::Get().CancelEffects();
 
     // プレイシーンに入った瞬間が「1 プレイの開始」。前回の結果を捨てる。
     // どのステージを遊んでいるかも記録しておく（Result の「次へ／もう一度」が使う）。

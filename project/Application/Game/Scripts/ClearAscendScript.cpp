@@ -1,6 +1,7 @@
 #include "ECS/ScriptableEntity.h"
 #include "ECS/ScriptRegistry.h"
 #include "Common/Log/Log.h"
+#include "Common/GameTime.h"
 #include "Input/Input.h"
 #include "RenderCommon.h"
 #include "Engine/Render/RenderContext.h"
@@ -49,7 +50,7 @@
 ///     状態クラスは private な入れ子クラスなので、friend 無しで本体の private メンバを使える。
 ///
 ///   JSON (scriptDataList):
-///     "enabled" / "style" / "fontPath"
+///     "enabled" / "style" / "fontPath" / "slowScale" / "slowDuration" / "slowRecover"（クリアの瞬間のスロー）
 ///     chart : "chartHold" / "chartUnroll" / "chartInk" / "chartLinger" / "chartBleach" / "chartDim" / "chartSkippable"
 ///     ascend: "delay" / "anticipation" / "dip" / "launch" / "height" /
 ///             "lookUpPitch" / "fovBoost" / "whiteStart" / "whiteEv"
@@ -68,6 +69,9 @@ public:
                         {"style", style},
                         {"fontPath", fontPath},
                         {"delay", delay},
+                        {"slowScale", slowScale},
+                        {"slowDuration", slowDuration},
+                        {"slowRecover", slowRecover},
                         {"anticipation", ascend.anticipation},
                         {"dip", ascend.dip},
                         {"launch", ascend.launch},
@@ -90,6 +94,9 @@ public:
     if (j.contains("fontPath") && j["fontPath"].is_string()) fontPath = j["fontPath"].get<std::string>();
     chart.ReadJson(j);
     f("delay", delay);
+    f("slowScale", slowScale);
+    f("slowDuration", slowDuration);
+    f("slowRecover", slowRecover);
     f("anticipation", ascend.anticipation);
     f("dip", ascend.dip);
     f("launch", ascend.launch);
@@ -109,6 +116,9 @@ public:
     if (ImGui::Combo("Style", &styleIndex, "chart (海図)\0ascend (空へ)\0")) {
       style = (styleIndex == 0) ? "chart" : "ascend";
     }
+    ImGui::SliderFloat("Clear Slow Scale", &slowScale, 0.05f, 1.0f);
+    ImGui::DragFloat("Clear Slow Duration (s)", &slowDuration, 0.05f, 0.0f, 3.0f);
+    ImGui::DragFloat("Clear Slow Recover (s)", &slowRecover, 0.05f, 0.0f, 3.0f);
     if (UseChart()) {
       chart.DrawImGui();
     } else {
@@ -217,6 +227,10 @@ private:
       }
       self->SetTag(kOwnerTag, 1); // DataDrivenScene の自動遷移を止める
       o.t_ = 0.0f;
+      // クリアの瞬間に一拍スローを掛け、余韻を作る（既定値で演出全体が 0.5 秒ほど延びる）
+      if (o.slowDuration > 0.0f && o.slowScale < 1.0f) {
+        Chaso::Time::Get().SlowMotion(o.slowScale, o.slowDuration, o.slowRecover);
+      }
       if (o.UseChart()) {
         o.BeginChart(*self);
         m.ChangeState<ChartState>();
@@ -372,6 +386,9 @@ private:
   std::string fontPath = "Resources/fonts/Kiwi_Maru/KiwiMaru-Medium.ttf";
   ClearChartFx::Params chart;
   float delay = 1.6f; ///< ascend: クリアしてから跳ね上がるまで（秒。STAGE CLEAR を見せる）
+  float slowScale = 0.3f;    ///< クリアの瞬間のスロー倍率（1 以上で無効）
+  float slowDuration = 0.9f; ///< スローを続ける長さ（実時間の秒。0 で無効）
+  float slowRecover = 0.5f;  ///< 終わりの何秒で等速へ戻すか
   WaterCameraFx::AscendParams ascend;
 
   // ---- 実行中の状態 ----

@@ -6,6 +6,7 @@
 #include "Engine/Render/RenderContext.h"
 #include "Common/Math/MathUtils.h"
 #include "Framework/App.h"
+#include "Common/GameTime.h"
 #include "Common/Log/Log.h"
 
 #if RC_ENABLE_IMGUI
@@ -390,6 +391,10 @@ private:
     int maxHp = 5;
     float invincibleTimer = 0.0f;
     float invincibleDuration = 1.0f;
+    float damageHitStop = 0.08f; ///< 被弾の瞬間に止める長さ（実時間の秒）
+    float deathHitStop = 0.25f;  ///< 力尽きた瞬間に止める長さ（実時間の秒）
+    /// @brief ヒットストップ中の倍率。0 にすると deltaTime = 0 になり、OnUpdate がポーズと区別できなくなる
+    static constexpr float kHitStopScale = 0.02f;
     int score = 0;
 
     /// @brief 武器（Strategy）。ホイール / LB・RB で切り替える
@@ -1445,6 +1450,8 @@ public:
         ImGui::Separator();
         ImGui::Text("Player Stats");
         ImGui::DragInt("HP", &hp, 1, 0, maxHp);
+        ImGui::DragFloat("Damage HitStop (s)", &damageHitStop, 0.01f, 0.0f, 0.5f);
+        ImGui::DragFloat("Death HitStop (s)", &deathHitStop, 0.01f, 0.0f, 1.0f);
         ImGui::Text("Score: %d", score);
 
         ImGui::Separator();
@@ -1744,7 +1751,12 @@ void RailShooterController::AliveState::TakeDamage(RailShooterController& owner,
 
     if (owner.hp <= 0) {
         owner.hp = 0;
+        // 力尽きた瞬間は長めに止めて、とどめの一撃を見せる
+        Chaso::Time::Get().HitStop(owner.deathHitStop, kHitStopScale);
         machine.ChangeState<DeadState>();
+    } else {
+        // 被弾の瞬間を一瞬止めて、当たったことをはっきり伝える
+        Chaso::Time::Get().HitStop(owner.damageHitStop, kHitStopScale);
     }
 }
 

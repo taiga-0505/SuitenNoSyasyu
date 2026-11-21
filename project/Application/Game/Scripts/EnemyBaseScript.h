@@ -97,6 +97,14 @@ protected:
   /// @brief 敵ごとの固有の撃破演出（撃破の共通処理のあとに呼ばれる）
   virtual void OnEnemyDefeated() {}
 
+  /// @brief 撃破の瞬間に短いヒットストップを掛ける（大物は派生クラスでスローを足す）
+  /// @return 0.05 秒ほぼ停止
+  TimeFx DefeatTimeFx() const override {
+    TimeFx fx;
+    fx.hitStop = 0.05f;
+    return fx;
+  }
+
   /// @brief モデル（ModelRendererComponent）で描かれているか
   /// @return スポナーの modelPath が指定されていて、モデルで描画しているなら true
   /// @details false ならプリミティブで代用している（modelPath が空）。

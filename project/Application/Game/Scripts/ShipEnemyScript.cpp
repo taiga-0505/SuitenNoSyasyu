@@ -210,6 +210,26 @@ protected:
         Log::Print("[ShipEnemyScript] sinking");
     }
 
+    /// @brief 大物なので、撃沈の瞬間は長めに止めてから少しスローで沈み始めを見せる
+    /// @return 0.12 秒ほぼ停止 + 0.35 倍速を 0.8 秒（最後の 0.4 秒で等速へ）
+    TimeFx DefeatTimeFx() const override {
+        TimeFx fx;
+        fx.hitStop = 0.12f;
+        fx.slowScale = 0.35f;
+        fx.slowDuration = 0.8f;
+        fx.slowRecover = 0.4f;
+        return fx;
+    }
+
+    /// @brief HP が多い（既定 40）ので、被弾ごとにごく短く「ほぼ止める」で当たりの手応えを出す
+    /// @return 0.02 秒、0.1 倍速
+    TimeFx DamageTimeFx() const override {
+        TimeFx fx;
+        fx.hitStop = 0.02f;
+        fx.hitStopScale = 0.1f;
+        return fx;
+    }
+
 private:
     // --- 状態クラス（private な入れ子クラスなので friend 無しで本体の private メンバを使える） ---
     class PatrolState; ///< プレイヤーを見つけるまで、出現地点のまわりを巡航する
