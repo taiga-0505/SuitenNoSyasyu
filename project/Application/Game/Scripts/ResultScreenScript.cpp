@@ -13,6 +13,7 @@
 #include "Game/Framework/WaterCameraFx.h"
 #include "Scene.h"
 #include "SceneFlow.h"
+#include "Common/Tween/Easing.h"
 
 #include <Windows.h>
 #include <algorithm>
@@ -462,14 +463,6 @@ private:
   /// @param v 元の値
   /// @return 0〜1 に収めた値
   static float Clamp01(float v) { return (std::min)(1.0f, (std::max)(0.0f, v)); }
-  /// @brief 終わりに向かって減速する 3 次のイージング（1 - (1 - t)^3）
-  /// @param t 進行度（0〜1 に丸める）
-  /// @return 補間後の進行度（0〜1）
-  static float EaseOutCubic(float t) {
-    t = Clamp01(t);
-    const float u = 1.0f - t;
-    return 1.0f - u * u * u;
-  }
   /// @brief 演出の時刻 anim_ における、start から dur 秒かけて 0→1 になる進行度を求める
   /// @param start 進み始める時刻（秒）
   /// @param dur 0→1 にかける時間（秒。0 以下なら start を境に 0 / 1 を切り替える）
@@ -586,7 +579,7 @@ private:
   void DrawWaypointBlock(const GameSession &session) const {
     const float left = X(kPanelL + kPanelPad);
     const float right = X(kPanelR - kPanelPad);
-    const float t = EaseOutCubic(Phase(0.0f, kCountDuration));
+    const float t = Chaso::Ease::Evaluate(Chaso::EaseType::OutCubic, Phase(0.0f, kCountDuration));
 
     const int total = session.WaypointsTotal();
     const int reached = (std::min)(session.WaypointsReached(), (std::max)(total, 0));
@@ -678,7 +671,7 @@ private:
 
     // index 行目の不透明度（kRowStart から kRowStep ずつ遅れて kRowFade 秒でフェードイン）
     auto rowAlpha = [&](int index) {
-      return EaseOutCubic(Phase(kRowStart + kRowStep * static_cast<float>(index), kRowFade));
+      return Chaso::Ease::Evaluate(Chaso::EaseType::OutCubic, Phase(kRowStart + kRowStep * static_cast<float>(index), kRowFade));
     };
 
     // 行の下の薄い罫線
@@ -797,7 +790,7 @@ private:
 
   /// @brief 下段のボタン（次のステージへ / もう一度 / セレクトへ / タイトルへ のうち BuildChoices で並べたもの）を描く
   void DrawButtons() const {
-    const float a = EaseOutCubic(Phase(kButtonStart, kButtonFade));
+    const float a = Chaso::Ease::Evaluate(Chaso::EaseType::OutCubic, Phase(kButtonStart, kButtonFade));
     if (a <= 0.0f) return;
 
     // pulse は kPulsePeriod 秒周期で 0〜1 を往復する明滅量
@@ -846,7 +839,7 @@ private:
 
   /// @brief 画面下の操作ヒントと、新しく解放された面の知らせを描く
   void DrawHint() const {
-    const float a = EaseOutCubic(Phase(kButtonStart, kButtonFade));
+    const float a = Chaso::Ease::Evaluate(Chaso::EaseType::OutCubic, Phase(kButtonStart, kButtonFade));
     if (a <= 0.0f) return;
     const char *text = InputReady() ? "←→ 選択　　SPACE / Enter 決定" : "";
     // 今回のクリアで次の面が開いたら、ボタンの上に一言添える

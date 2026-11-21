@@ -23,6 +23,7 @@
 #include "Game/Framework/WaterCameraFx.h"
 #include "Scene.h"
 #include "SceneFlow.h"
+#include "Common/Tween/Easing.h"
 
 #if RC_ENABLE_IMGUI
 #include "imgui/imgui.h"
@@ -1878,7 +1879,7 @@ private:
       Floater &f = menu_[i];
       const float p = (t - menuStart - intro.menuInterval * static_cast<float>(i)) /
                       (std::max)(intro.menuRiseTime, 0.01f);
-      const float v = (p <= 0.0f) ? 0.0f : EaseOutBack(p, 0.0f);
+      const float v = (p <= 0.0f) ? 0.0f : Chaso::Ease::Evaluate(Chaso::EaseType::OutCubic, p);
       f.introY = -intro.menuDepth * (1.0f - v);
       f.introScale = 0.6f + 0.4f * v;
       if (!f.breached && f.introY > -intro.menuDepth * 0.3f) {

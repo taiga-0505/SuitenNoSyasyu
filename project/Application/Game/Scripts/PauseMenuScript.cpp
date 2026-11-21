@@ -10,6 +10,7 @@
 #include "Game/Framework/UnderwaterLook.h"
 #include "Scene.h"
 #include "SceneFlow.h"
+#include "Common/Tween/Easing.h"
 
 #if RC_ENABLE_IMGUI
 #include "imgui/imgui.h"
@@ -267,14 +268,6 @@ private:
   /// @param a 不透明度に掛ける係数
   /// @return 不透明度を変えた色
   static RC::Vector4 WithAlpha(const RC::Vector4 &c, float a) { return {c.x, c.y, c.z, c.w * a}; }
-  /// @brief 終わりに向かって減速する 3 次のイージング（1 - (1 - t)^3）
-  /// @param t 進行度（0〜1 に丸める）
-  /// @return 補間後の進行度（0〜1）
-  static float EaseOutCubic(float t) {
-    t = std::clamp(t, 0.0f, 1.0f);
-    const float u = 1.0f - t;
-    return 1.0f - u * u * u;
-  }
 
   /// @brief 表示中のページ（状態クラス）を取得する
   /// @return 現在のページ。ページを開いていなければメインページ相当の既定値
@@ -1012,7 +1005,7 @@ public:
   void Draw(PauseMenuScript &owner) const override {
     float screenW = 1280.0f, screenH = 720.0f;
     owner.BeginLayout(screenW, screenH);
-    const float a = EaseOutCubic(owner.anim_);
+    const float a = Chaso::Ease::Evaluate(Chaso::EaseType::OutCubic, owner.anim_);
     // 背後の画面を沈める
     RC::DrawBox({0.0f, 0.0f}, {screenW, screenH}, {0.02f, 0.03f, 0.06f, owner.dimAlpha_ * a});
     owner.DrawPanel(a);

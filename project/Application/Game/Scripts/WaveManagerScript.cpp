@@ -6,6 +6,7 @@
 #include "Framework/App.h"
 #include "Common/Log/Log.h"
 #include "Game/Framework/StateMachine.h"
+#include "Common/Tween/Easing.h"
 
 #if RC_ENABLE_IMGUI
 #include "imgui/imgui.h"
@@ -330,14 +331,6 @@ private:
   /// @param a アルファに掛ける係数
   /// @return アルファだけを変えた色
   static RC::Vector4 WithAlpha(const RC::Vector4 &c, float a) { return {c.x, c.y, c.z, c.w * a}; }
-  /// @brief 3 次のイーズアウト（始めが速く終わりがゆっくり）
-  /// @param t 進み具合（0〜1 にクランプされる）
-  /// @return 補間係数（0〜1）
-  static float EaseOutCubic(float t) {
-    t = std::clamp(t, 0.0f, 1.0f);
-    const float u = 1.0f - t;
-    return 1.0f - u * u * u;
-  }
 
   /// @brief 影付きテキスト（PauseMenu::Text と同じ）
   /// @param font フォントハンドル（負なら何もしない）
@@ -445,8 +438,8 @@ private:
     if (clearDuration_ > 0.0f) {
       const float t = stateTimer_ / clearDuration_;
       const float fade = 0.25f;
-      if (t < fade)             a = EaseOutCubic(t / fade);
-      else if (t > 1.0f - fade) a = EaseOutCubic((1.0f - t) / fade);
+      if (t < fade)             a = Chaso::Ease::Evaluate(Chaso::EaseType::OutCubic, t / fade);
+      else if (t > 1.0f - fade) a = Chaso::Ease::Evaluate(Chaso::EaseType::OutCubic, (1.0f - t) / fade);
       a = std::clamp(a, 0.0f, 1.0f);
     }
     if (a <= 0.01f) return;
@@ -589,7 +582,7 @@ public:
   void DrawHud(const WaveManagerScript &owner) const override {
     float reveal = 1.0f;
     if (owner.introDuration_ > 0.0f) {
-      reveal = EaseOutCubic(owner.stateTimer_ / owner.introDuration_);
+      reveal = Chaso::Ease::Evaluate(Chaso::EaseType::OutCubic, owner.stateTimer_ / owner.introDuration_);
     }
     owner.DrawWaveBar(reveal, false);
   }

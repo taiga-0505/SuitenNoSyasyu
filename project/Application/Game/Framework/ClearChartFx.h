@@ -1,6 +1,7 @@
 #pragma once
 #include "RenderCommon.h"
 #include "Game/Framework/StageProgress.h"
+#include "Common/Tween/Easing.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cmath>
@@ -196,7 +197,7 @@ public:
     if (dim > 0.0f) RC::DrawBox({0.0f, 0.0f}, {screenW, screenH}, {0.02f, 0.03f, 0.06f, dim});
 
     // 海図パネル（中央から上下に開く）→ 中身 → 見出しと情報パネル
-    const float open = EaseOutCubic((t_ - TUnroll0()) / (std::max)(p.unroll, 1e-3f));
+    const float open = Chaso::Ease::Evaluate(Chaso::EaseType::OutCubic, (t_ - TUnroll0()) / (std::max)(p.unroll, 1e-3f));
     if (open > 0.0f) {
       ca_ = 1.0f;
       const float cy = (kChartT + kChartB) * 0.5f;
@@ -303,10 +304,6 @@ private:
   static float Smooth01(float v) {
     v = Clamp01(v);
     return v * v * (3.0f - 2.0f * v);
-  }
-  static float EaseOutCubic(float v) {
-    v = 1.0f - Clamp01(v);
-    return 1.0f - v * v * v;
   }
   static RC::Vector2 Lerp(const RC::Vector2 &a, const RC::Vector2 &b, float t) {
     return {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t};

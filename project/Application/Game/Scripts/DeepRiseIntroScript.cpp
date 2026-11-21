@@ -15,6 +15,8 @@
 #include "Game/Framework/SharkChaseCutscene.h"
 #include "Game/Framework/StateMachine.h"
 #include "Scene.h"
+#include "Common/Tween/Easing.h"
+#include "Game/Framework/WaterCameraFx.h"
 
 #if RC_ENABLE_IMGUI
 #include "imgui/imgui.h"
@@ -293,7 +295,7 @@ protected:
     const float alpha = fadeIn * (1.0f - fadeOut);
     if (alpha <= 0.001f) return;
     // 下から浮かび上がって止まり（泡のように）、消えるときはそのまま上へ抜ける
-    const float rise = (1.0f - EaseOutPow(t / (std::max)(inEnd, 1e-3f), 3.0f)) * 18.0f - fadeOut * 10.0f;
+    const float rise = (1.0f - WaterCameraFx::EaseOutPow(t / (std::max)(inEnd, 1e-3f), 3.0f)) * 18.0f - fadeOut * 10.0f;
 
     // ---- 1280x720 基準 → 実解像度 ----
     float screenW = kDesignW, screenH = kDesignH;
@@ -337,7 +339,7 @@ protected:
 
     // 下線：中央から左右へ伸びる細い光の線
     const float lineY = titleY + titleH + 8.0f;
-    const float halfW = 190.0f * EaseOutPow(t / (std::max)(inEnd + 0.25f, 1e-3f), 3.0f);
+    const float halfW = 190.0f * WaterCameraFx::EaseOutPow(t / (std::max)(inEnd + 0.25f, 1e-3f), 3.0f);
     if (halfW > 0.5f) {
       const RC::Vector2 a = P(cx - halfW, lineY);
       const RC::Vector2 b = P(cx + halfW, lineY + 1.5f);
@@ -439,18 +441,6 @@ private:
   static float Smooth01(float t) {
     t = std::clamp(t, 0.0f, 1.0f);
     return t * t * (3.0f - 2.0f * t);
-  }
-
-  /// @brief 最初は速く、終わりに向かって減速する（1 - (1-u)^k。k=1 で等速）
-  /// @details 深海は真っ暗で見せるものが無いので、そこを長引かせないためにこの形。
-  ///          水面に近づくほど遅くなるので、明るくなっていく過程はゆっくり見える。
-  /// @param u 進行度（0〜1 に丸める）
-  /// @param k 減速の強さ（0.1 未満は 0.1 に丸める）
-  /// @return 補間後の進行度（0〜1）
-  static float EaseOutPow(float u, float k) {
-    u = std::clamp(u, 0.0f, 1.0f);
-    k = (std::max)(k, 0.1f);
-    return 1.0f - std::pow(1.0f - u, k);
   }
 
   /// @brief 浮上演出を開始する。現在のカメラ位置・向きを目標にし、riseDepth 下から見上げた状態へ移す
@@ -563,7 +553,7 @@ private:
     // 位置は EaseOutPow で「速く出て水面手前で減速」させる
     t_ += dt;
     const float u = t_ / (std::max)(riseDuration, 1e-3f);
-    const float e = EaseOutPow(u, riseEase);
+    const float e = WaterCameraFx::EaseOutPow(u, riseEase);
     tr->position = RC::Lerp(startPos_, goalPos_, e);
     // 向きは水面へ向かう途中で水平へ戻していく（位置より少し先に落ち着く）
     const float r = Smooth01(u / 0.85f);

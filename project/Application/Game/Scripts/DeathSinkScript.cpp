@@ -8,6 +8,7 @@
 #include "Game/Framework/StageDemo.h"
 #include "Game/Framework/DeathScreenFx.h"
 #include "Game/Framework/StateMachine.h"
+#include "Common/Tween/Easing.h"
 
 #if RC_ENABLE_IMGUI
 #include "imgui/imgui.h"
@@ -252,7 +253,7 @@ private:
       auto *tr = o.GetComponent<TransformComponent>();
       if (!tr) return;
       const float u = o.t_ / (std::max)(o.fallTime, 1e-3f);
-      tr->position.y = o.startPos_.y + (o.waterY_ - o.startPos_.y) * WaterCameraFx::EaseInQuad(u);
+      tr->position.y = o.startPos_.y + (o.waterY_ - o.startPos_.y) * Chaso::Ease::Evaluate(Chaso::EaseType::InQuad, u);
       o.UpdateTilt(*tr, dt);
       if (u >= 1.0f) {
         tr->position.y = o.waterY_ - 0.05f;
@@ -277,7 +278,7 @@ private:
       o.screenFx.StartBlink(o.TimeUntilDark()); // 沈み始めたら瞬きを開始（2 回目以降は無視される）
       const float u = o.t_ / (std::max)(o.sinkTime, 1e-3f);
       const float targetY = o.waterY_ - o.depth;
-      tr->position.y = o.sinkStartY_ + (targetY - o.sinkStartY_) * WaterCameraFx::EaseOutQuad(u);
+      tr->position.y = o.sinkStartY_ + (targetY - o.sinkStartY_) * Chaso::Ease::Evaluate(Chaso::EaseType::OutQuad, u);
       o.UpdateTilt(*tr, dt);
       if ((o.waterY_ - tr->position.y) >= o.darkDepth || u >= 1.0f) {
         o.t_ = 0.0f;

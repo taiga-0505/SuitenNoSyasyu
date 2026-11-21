@@ -14,6 +14,7 @@
 #include "Game/Framework/UnderwaterLook.h"
 #include "Game/Framework/ExposureFlash.h"
 #include "Game/Framework/StateMachine.h"
+#include "Common/Tween/Easing.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cmath>
@@ -43,28 +44,6 @@ namespace WaterCameraFx {
 inline float Smooth01(float t) {
   t = std::clamp(t, 0.0f, 1.0f);
   return t * t * (3.0f - 2.0f * t);
-}
-/// @brief 1 - (1-u)^3（最初は速く、終わりに向かって減速）
-/// @param u 進行度（0〜1 に丸める）
-/// @return 0〜1
-inline float EaseOutCubic(float u) {
-  u = std::clamp(u, 0.0f, 1.0f);
-  const float v = 1.0f - u;
-  return 1.0f - v * v * v;
-}
-/// @brief 1 - (1-u)^2（最初は速く、終わりに向かって減速）
-/// @param u 進行度（0〜1 に丸める）
-/// @return 0〜1
-inline float EaseOutQuad(float u) {
-  u = std::clamp(u, 0.0f, 1.0f);
-  return 1.0f - (1.0f - u) * (1.0f - u);
-}
-/// @brief u^2（最初はゆっくり、終わりに向かって加速）
-/// @param u 進行度（0〜1 に丸める）
-/// @return 0〜1
-inline float EaseInQuad(float u) {
-  u = std::clamp(u, 0.0f, 1.0f);
-  return u * u;
 }
 /// @brief 1 - (1-u)^k（最初は速く、終わりに向かって減速）
 /// @param u 進行度（0〜1 に丸める）
@@ -736,10 +715,10 @@ public:
     TransformComponent *tr = owner.cam_.tr;
     const float t = owner.PhaseTime();
     const float u = t / (std::max)(p.sink, 1e-3f);
-    tr->position.y = owner.waterY_ - p.depth * EaseOutQuad(u);
+    tr->position.y = owner.waterY_ - p.depth * Chaso::Ease::Evaluate(Chaso::EaseType::OutQuad, u);
     const float tilt = (p.tilt > 0.0f) ? Smooth01(t / p.tilt) : 1.0f;
     tr->rotation.x = owner.baseRot_.x + (p.lookUpPitch - owner.baseRot_.x) * tilt;
-    owner.cam_.cc->fovY = owner.baseFov_ * (p.fovBoost - (p.fovBoost - 1.0f) * EaseOutQuad(u));
+    owner.cam_.cc->fovY = owner.baseFov_ * (p.fovBoost - (p.fovBoost - 1.0f) * Chaso::Ease::Evaluate(Chaso::EaseType::OutQuad, u));
     // 画面が深海色になりきった時点で終わり（沈みきるまで待つと暗い時間が延びるだけ）
     if (u >= 1.0f || (owner.waterY_ - tr->position.y) >= owner.look_->deepDepth) {
       machine.ChangeState<DoneState>();
@@ -760,7 +739,7 @@ public:
     const DiveParams &p = *owner.p_;
     TransformComponent *tr = owner.cam_.tr;
     const float u = owner.PhaseTime() / (std::max)(p.plunge, 1e-3f);
-    const float e = EaseInQuad(u);
+    const float e = Chaso::Ease::Evaluate(Chaso::EaseType::InQuad, u);
     const float startY = owner.basePos_.y + ((p.anticipation > 0.0f) ? p.lift : 0.0f);
     tr->position.y = startY + (owner.waterY_ - startY) * e;
     owner.cam_.cc->fovY = owner.baseFov_ * (1.0f + (p.fovBoost - 1.0f) * e);
@@ -783,7 +762,7 @@ public:
     (void)deltaTime;
     const DiveParams &p = *owner.p_;
     const float u = owner.PhaseTime() / (std::max)(p.anticipation, 1e-3f);
-    owner.cam_.tr->position.y = owner.basePos_.y + p.lift * EaseOutCubic(u);
+    owner.cam_.tr->position.y = owner.basePos_.y + p.lift * Chaso::Ease::Evaluate(Chaso::EaseType::OutCubic, u);
     if (u >= 1.0f) machine.ChangeState<PlungeState>();
   }
   const char *Name() const override { return "anticipate"; }
@@ -1272,7 +1251,7 @@ private:
     AdvancePhaseTime(dt);
     const float u = PhaseTime() / (std::max)(p_->duration, 1e-3f);
     // 位置は最初に速く、最後にふわりと止まる。向きは少し遅れて真下（最終の向き）へ傾く
-    tr->position = RC::Lerp(startPos_, goalPos_, EaseOutCubic(u));
+    tr->position = RC::Lerp(startPos_, goalPos_, Chaso::Ease::Evaluate(Chaso::EaseType::OutCubic, u));
     tr->rotation = RC::Lerp(startRot_, goalRot_, Smooth01((u - 0.15f) / 0.85f));
     if (u >= 1.0f) {
       tr->position = goalPos_;
@@ -1418,7 +1397,7 @@ public:
     const float u = (std::min)(owner.PhaseTime() / (std::max)(p.launch, 1e-3f), 1.0f);
     const float startY = owner.basePos_.y - ((p.anticipation > 0.0f) ? p.dip : 0.0f);
     // 最初は速く飛び出し（EaseOutQuad）、そのまま空へ抜けていく
-    tr->position.y = startY + (owner.rise_ + p.dip) * EaseOutQuad(u);
+    tr->position.y = startY + (owner.rise_ + p.dip) * Chaso::Ease::Evaluate(Chaso::EaseType::OutQuad, u);
     tr->rotation.x = owner.baseRot_.x + (p.lookUpPitch - owner.baseRot_.x) * Smooth01(u / 0.8f);
     const float fovK = std::sin(3.14159265f * (std::min)(u * 1.2f, 1.0f)); // 途中で広がって戻る
     owner.frame_.cc->fovY = owner.baseFov_ * (1.0f + (p.fovBoost - 1.0f) * fovK);
@@ -1442,7 +1421,7 @@ public:
     (void)deltaTime;
     const AscendParams &p = *owner.p_;
     const float u = owner.PhaseTime() / (std::max)(p.anticipation, 1e-3f);
-    owner.frame_.tr->position.y = owner.basePos_.y - p.dip * EaseOutCubic(u);
+    owner.frame_.tr->position.y = owner.basePos_.y - p.dip * Chaso::Ease::Evaluate(Chaso::EaseType::OutCubic, u);
     if (u >= 1.0f) machine.ChangeState<LaunchState>();
   }
   const char *Name() const override { return "anticipate"; }
