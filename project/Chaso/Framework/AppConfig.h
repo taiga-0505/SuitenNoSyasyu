@@ -22,6 +22,12 @@ struct AppConfig {
 #endif
   bool vsync = true; ///< 垂直同期（V-Sync）を有効にするか
 
+  /// @brief HDR 描画（AppConfig.json の "hdr": true で有効。起動時だけ読む）
+  /// @details シーンを浮動小数点（R16G16B16A16_FLOAT）で描き、ポストプロセスの最後に
+  ///          トーンマップで画面の明るさへ収める。光源やブルームの明るい部分が白飛びしにくくなる。
+  ///          false なら従来どおり 8bit（sRGB）で描く。
+  bool hdr = false;
+
   // ウィンドウタイトルと起動シーンはゲームごとに異なるため AppConfig.json（ゲーム側）で上書きする。
   // 文字列（全構成共通）か、構成別オブジェクトのどちらでも書ける（例）:
   //   "bootScene": "Title"

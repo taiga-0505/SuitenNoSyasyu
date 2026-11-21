@@ -1,0 +1,76 @@
+{
+  "actions": [
+    {
+      "text": "$(play) 実行 (Debug)",
+      "command": "powershell -ExecutionPolicy Bypass -File scripts/build/build_and_run.ps1 -Configuration Debug",
+      "tooltip": "Debug 構成でビルドして実行します",
+      "color": "#98c379"
+    },
+    {
+      "text": "$(play) 実行 (Dev)",
+      "command": "powershell -ExecutionPolicy Bypass -File scripts/build/build_and_run.ps1 -Configuration Development",
+      "tooltip": "Development 構成でビルドして実行します",
+      "color": "#e5c07b"
+    },
+    {
+      "text": "$(play) 実行 (Release)",
+      "command": "powershell -ExecutionPolicy Bypass -File scripts/build/build_and_run.ps1 -Configuration Release",
+      "tooltip": "Release 構成でビルドして実行します",
+      "color": "#e06c75"
+    },
+    {
+      "text": "$(trash) クリーン＆ビルド",
+      "command": "powershell -ExecutionPolicy Bypass -File scripts/build/clean_build.ps1 -Configuration Debug",
+      "tooltip": "キャッシュをクリアして再ビルドします",
+      "color": "#c678dd"
+    },
+    {
+      "text": "$(paintcan) コード整形",
+      "command": "powershell -ExecutionPolicy Bypass -File scripts/build/format_code.ps1",
+      "tooltip": "コードの自動整形を実行します",
+      "color": "#56b6c2"
+    },
+    {
+      "text": "$(cloud-upload) エンジン反映",
+      "command": "powershell -ExecutionPolicy Bypass -File project/Chaso/scripts/engine-push.ps1",
+      "tooltip": "project/Chaso の変更を ChasoEngine リポジトリへ push します（先にコミットしておくこと）",
+      "color": "#61afef"
+    },
+    {
+      "text": "$(cloud-download) エンジン取込",
+      "command": "powershell -ExecutionPolicy Bypass -File project/Chaso/scripts/engine-pull.ps1",
+      "tooltip": "ChasoEngine リポジトリの最新を project/Chaso に取り込みます（作業ツリーはクリーンにしておくこと）",
+      "color": "#61afef"
+    },
+    {
+      "text": "$(sync) リソース同期",
+      "command": "powershell -ExecutionPolicy Bypass -File project/Chaso/scripts/sync-resources.ps1",
+      "tooltip": "Chaso/Resources と Resources を同期します（ビルド前にも自動で実行されます）",
+      "color": "#61afef"
+    },
+    {
+      "text": "$(github) GitHub公開(別アカウント)",
+      "command": "powershell -ExecutionPolicy Bypass -File project/Chaso/scripts/publish-github.ps1 -Mode external",
+      "tooltip": "このリポジトリを .chaso.json の公開先アカウントの GitHub に作成して push します（origin 設定済みなら push だけ）",
+      "color": "#d19a66"
+    },
+    {
+      "text": "$(trash) ログ削除",
+      "command": "powershell -ExecutionPolicy Bypass -File scripts/build/delete_with_confirm.ps1 -TargetFolder \"logs\" -TargetName \"ログ\"",
+      "tooltip": "logsフォルダの中身をすべて削除します",
+      "color": "#a8a8a8"
+    },
+    {
+      "text": "$(trash) スクショ削除",
+      "command": "powershell -ExecutionPolicy Bypass -File scripts/build/delete_with_confirm.ps1 -TargetFolder \"media\\screenshots\" -TargetName \"スクリーンショット\"",
+      "tooltip": "スクリーンショット(media/screenshots)の中身をすべて削除します",
+      "color": "#a8a8a8"
+    },
+    {
+      "text": "$(trash) 画録削除",
+      "command": "powershell -ExecutionPolicy Bypass -File scripts/build/delete_with_confirm.ps1 -TargetFolder \"media\\video\" -TargetName \"録画ファイル\"",
+      "tooltip": "録画ファイル(media/video)の中身をすべて削除します",
+      "color": "#a8a8a8"
+    }
+  ]
+}

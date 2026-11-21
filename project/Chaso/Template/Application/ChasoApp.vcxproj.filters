@@ -161,6 +161,9 @@
     <ClInclude Include="..\Chaso\Game\Scene\Scene.h">
       <Filter>Game\Scene</Filter>
     </ClInclude>
+    <ClInclude Include="..\Chaso\Game\Scene\Prefab.h">
+      <Filter>Game\Scene</Filter>
+    </ClInclude>
     <ClInclude Include="..\Chaso\Game\Scene\SceneManager.h">
       <Filter>Game\Scene</Filter>
     </ClInclude>

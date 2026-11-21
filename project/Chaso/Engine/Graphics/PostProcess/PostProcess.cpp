@@ -42,6 +42,7 @@ const char* ToString(PostEffectType type) {
   case PostEffectType::BloodOverlay:return "BloodOverlay";
   case PostEffectType::InkOverlay:  return "InkOverlay";
   case PostEffectType::VisionBleed: return "VisionBleed";
+  case PostEffectType::Tonemap:   return "Tonemap";
   case PostEffectType::None:      return "None";
   default:                        return "Unknown";
   }
@@ -139,6 +140,13 @@ void PostProcess::Initialize(Dx12Core *dxCore,
 
   pipelineVisionBleed_ = pipelineManager_->Get("visionbleed.none");
   assert(pipelineVisionBleed_ && "Failed to get visionbleed pipeline");
+
+  // HDR 用（HDR でないときは使わない）
+  pipelineTonemap_ = pipelineManager_->Get("tonemap.none");
+  pipelineCopyOutput_ = pipelineManager_->Get("copyimage.output");
+  if (hdr_) {
+    assert(pipelineTonemap_ && pipelineCopyOutput_ && "Failed to get HDR pipelines");
+  }
 
   // CBuffer 初期化
   D3D12_HEAP_PROPERTIES uploadHeap{D3D12_HEAP_TYPE_UPLOAD};
@@ -615,8 +623,12 @@ void PostProcess::Resize(uint32_t width, uint32_t height) {
   }
 
   if (pingPongInitialized_) {
-    pingPongA_->Initialize(dxCore_, width_, height_);
-    pingPongB_->Initialize(dxCore_, width_, height_);
+    // パイプラインの出力形式（= シーンの形式。HDR なら浮動小数点）にそろえる
+    pingPongA_->Initialize(dxCore_, width_, height_, pipelineManager_->RtvFormat());
+    pingPongB_->Initialize(dxCore_, width_, height_, pipelineManager_->RtvFormat());
+  }
+  if (ldrInitialized_) {
+    ldr_->Initialize(dxCore_, width_, height_, pipelineManager_->RtvFormat());
   }
 }
 
@@ -1468,6 +1480,8 @@ GraphicsPipeline *PostProcess::GetPipelineForEffect(PostEffectType type) {
     return pipelineInkOverlay_;
   case PostEffectType::VisionBleed:
     return pipelineVisionBleed_;
+  case PostEffectType::Tonemap:
+    return pipelineTonemap_;
   case PostEffectType::None:
   default:
     return pipelineCopy_;
@@ -1482,13 +1496,92 @@ void PostProcess::EnsurePingPongTextures() {
   if (pingPongInitialized_) {
     return;
   }
+  // パイプラインの出力形式（= シーンの形式。HDR なら浮動小数点）にそろえる
   pingPongA_ = std::make_unique<RenderTexture>();
-  pingPongA_->Initialize(dxCore_, width_, height_);
+  pingPongA_->Initialize(dxCore_, width_, height_, pipelineManager_->RtvFormat());
 
   pingPongB_ = std::make_unique<RenderTexture>();
-  pingPongB_->Initialize(dxCore_, width_, height_);
+  pingPongB_->Initialize(dxCore_, width_, height_, pipelineManager_->RtvFormat());
 
   pingPongInitialized_ = true;
+}
+
+void PostProcess::EnsureLdrTexture() {
+  if (ldrInitialized_) return;
+  ldr_ = std::make_unique<RenderTexture>();
+  ldr_->Initialize(dxCore_, width_, height_, pipelineManager_->RtvFormat(), {0.0f, 0.0f, 0.0f, 1.0f});
+  ldrInitialized_ = true;
+}
+
+void PostProcess::BindFinalTarget_(ID3D12GraphicsCommandList *cmdList, RenderTexture *dstTexture) {
+  if (dstTexture) {
+    D3D12_VIEWPORT vp{};
+    vp.Width = static_cast<float>(width_);
+    vp.Height = static_cast<float>(height_);
+    vp.MaxDepth = 1.0f;
+    D3D12_RECT sr{0, 0, static_cast<LONG>(width_), static_cast<LONG>(height_)};
+    dstTexture->TransitionToRenderTarget(cmdList);
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv = dstTexture->GetRTV();
+    cmdList->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+    cmdList->RSSetViewports(1, &vp);
+    cmdList->RSSetScissorRects(1, &sr);
+  } else {
+    D3D12_CPU_DESCRIPTOR_HANDLE backRtv = dxCore_->CurrentRTV();
+    cmdList->OMSetRenderTargets(1, &backRtv, FALSE, nullptr);
+    dxCore_->ResetViewportScissorToBackbuffer(width_, height_);
+  }
+}
+
+void PostProcess::DrawHdr_(ID3D12GraphicsCommandList *cmdList, const RenderTexture &renderTexture) {
+  D3D12_VIEWPORT vp{};
+  vp.Width = static_cast<float>(width_);
+  vp.Height = static_cast<float>(height_);
+  vp.MaxDepth = 1.0f;
+  D3D12_RECT sr{0, 0, static_cast<LONG>(width_), static_cast<LONG>(height_)};
+
+  EnsureLdrTexture();
+
+  // 積まれたエフェクトの後ろにトーンマップを足す。
+  // FXAA は 0〜1 の画像向けなので、最後に FXAA があればトーンマップをその前に入れる。
+  std::vector<PostEffectType> passes = activeEffects_;
+  auto insertAt = passes.end();
+  if (!passes.empty() && passes.back() == PostEffectType::Fxaa) insertAt = passes.end() - 1;
+  passes.insert(insertAt, PostEffectType::Tonemap);
+  if (passes.size() > 1) EnsurePingPongTextures();
+
+  RenderTexture *textures[2] = {pingPongA_.get(), pingPongB_.get()};
+  const size_t count = passes.size();
+  for (size_t i = 0; i < count; ++i) {
+    const bool isFirst = (i == 0);
+    const bool isLast = (i == count - 1);
+
+    D3D12_GPU_DESCRIPTOR_HANDLE srcSRV;
+    if (isFirst) {
+      srcSRV = renderTexture.GetSRVGPU();
+    } else {
+      RenderTexture *prevDst = textures[(i - 1) % 2];
+      prevDst->TransitionToShaderResource(cmdList);
+      srcSRV = prevDst->GetSRVGPU();
+    }
+
+    // 最後（トーンマップか FXAA）は ldr_ へ。オーバーレイがこの上に描けるよう、RT のまま戻る
+    RenderTexture *dst = isLast ? ldr_.get() : textures[i % 2];
+    dst->TransitionToRenderTarget(cmdList);
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv = dst->GetRTV();
+    cmdList->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+    cmdList->RSSetViewports(1, &vp);
+    cmdList->RSSetScissorRects(1, &sr);
+
+    DrawSinglePass(cmdList, srcSRV, GetPipelineForEffect(passes[i]), passes[i]);
+  }
+}
+
+void PostProcess::Resolve(ID3D12GraphicsCommandList *cmdList, RenderTexture *dstTexture) {
+  if (!hdr_ || !ldrInitialized_ || !ldr_) return;
+  ldr_->TransitionToShaderResource(cmdList);
+  BindFinalTarget_(cmdList, dstTexture);
+  // シーン形式（浮動小数点）→ 画面形式（sRGB）。sRGB の RTV なので書き込み時に自動でガンマが掛かる
+  DrawSinglePass(cmdList, ldr_->GetSRVGPU(), pipelineCopyOutput_, PostEffectType::None);
 }
 
 // ============================================================================
@@ -1547,6 +1640,11 @@ void PostProcess::DrawSinglePass(ID3D12GraphicsCommandList *cmdList,
     constants.param1 = *(uint32_t *)&bloomIntensity_;
     constants.param2 = *(uint32_t *)&bloomRadius_;
     constants.param3 = *(uint32_t *)&bloomKnee_;
+  } else if (effectType == PostEffectType::Tonemap) {
+    const float exposure = std::exp2(tonemapExposureEv_);
+    constants.param0 = *(uint32_t *)&exposure;
+    constants.param1 = static_cast<uint32_t>(tonemapOperator_);
+    constants.param2 = *(uint32_t *)&tonemapWhitePoint_;
   } else if (effectType == PostEffectType::VisionBleed) {
     constants.param0 = *(uint32_t *)&visionBleed_;
     constants.param1 = *(uint32_t *)&visionGhost_;
@@ -1666,6 +1764,12 @@ void PostProcess::DrawSinglePass(ID3D12GraphicsCommandList *cmdList,
 void PostProcess::Draw(ID3D12GraphicsCommandList *cmdList,
                        const RenderTexture &renderTexture,
                        RenderTexture *dstTexture) {
+  if (hdr_) {
+    // HDR：最終出力先へは Resolve で写す（オーバーレイを挟めるように）
+    DrawHdr_(cmdList, renderTexture);
+    return;
+  }
+
   // ビューポート・シザー（全パス共通サイズ）
   D3D12_VIEWPORT vp{};
   vp.Width = static_cast<float>(width_);
@@ -1755,6 +1859,18 @@ void PostProcess::Draw(ID3D12GraphicsCommandList *cmdList,
 void PostProcess::DrawImGui([[maybe_unused]] const char *label) {
 #if RC_ENABLE_IMGUI
   if (ImGui::CollapsingHeader(label, ImGuiTreeNodeFlags_DefaultOpen)) {
+    // HDR のときだけトーンマップの設定を出す（AppConfig.json の "hdr" で切り替え。再起動が必要）
+    if (hdr_) {
+      ImGui::SeparatorText("HDR Tonemap");
+      ImGui::SliderFloat("Exposure (EV)", &tonemapExposureEv_, -5.0f, 5.0f);
+      int op = static_cast<int>(tonemapOperator_);
+      const char *ops[] = {"ACES", "Reinhard", "None"};
+      if (ImGui::Combo("Operator", &op, ops, 3)) tonemapOperator_ = static_cast<TonemapOperator>(op);
+      if (tonemapOperator_ == TonemapOperator::Reinhard) {
+        ImGui::SliderFloat("White Point", &tonemapWhitePoint_, 0.5f, 20.0f);
+      }
+      ImGui::Separator();
+    }
     // 各エフェクトのチェックボックス
     bool grayscale = HasEffect(PostEffectType::Grayscale);
     bool sepia = HasEffect(PostEffectType::Sepia);

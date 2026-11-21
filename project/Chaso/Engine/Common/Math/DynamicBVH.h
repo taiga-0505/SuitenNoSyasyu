@@ -16,7 +16,11 @@
 // ============================================================================
 
 #include "BoundingBox.h"
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <limits>
+#include <utility>
 #include <vector>
 
 namespace RC {
@@ -71,6 +75,50 @@ public:
   /// @param box 判定する箱
   /// @param cb  bool(int32_t proxyId)。false を返すと列挙を打ち切る
   template <class Callback> void Query(const BoundingBox &box, Callback &&cb) const;
+
+  /// @brief 線分（origin + dir * t, 0 <= t <= maxT）が通る葉を列挙する
+  /// @details 各ノードの AABB を inflate だけ広げて判定するので、球を飛ばす判定（SphereCast）にも使える。
+  ///          コールバックが返した値で以降の探索範囲を縮める（最も近い物だけ欲しいときに無駄な葉を飛ばせる）。
+  /// @param origin  起点
+  /// @param dir     方向（正規化していなくてもよい。t は dir の長さ単位になる）
+  /// @param maxT    探索する t の上限
+  /// @param inflate ノードの AABB を広げる量（レイなら 0、球なら半径）
+  /// @param cb      float(int32_t proxyId, float currentMaxT)。
+  ///                新しい上限を返す（変えないなら currentMaxT、0 以下で打ち切り）
+  template <class Callback>
+  void RayCast(const Vector3 &origin, const Vector3 &dir, float maxT, float inflate, Callback &&cb) const;
+
+  /// @brief 線分と AABB の交差区間を求める（スラブ法）
+  /// @param origin 起点
+  /// @param invDir 方向の各成分の逆数（成分が 0 なら ±無限大でよい）
+  /// @param box    判定する箱
+  /// @param maxT   t の上限
+  /// @param tEnter 入る位置の t（起点が箱の中なら 0）
+  /// @return [0, maxT] の範囲で交差していれば true
+  static bool SegmentOverlapsBox(const Vector3 &origin, const Vector3 &invDir, const BoundingBox &box,
+                                 float maxT, float &tEnter) {
+    float t0 = 0.0f;
+    float t1 = maxT;
+    const float o[3] = {origin.x, origin.y, origin.z};
+    const float inv[3] = {invDir.x, invDir.y, invDir.z};
+    const float lo[3] = {box.min.x, box.min.y, box.min.z};
+    const float hi[3] = {box.max.x, box.max.y, box.max.z};
+    for (int a = 0; a < 3; ++a) {
+      if (std::isinf(inv[a])) {
+        // この軸に平行：起点がスラブの外なら絶対に当たらない
+        if (o[a] < lo[a] || o[a] > hi[a]) return false;
+        continue;
+      }
+      float tn = (lo[a] - o[a]) * inv[a];
+      float tf = (hi[a] - o[a]) * inv[a];
+      if (tn > tf) std::swap(tn, tf);
+      if (tn > t0) t0 = tn;
+      if (tf < t1) t1 = tf;
+      if (t0 > t1) return false;
+    }
+    tEnter = t0;
+    return true;
+  }
 
   /// @brief 視錐台にかかる葉を列挙する（保守的：fat AABB で判定するので多めに返ることはあるが、漏れはない）
   /// @details 完全に内側の部分木は以降の判定を省いて丸ごと採用する。
@@ -201,6 +249,33 @@ void DynamicBVH::Query(const BoundingBox &box, Callback &&cb) const {
     if (!n.aabb.Overlaps(box)) continue;
     if (n.IsLeaf()) {
       if (!cb(id)) return;
+    } else {
+      stack.Push(n.child1);
+      stack.Push(n.child2);
+    }
+  }
+}
+
+template <class Callback>
+void DynamicBVH::RayCast(const Vector3 &origin, const Vector3 &dir, float maxT, float inflate,
+                         Callback &&cb) const {
+  if (root_ == kNullNode || !(maxT > 0.0f)) return;
+  const auto inv = [](float d) {
+    return (d != 0.0f) ? 1.0f / d : std::numeric_limits<float>::infinity();
+  };
+  const Vector3 invDir = {inv(dir.x), inv(dir.y), inv(dir.z)};
+  detail::BvhStack stack;
+  stack.Push(root_);
+  while (!stack.Empty()) {
+    const int32_t id = stack.Pop();
+    const Node &n = nodes_[id];
+    float tEnter = 0.0f;
+    const BoundingBox box = (inflate > 0.0f) ? n.aabb.Expanded(inflate) : n.aabb;
+    if (!SegmentOverlapsBox(origin, invDir, box, maxT, tEnter)) continue;
+    if (n.IsLeaf()) {
+      const float newMax = cb(id, maxT);
+      if (!(newMax > 0.0f)) return; // 0 以下（または NaN）で打ち切り
+      maxT = (std::min)(maxT, newMax);
     } else {
       stack.Push(n.child1);
       stack.Push(n.child2);

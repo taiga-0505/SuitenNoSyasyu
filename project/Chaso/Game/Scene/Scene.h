@@ -9,6 +9,7 @@
 #include "ECS/Entity.h"
 #include "ECS/NativeScriptComponent.h"
 #include "ECS/ColliderBroadphase.h"
+#include "ECS/PhysicsQuery.h"
 #include "Common/Math/MathTypes.h"
 #include "Common/SceneContext.h"
 #include "../Framework/GameModeBase.h"
@@ -261,6 +262,120 @@ public:
           return true;
       });
   }
+
+  // ============================================================
+  // 当たり判定クエリ（レイキャスト・形状キャスト・範囲検索）
+  // ------------------------------------------------------------
+  // どれも ColliderComponent を持つアクティブなエンティティが対象（AABB / 球。Capsule は AABB 扱い）。
+  // 候補は BVH から引き、最終判定は呼んだ時点の TransformComponent で行う。
+  // BVH の同期は UpdateEntities / ResolveCollisions の先頭なので、同じフレーム中に
+  // 大きく（0.25m 以上）動いた物を確実に拾いたいときは先に SyncColliderBroadphase() を呼ぶ。
+  // そのフレームに CreateEntity したばかりの物（pendingEntities_）は次のフレームから対象になる。
+  // ============================================================
+
+  /// @brief レイを飛ばして最も近い当たりを返す
+  /// @param origin      起点（ワールド座標）
+  /// @param direction   方向（正規化していなくてよい。長さ 0 なら当たらない）
+  /// @param maxDistance 最大距離（m）
+  /// @param outHit      当たった物の情報（当たらなければ変更しない）
+  /// @param filter      絞り込み条件
+  /// @return 当たれば true
+  /// @note 起点がコライダーの中にある場合は distance = 0、normal = -direction で当たりとする。
+  bool Raycast(const RC::Vector3& origin, const RC::Vector3& direction, float maxDistance,
+               RaycastHit& outHit, const QueryFilter& filter = {});
+
+  /// @brief レイを飛ばして最も近い当たりを返す（RC::Ray 版。RC::ScreenPointToRay と組み合わせてマウスで選ぶときなど）
+  /// @param ray         レイ
+  /// @param maxDistance 最大距離（m）
+  /// @param outHit      当たった物の情報
+  /// @param filter      絞り込み条件
+  /// @return 当たれば true
+  bool Raycast(const RC::Ray& ray, float maxDistance, RaycastHit& outHit,
+               const QueryFilter& filter = {}) {
+      return Raycast(ray.origin, ray.direction, maxDistance, outHit, filter);
+  }
+
+  /// @brief レイを飛ばして当たった物をすべて返す（近い順）
+  /// @param origin      起点
+  /// @param direction   方向
+  /// @param maxDistance 最大距離（m）
+  /// @param outHits     結果の出力先（clear してから詰める）
+  /// @param filter      絞り込み条件
+  /// @return 当たった数
+  size_t RaycastAll(const RC::Vector3& origin, const RC::Vector3& direction, float maxDistance,
+                    std::vector<RaycastHit>& outHits, const QueryFilter& filter = {});
+
+  /// @brief 球を飛ばして最も近い当たりを返す（太いレイ。接地判定や太い弾に）
+  /// @param origin      球の中心の起点
+  /// @param radius      球の半径（m）
+  /// @param direction   方向
+  /// @param maxDistance 球の中心が進む最大距離（m）
+  /// @param outHit      当たった物の情報（distance は球の中心が進んだ距離、point は相手の表面上の接点）
+  /// @param filter      絞り込み条件
+  /// @return 当たれば true
+  /// @note 起点の時点で重なっている物は distance = 0 で当たりとする。
+  bool SphereCast(const RC::Vector3& origin, float radius, const RC::Vector3& direction,
+                  float maxDistance, RaycastHit& outHit, const QueryFilter& filter = {});
+
+  /// @brief 球と重なっているエンティティを列挙する
+  /// @param center 球の中心
+  /// @param radius 半径（m）
+  /// @param out    結果の出力先（clear してから詰める。entities_ の並び順）
+  /// @param filter 絞り込み条件
+  /// @return 見つかった数
+  size_t OverlapSphere(const RC::Vector3& center, float radius, std::vector<Entity*>& out,
+                       const QueryFilter& filter = {});
+
+  /// @brief 軸平行な箱と重なっているエンティティを列挙する
+  /// @param center      箱の中心
+  /// @param halfExtents 箱の半サイズ
+  /// @param out         結果の出力先（clear してから詰める。entities_ の並び順）
+  /// @param filter      絞り込み条件
+  /// @return 見つかった数
+  size_t OverlapBox(const RC::Vector3& center, const RC::Vector3& halfExtents,
+                    std::vector<Entity*>& out, const QueryFilter& filter = {});
+
+  /// @brief コライダーの BVH を今の位置に同期し直す
+  /// @details 同じフレーム中に大きく動かした直後にクエリを撃つときに呼ぶ（毎回呼ぶ必要はない）。
+  ///          pendingEntities_ はマージしない（更新ループ中に entities_ を伸ばすと
+  ///          UpdateEntities が握っている要素の参照が無効になるため）。
+  void SyncColliderBroadphase() {
+      broadphase_.Sync(entities_);
+  }
+
+  // ============================================================
+  // プレハブ（Resources/Prefabs/*.prefab.json）
+  // ------------------------------------------------------------
+  // エディタの Hierarchy 右クリック「Save as Prefab」で保存したエンティティ群（子孫込み）を
+  // 実行時に何度でも生成する。生成のたびに GUID を振り直すので、同じプレハブを何個置いてもよい。
+  // ============================================================
+
+  /// @brief プレハブファイルからエンティティを生成してシーンに追加する
+  /// @param path     プレハブのパス（"Prefabs/Bullet" のように拡張子・"Resources/" は省略可）
+  /// @param position ルートを置く位置（nullptr ならプレハブ保存時の位置のまま。子も同じだけずらす）
+  /// @return 生成したルートエンティティ（読めなければ nullptr）
+  /// @details 更新ループ中（スクリプトの OnUpdate など）から呼んでよい。
+  ///          生成したエンティティは pendingEntities_ に入り、そのフレームの更新の後でシーンに加わる。
+  ///          ファイルは初回だけ読み、以後はキャッシュを使う。
+  std::shared_ptr<Entity> InstantiatePrefab(const std::string& path,
+                                            const RC::Vector3* position = nullptr);
+
+  /// @brief 位置を指定してプレハブを生成する（InstantiatePrefab(path, &position) の省略形）
+  /// @param path     プレハブのパス
+  /// @param position ルートを置く位置
+  /// @return 生成したルートエンティティ（読めなければ nullptr）
+  std::shared_ptr<Entity> InstantiatePrefab(const std::string& path, const RC::Vector3& position) {
+      return InstantiatePrefab(path, &position);
+  }
+
+  /// @brief プレハブの JSON からエンティティを生成してシーンに追加する
+  /// @param prefab   Prefab::Capture() の戻り値と同じ形式の JSON
+  /// @param position ルートを置く位置（nullptr なら保存時の位置）
+  /// @return 生成したルートエンティティ（形式が不正なら nullptr）
+  /// @note 名前を InstantiatePrefab と分けているのは、文字列リテラルが std::string と
+  ///       nlohmann::json のどちらにも変換できて呼び出しが曖昧になるため。
+  std::shared_ptr<Entity> InstantiatePrefabJson(const nlohmann::json& prefab,
+                                                const RC::Vector3* position = nullptr);
 
   /// @brief 動的に生成したエンティティのランタイムリソースを初期化する
   /// @param e 初期化するエンティティ

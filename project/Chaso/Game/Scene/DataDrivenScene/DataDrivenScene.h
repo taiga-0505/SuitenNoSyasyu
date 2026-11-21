@@ -3,6 +3,7 @@
 #include "SceneFlow.h"
 #include "Common/EngineConfig.h"
 #include "Common/FrameProfiler.h"
+#include "Common/GameTime.h"
 #include "Common/Math/MathUtils.h"
 #include "Common/Math/Math.h"
 #include "Camera/CameraController.h" // ctx.camera->GetWorldPos()（Scene.h は前方宣言のみ）
@@ -192,8 +193,9 @@ public:
           clipLoop = cur->loop;
         }
 
+        // ゲーム時間（タイムスケール・ヒットストップ・スロー込み）で進める
         const float dt = (ctx.isSimulating() && anim->playing)
-            ? ctx.deltaTime * anim->speed * clipSpeed : 0.0f;
+            ? Chaso::Time::Get().DeltaTime() * anim->speed * clipSpeed : 0.0f;
         RC::UpdateModelAnimation(ren->modelHandle, dt);
 
         // ワンショット（loop = false）の終了判定。
@@ -414,7 +416,9 @@ public:
                 }
                 if (ctx.camera) {
                     // 編集モードでもパーティクルは動かして見せるが、ゲーム内ポーズ中は止める
-                    const float particleDt = ctx.gamePaused ? 0.0f : ctx.deltaTime;
+                    // 再生中はゲーム時間（スロー・ヒットストップに合わせる）、編集モードでは実時間
+                    const float particleDt = ctx.gamePaused ? 0.0f
+                        : (ctx.isPlaying() ? Chaso::Time::Get().DeltaTime() : ctx.deltaTime);
                     gpu->particleSystem->Update(ctx.camera->GetView(), ctx.camera->GetProjection(), particleDt);
                 }
             }
@@ -422,8 +426,9 @@ public:
     }
 
     // ゲーム内ポーズ中は 0 で回す（停止・一時停止と同じ扱い）。
-    // ポーズメニューのスクリプトだけは ctx.deltaTime を直接読んで動く。
-    float updateDt = ctx.isSimulating() ? ctx.deltaTime : 0.0f;
+    // ポーズメニューのスクリプトだけは ctx.deltaTime（実時間）を直接読んで動く。
+    // 再生中はゲーム時間（Chaso::Time。タイムスケール・ヒットストップ・スロー込み）を渡す。
+    float updateDt = ctx.isSimulating() ? Chaso::Time::Get().DeltaTime() : 0.0f;
 
     // シミュレーション中だけ GameMode を進める。BeginPlay は最初の 1 回だけ呼ぶ
     if (ctx.isSimulating()) {
@@ -1850,6 +1855,10 @@ public:
       const bool playing = (ctx.playState == PlayState::Playing);
       const bool paused  = (ctx.playState == PlayState::Paused);
       const float dt = ctx.deltaTime;
+
+      // エディタの一時停止中は BGM 以外の音（ボイス・環境音・SE）を一時停止する。
+      // ゲーム側のポーズメニューは AudioEngine::SetPaused() を使う（こちらとは独立）
+      AudioEngine::Get().SetEditorPaused(paused);
 
       // リスナーは音源より先に更新する（このフレームに Play() される 3D 音の初期定位に使われる）
       UpdateAudioListener(ctx, playing, dt);

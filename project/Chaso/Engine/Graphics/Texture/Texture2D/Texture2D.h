@@ -14,6 +14,11 @@ class CommandContext;
 /// @details DirectXTex を使用して画像ファイルを読み込み、D3D12 リソースとして GPU へ転送・管理する。
 ///          同期ロードに加え、CPU での読み込みと GPU 転送を分けた非同期ロードにも対応している。
 class Texture2D {
+  /// @brief GPU リソースを作って画像を転送する（SRV は作らない）
+  Microsoft::WRL::ComPtr<ID3D12Resource> CreateAndUpload_(SRVManager &srv, CommandContext &cmd);
+  /// @brief 今の resource_ を指す SRV を cpu の位置へ書く
+  void WriteSrv_(SRVManager &srv, D3D12_CPU_DESCRIPTOR_HANDLE cpu) const;
+
 public:
   /// @brief コンストラクタ（ロードは LoadFromFile / LoadCPU で行う）
   Texture2D() = default;
@@ -69,6 +74,7 @@ public:
     path_ = std::move(o.path_);
     isFallback_ = o.isFallback_;
     o.isFallback_ = false;
+    srgb_ = o.srgb_;
     resource_ = o.resource_;
     o.resource_ = nullptr;
     srv_ = o.srv_;
@@ -114,9 +120,22 @@ public:
   /// @note true でも IsLoaded() は true になる（描画は継続するため）。
   bool IsFallback() const { return isFallback_; }
 
+  /// @brief 読み込み時に sRGB として扱ったか
+  bool IsSRGB() const { return srgb_; }
+
+  /// @brief 同じ SRV スロットのまま、ファイルを読み直した中身へ差し替える（ホットリロード用）
+  /// @param srv SRV 管理
+  /// @param cmd 転送用のコマンドコンテキスト
+  /// @param fresh LoadCPU 済みの新しい画像（中身は移される）
+  /// @return 転送に使った中間リソース（転送完了まで保持すること。失敗時は nullptr で中身は変わらない）
+  /// @warning SRV（ディスクリプタ）をその場で書き換えるので、GPU が描画していないときに呼ぶこと。
+  ///          古いテクスチャ本体は GPU が使い終わってから解放される。
+  Microsoft::WRL::ComPtr<ID3D12Resource> ReloadFrom(SRVManager &srv, CommandContext &cmd, Texture2D &fresh);
+
 private:
   std::string path_;                             ///< ファイルパス
   bool isFallback_ = false;                      ///< 白 1x1 へフォールバックしたか
+  bool srgb_ = true;                             ///< sRGB として読み込んだか
   Microsoft::WRL::ComPtr<ID3D12Resource> resource_; ///< D3D12 リソース
   SRVManager::Handle srv_{};                     ///< SRV ハンドル
   DirectX::ScratchImage mipImages_;               ///< ロード中の一時イメージ（ミップマップ含む）

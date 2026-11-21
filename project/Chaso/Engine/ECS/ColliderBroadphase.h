@@ -82,6 +82,21 @@ public:
     });
   }
 
+  /// @brief 線分（origin + dir * t, 0 <= t <= maxT）が通る候補を列挙する
+  /// @param origin  起点
+  /// @param dir     方向（正規化済み）
+  /// @param maxT    最大距離
+  /// @param inflate 候補の箱を広げる量（レイなら 0、SphereCast なら半径）
+  /// @param cb      float(const Entry&, float currentMaxT)。新しい上限を返す（0 以下で打ち切り）
+  template <class Callback>
+  void QueryRay(const RC::Vector3 &origin, const RC::Vector3 &dir, float maxT, float inflate,
+                Callback &&cb) const {
+    bvh_.RayCast(origin, dir, maxT, inflate, [&](int32_t proxy, float currentMaxT) {
+      const Entry &en = entries_[bvh_.GetUserData(proxy)];
+      return cb(en, currentMaxT);
+    });
+  }
+
   /// @brief entities[order] の登録情報を取得する
   /// @param order 直前の Sync に渡した entities の添え字
   /// @return 登録情報（未登録・範囲外なら nullptr）

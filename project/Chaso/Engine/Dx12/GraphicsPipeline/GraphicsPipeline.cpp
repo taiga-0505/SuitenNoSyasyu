@@ -1,5 +1,7 @@
 #include "GraphicsPipeline.h"
 #include "Common/Log/Log.h"
+#include "DeferredReleaseQueue/DeferredReleaseQueue.h"
+#include <memory>
 #include <d3d12sdklayers.h>
 
 void GraphicsPipeline::Term() {
@@ -141,7 +143,7 @@ void GraphicsPipeline::BuildEx(const D3D12_INPUT_ELEMENT_DESC *inputElems,
       d.RTVFormats[0] = DXGI_FORMAT_UNKNOWN;
   } else {
       d.NumRenderTargets = 1;
-      d.RTVFormats[0] = rtvFmt;
+      d.RTVFormats[0] = (opt.rtvFormatOverride != DXGI_FORMAT_UNKNOWN) ? opt.rtvFormatOverride : rtvFmt;
   }
 
   d.PrimitiveTopologyType = opt.topologyType;
@@ -166,6 +168,10 @@ void GraphicsPipeline::BuildEx(const D3D12_INPUT_ELEMENT_DESC *inputElems,
       pushedFilter = true;
     }
   }
+
+  // ホットリロード中は、作れなかったときにデバッグレイヤーで止まらないようにする
+  std::unique_ptr<ScopedNoBreakOnD3D12Error> noBreak;
+  if (allowBuildFailure_) noBreak = std::make_unique<ScopedNoBreakOnD3D12Error>(device_.Get());
 
   HRESULT hr = device_->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&pso_));
 
@@ -193,7 +199,32 @@ void GraphicsPipeline::BuildEx(const D3D12_INPUT_ELEMENT_DESC *inputElems,
     isCacheFallback_ = true;
   }
 
+  if (FAILED(hr)) {
+    pso_.Reset();
+    if (allowBuildFailure_) {
+      // ホットリロード中の失敗（シェーダーの入出力がルートシグネチャ・入力レイアウトと合わない等）。
+      // 呼び出し側が古いパイプラインを使い続ける。
+      Log::Print("[GraphicsPipeline] PSO の作成に失敗しました（ホットリロード）。前のシェーダーのまま続けます");
+      return;
+    }
+  }
   assert(SUCCEEDED(hr));
+}
+
+void GraphicsPipeline::TakeOver(GraphicsPipeline &other) {
+  // 古い PSO・ルートシグネチャは、今記録中のフレームを GPU が終えるまで生かしておく
+  Microsoft::WRL::ComPtr<ID3D12RootSignature> oldRoot = root_;
+  Microsoft::WRL::ComPtr<ID3D12PipelineState> oldPso = pso_;
+  DeferredReleaseQueue::DeferCall([oldRoot, oldPso]() mutable {
+    oldPso.Reset();
+    oldRoot.Reset();
+  });
+
+  root_ = std::move(other.root_);
+  pso_ = std::move(other.pso_);
+  if (!device_) device_ = other.device_;
+  isCacheFallback_ = other.isCacheFallback_;
+  other.Term();
 }
 
 Microsoft::WRL::ComPtr<ID3DBlob> GraphicsPipeline::GetSerializedBlob() const {

@@ -1,6 +1,7 @@
 #pragma once
 #include <cassert>
 #include <d3d12.h>
+#include <d3d12sdklayers.h>
 #include <wrl/client.h>
 #include <vector>
 
@@ -62,6 +63,38 @@ struct GPipelineOptions {
       D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE; ///< トポロジの種類（三角形・線・点）
   bool disableRTV = false; ///< レンダーターゲット出力を無効にするか（ShadowMap 等）
   DXGI_FORMAT dsvFormatOverride = DXGI_FORMAT_UNKNOWN; ///< 既定の DSV フォーマットの上書き（UNKNOWN なら上書きしない）
+  DXGI_FORMAT rtvFormatOverride = DXGI_FORMAT_UNKNOWN; ///< 既定の RTV フォーマットの上書き（UNKNOWN なら上書きしない。HDR の最終出力用）
+};
+
+/// @class ScopedNoBreakOnD3D12Error
+/// @brief このスコープの間だけ、D3D12 デバッグレイヤーの「エラーで停止」を止める
+/// @details ホットリロードで作り直した PSO がルートシグネチャや入力レイアウトと合わないと、
+///          デバッグレイヤーが ERROR を出して止まり（デバッガ無しならクラッシュし）、
+///          「前の PSO のまま続ける」処理まで進めない。作成の間だけ止めないようにする。
+///          デバッグレイヤーが無い（Release）ときは何もしない。
+class ScopedNoBreakOnD3D12Error {
+public:
+  explicit ScopedNoBreakOnD3D12Error(ID3D12Device *device) {
+    if (device && SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&queue_)))) {
+      prevError_ = queue_->GetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR);
+      prevCorruption_ = queue_->GetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION);
+      queue_->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, FALSE);
+      queue_->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, FALSE);
+    }
+  }
+  ~ScopedNoBreakOnD3D12Error() {
+    if (queue_) {
+      queue_->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, prevError_);
+      queue_->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, prevCorruption_);
+    }
+  }
+  ScopedNoBreakOnD3D12Error(const ScopedNoBreakOnD3D12Error &) = delete;
+  ScopedNoBreakOnD3D12Error &operator=(const ScopedNoBreakOnD3D12Error &) = delete;
+
+private:
+  Microsoft::WRL::ComPtr<ID3D12InfoQueue> queue_;
+  BOOL prevError_ = FALSE;
+  BOOL prevCorruption_ = FALSE;
 };
 
 /// @class GraphicsPipeline
@@ -107,6 +140,16 @@ public:
   /// @return 直前の BuildEx でフォールバックしたなら true
   bool IsCacheFallback() const { return isCacheFallback_; }
 
+  /// @brief BuildEx の失敗を assert にせず、PSO を空のまま返すようにする（ホットリロード用）
+  /// @param allow true なら失敗してもログだけ出して続行する
+  void SetAllowBuildFailure(bool allow) { allowBuildFailure_ = allow; }
+
+  /// @brief other の PSO・ルートシグネチャへ差し替える（ホットリロード用）
+  /// @details このオブジェクトを指すポインタ（PostProcess などが保持）はそのまま使える。
+  ///          古い PSO・ルートシグネチャは、描画中のフレームを GPU が終えてから解放する。
+  /// @param other 新しく作ったパイプライン（中身は空になる）
+  void TakeOver(GraphicsPipeline &other);
+
 private:
   /// @brief ルートシグネチャを構築する内部関数
   /// @param type ルートシグネチャの種類（Compute 用の種類は非対応）
@@ -118,4 +161,5 @@ private:
   Microsoft::WRL::ComPtr<ID3D12RootSignature> root_; ///< ルートシグネチャ
   Microsoft::WRL::ComPtr<ID3D12PipelineState> pso_;  ///< パイプラインステートオブジェクト
   bool isCacheFallback_ = false;                     ///< キャッシュフォールバック発生フラグ
+  bool allowBuildFailure_ = false;                   ///< BuildEx の失敗を許すか（ホットリロード用）
 };

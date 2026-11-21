@@ -75,6 +75,41 @@ D3D12_GPU_DESCRIPTOR_HANDLE TextureManager::Load(const std::string &path,
 
 }
 
+std::vector<std::string> TextureManager::LoadedPaths() const {
+  std::lock_guard lock(mtx_);
+  std::vector<std::string> out;
+  out.reserve(cache_.size());
+  for (const auto &[path, tex] : cache_) {
+    if (tex.IsLoaded()) out.push_back(path);
+  }
+  return out;
+}
+
+bool TextureManager::Reload(const std::string &path) {
+  std::lock_guard lock(mtx_);
+  if (!srv_) return false;
+  const std::string npath = Log::NormalizePath(path);
+  auto it = cache_.find(npath);
+  if (it == cache_.end() || !it->second.IsLoaded()) return false;
+
+  // 先に別の入れ物で読んでみる。書き込み途中などで読めなかったら（白 1x1 になったら）差し替えない
+  Texture2D fresh;
+  if (!fresh.LoadCPU(npath, it->second.IsSRGB()) || fresh.IsFallback()) {
+    fresh.Term(srv_);
+    Log::Print(std::format("[HotReload] テクスチャを読めなかったので前の絵のままにします: {}", npath));
+    return false;
+  }
+
+  auto uploadRes = it->second.ReloadFrom(*srv_, loadCmd_, fresh);
+  fresh.Term(srv_);
+  if (!uploadRes) return false;
+
+  // 転送を実行する（ExecuteAndReset は転送の完了まで待つので、次のフレームは新しい絵で描ける）
+  loadCmd_.ExecuteAndReset();
+  Log::Print(std::format("[HotReload] テクスチャ更新: {}", npath));
+  return true;
+}
+
 Texture2D *TextureManager::Get(const std::string &path) {
   std::lock_guard lock(mtx_);
   std::string npath = Log::NormalizePath(path);

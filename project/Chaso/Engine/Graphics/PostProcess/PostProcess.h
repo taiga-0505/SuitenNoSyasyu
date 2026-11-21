@@ -39,6 +39,15 @@ enum class PostEffectType {
   BloodOverlay, ///< 被弾・瀕死のときに画面の周辺へ付く血（手続き型。テクスチャ不要）
   InkOverlay,   ///< タコの墨がレンズに貼り付いて視界を塞ぐ（手続き型。テクスチャ不要）
   VisionBleed,  ///< 意識が遠のく視界（周辺から水彩のように滲むぼかし・色のにじみと二重像。手続き型）
+  Tonemap,      ///< HDR の明るさを 0〜1 へ収める（HDR のときに PostProcess が自動で差し込む。AddEffect しない）
+};
+
+/// @enum TonemapOperator
+/// @brief トーンマップの曲線
+enum class TonemapOperator {
+  ACES = 0,     ///< 映画っぽい曲線（既定）
+  Reinhard = 1, ///< 素直な圧縮（whitePoint で 1.0 に届く）
+  None = 2,     ///< 露出を掛けて 0〜1 に切るだけ
 };
 
 /// @class PostProcess
@@ -76,6 +85,33 @@ public:
   void Draw(ID3D12GraphicsCommandList *cmdList,
             const RenderTexture &renderTexture,
             RenderTexture *dstTexture = nullptr);
+
+  // ------------------------------------------------------------
+  // HDR（AppConfig.json の "hdr": true）
+  // ------------------------------------------------------------
+  // HDR のとき Draw は最終出力先へは書かず、内部の ldr テクスチャ（シーンと同じ浮動小数点形式。
+  // 中身はトーンマップ済みの 0〜1）に書いて、それをレンダーターゲットにしたまま戻る。
+  // オーバーレイ（ポーズメニューなど）はその上に描き、最後に Resolve で画面へ写す。
+  // HDR でないときの Draw は従来どおり最終出力先へ書き、Resolve は何もしない。
+
+  /// @brief HDR モードにする（Initialize の前後どちらでもよい。実行中に切り替えないこと）
+  void SetHdr(bool enabled) { hdr_ = enabled; }
+  /// @brief HDR モードか
+  bool IsHdr() const { return hdr_; }
+
+  /// @brief HDR のとき、内部の ldr テクスチャを最終出力先へ写す（HDR でなければ何もしない）
+  /// @param cmdList    コマンドリスト
+  /// @param dstTexture 最終出力先（nullptr ならバックバッファ）。描画後もレンダーターゲットのまま
+  void Resolve(ID3D12GraphicsCommandList *cmdList, RenderTexture *dstTexture = nullptr);
+
+  /// @brief トーンマップの露出（EV。0 で等倍、+1 で 2 倍明るい）
+  void SetTonemapExposure(float ev) { tonemapExposureEv_ = ev; }
+  float GetTonemapExposure() const { return tonemapExposureEv_; }
+  /// @brief トーンマップの曲線
+  void SetTonemapOperator(TonemapOperator op) { tonemapOperator_ = op; }
+  TonemapOperator GetTonemapOperator() const { return tonemapOperator_; }
+  /// @brief Reinhard で 1.0 になる明るさ
+  void SetTonemapWhitePoint(float w) { tonemapWhitePoint_ = (w > 0.01f) ? w : 0.01f; }
 
   /// @brief プロジェクション逆行列を設定する（DepthBasedOutline / Underwater / Caustics / LightShaft / SSAO で使用）
   /// @param projInv16 4x4 行列（float 16 個）
@@ -617,6 +653,15 @@ private:
   /// @note 2 回目以降の呼び出しは何もしない。
   void EnsurePingPongTextures();
 
+  /// @brief HDR 用の ldr テクスチャ（トーンマップ後の書き込み先）を必要なら作る
+  void EnsureLdrTexture();
+
+  /// @brief HDR のときの Draw（全エフェクト → トーンマップ → ldr テクスチャ）
+  void DrawHdr_(ID3D12GraphicsCommandList *cmdList, const RenderTexture &renderTexture);
+
+  /// @brief 最終出力先（dst かバックバッファ）をレンダーターゲットにしてビューポートを合わせる
+  void BindFinalTarget_(ID3D12GraphicsCommandList *cmdList, RenderTexture *dstTexture);
+
 private:
   Dx12Core *dxCore_ = nullptr;                 ///< DirectX12 コアシステム
   PipelineManager *pipelineManager_ = nullptr; ///< パイプライン管理クラス
@@ -647,6 +692,15 @@ private:
   GraphicsPipeline *pipelineBloodOverlay_ = nullptr;      ///< BloodOverlay 用
   GraphicsPipeline *pipelineInkOverlay_ = nullptr;        ///< InkOverlay 用
   GraphicsPipeline *pipelineVisionBleed_ = nullptr;       ///< VisionBleed 用
+  GraphicsPipeline *pipelineTonemap_ = nullptr;           ///< Tonemap 用（HDR）
+  GraphicsPipeline *pipelineCopyOutput_ = nullptr;        ///< HDR の最後のコピー（出力先が画面形式）
+
+  bool hdr_ = false;                                  ///< HDR モードか
+  std::unique_ptr<RenderTexture> ldr_;                ///< HDR：トーンマップ後の書き込み先（オーバーレイもここへ描く）
+  bool ldrInitialized_ = false;                       ///< ldr_ を作成済みか
+  float tonemapExposureEv_ = 0.0f;                    ///< トーンマップの露出（EV）
+  TonemapOperator tonemapOperator_ = TonemapOperator::ACES; ///< トーンマップの曲線
+  float tonemapWhitePoint_ = 4.0f;                    ///< Reinhard の白の位置
 
   std::vector<PostEffectType> activeEffects_; ///< アクティブなエフェクトスタック（適用順）
 

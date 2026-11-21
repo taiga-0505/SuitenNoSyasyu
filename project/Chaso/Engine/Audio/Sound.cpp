@@ -8,6 +8,7 @@
 #include <format>
 #include <fstream>
 #include <mmreg.h> // WAVE_FORMAT_EXTENSIBLE / WAVE_FORMAT_IEEE_FLOAT / WAVEFORMATEXTENSIBLE
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -23,11 +24,7 @@
 // =========================
 // ユーティリティ
 // =========================
-/// @brief パスが指定された拡張子を持っているか判定する（大文字小文字を区別しない）
-/// @param path 判定対象のパス
-/// @param ext  拡張子（例: ".wav", "wav"）
-/// @return 指定した拡張子であれば true
-static bool HasExtInsensitive(const char *path, const char *ext) {
+bool SoundHasExt(const char *path, const char *ext) {
   if (!path || !ext)
     return false;
   std::string s(path);
@@ -41,12 +38,15 @@ static bool HasExtInsensitive(const char *path, const char *ext) {
   return s.rfind(e) == s.size() - e.size();
 }
 
-/// @brief パス文字列を Wide 文字列（UTF-16）に変換する
-/// @param path UTF-8 の文字列（ソース中のリテラルは /utf-8 でビルドしているため UTF-8）。
-///             UTF-8 として不正なら ANSI コードページ（Content Browser 経由の
-///             std::filesystem::path::string() など）とみなして変換する
-/// @return Wide 文字列（path が nullptr なら空）
-static std::wstring ToWideFromUTF8(const char *path) {
+bool SoundIsMediaFoundationFormat(const char *path) {
+  return SoundHasExt(path, ".mp3") || SoundHasExt(path, ".m4a") || SoundHasExt(path, ".aac") ||
+         SoundHasExt(path, ".wma");
+}
+
+/// @details UTF-8 の文字列（ソース中のリテラルは /utf-8 でビルドしているため UTF-8）。
+///          UTF-8 として不正なら ANSI コードページ（Content Browser 経由の
+///          std::filesystem::path::string() など）とみなして変換する
+std::wstring SoundPathToWide(const char *path) {
   if (!path)
     return L"";
   int lenW = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, nullptr, 0);
@@ -61,42 +61,35 @@ static std::wstring ToWideFromUTF8(const char *path) {
   return w;
 }
 
-// =========================
-// WAV ローダ
-// =========================
-/// @details 失敗しても assert で落とさず、空の SoundData（bufferSize == 0）を返す。
-///          エディタから任意のパスを指定できるようになったため、壊れたファイルや
-///          未対応形式で停止しないようにしている。呼び出し側は bufferSize で判定すること。
-///          "fmt " と "data" 以外のチャンク（LIST / JUNK / fact など）はすべて読み飛ばす。
-SoundData SoundLoadWave(const char *filename) {
-  const std::string name = filename ? filename : "";
-
-  std::ifstream file(name, std::ios_base::binary);
-  if (!file.is_open()) {
-    Log::Print("[Sound] Failed to open: " + name);
+std::string SoundResolvePath(const char *filename) {
+  if (!filename || !*filename) {
     return {};
   }
+  return Chaso::ResolvePath(filename);
+}
 
-  // ヘッダに書かれたサイズを信用せず、実ファイルサイズで上限を切る（壊れたヘッダで巨大確保しない）
-  file.seekg(0, std::ios_base::end);
-  const std::streamoff fileSize = file.tellg();
-  file.seekg(0, std::ios_base::beg);
-  if (fileSize < static_cast<std::streamoff>(sizeof(RiffHeader))) {
+// =========================
+// WAV ヘッダ解析
+// =========================
+/// @details "fmt " と "data" 以外のチャンク（LIST / JUNK / fact など）はすべて読み飛ばす。
+///          ヘッダに書かれたサイズを信用せず、実ファイルサイズで上限を切る（壊れたヘッダで巨大確保しない）。
+bool SoundParseWaveHeader(std::istream &file, int64_t fileSize, WAVEFORMATEX &outFmt, int64_t &dataOffset,
+                          uint64_t &dataSize, const std::string &name) {
+  if (fileSize < static_cast<int64_t>(sizeof(RiffHeader))) {
     Log::Print("[Sound] File too small: " + name);
-    return {};
+    return false;
   }
 
   RiffHeader riff{};
   file.read(reinterpret_cast<char *>(&riff), sizeof(riff));
   if (!file || strncmp(riff.chunk.id, "RIFF", 4) != 0 || strncmp(riff.type, "WAVE", 4) != 0) {
     Log::Print("[Sound] Not a RIFF/WAVE file: " + name);
-    return {};
+    return false;
   }
 
   WAVEFORMATEX fmt{};
   bool hasFmt = false;
-  std::unique_ptr<BYTE[]> pcm;
-  uint32_t pcmSize = 0;
+  bool hasData = false;
 
   // チャンクを順に読み、fmt と data を拾う。他は読み飛ばす
   for (;;) {
@@ -122,7 +115,7 @@ SoundData SoundLoadWave(const char *filename) {
       }
       if (toRead < static_cast<std::streamsize>(offsetof(WAVEFORMATEX, cbSize))) {
         Log::Print("[Sound] fmt chunk too small: " + name);
-        return {};
+        return false;
       }
       memcpy(&fmt, raw, (std::min)(static_cast<size_t>(toRead), sizeof(WAVEFORMATEX)));
 
@@ -135,12 +128,12 @@ SoundData SoundLoadWave(const char *filename) {
           fmt.wFormatTag = static_cast<WORD>(subFormat);
         } else {
           Log::Print("[Sound] Unsupported WAVE_FORMAT_EXTENSIBLE subformat: " + name);
-          return {};
+          return false;
         }
       }
       if (fmt.wFormatTag != WAVE_FORMAT_PCM && fmt.wFormatTag != WAVE_FORMAT_IEEE_FLOAT) {
         Log::Print("[Sound] Unsupported WAV format tag (" + std::to_string(fmt.wFormatTag) + "): " + name);
-        return {};
+        return false;
       }
       fmt.cbSize = 0;
       hasFmt = true;
@@ -148,34 +141,77 @@ SoundData SoundLoadWave(const char *filename) {
     } else if (strncmp(chunk.id, "data", 4) == 0) {
       if (chunk.size <= 0) {
         Log::Print("[Sound] Empty data chunk: " + name);
-        return {};
+        return false;
       }
       // 残りバイト数を超える宣言サイズは切り詰める
-      const std::streamoff remain = fileSize - static_cast<std::streamoff>(file.tellg());
-      if (remain <= 0) {
+      const int64_t pos = static_cast<int64_t>(file.tellg());
+      const int64_t remain = fileSize - pos;
+      if (pos < 0 || remain <= 0) {
         Log::Print("[Sound] data chunk has no payload: " + name);
-        return {};
+        return false;
       }
-      pcmSize = static_cast<uint32_t>((std::min)(static_cast<std::streamoff>(chunk.size), remain));
-      pcm = std::make_unique<BYTE[]>(pcmSize);
-      file.read(reinterpret_cast<char *>(pcm.get()), pcmSize);
-      if (!file) {
-        // 末尾が欠けているファイル。読めた分だけ使う
-        pcmSize = static_cast<uint32_t>(file.gcount());
-        file.clear();
-      }
+      dataOffset = pos;
+      dataSize = static_cast<uint64_t>((std::min)(static_cast<int64_t>(chunk.size), remain));
+      hasData = true;
       break; // data はストリーム末尾にあるのが通例。以降は読まない
     } else {
       file.seekg(padded, std::ios_base::cur);
     }
   }
 
-  if (!hasFmt || !pcm || pcmSize == 0) {
+  if (!hasFmt || !hasData || dataSize == 0) {
     Log::Print("[Sound] Missing fmt/data chunk: " + name);
-    return {};
+    return false;
   }
   if (fmt.nChannels == 0 || fmt.nSamplesPerSec == 0 || fmt.nBlockAlign == 0) {
     Log::Print("[Sound] Broken fmt chunk: " + name);
+    return false;
+  }
+  outFmt = fmt;
+  return true;
+}
+
+// =========================
+// WAV ローダ
+// =========================
+/// @details 失敗しても assert で落とさず、空の SoundData（bufferSize == 0）を返す。
+///          エディタから任意のパスを指定できるようになったため、壊れたファイルや
+///          未対応形式で停止しないようにしている。呼び出し側は bufferSize で判定すること。
+SoundData SoundLoadWave(const char *filename) {
+  const std::string name = filename ? filename : "";
+
+  std::ifstream file(std::filesystem::path(SoundPathToWide(filename)), std::ios_base::binary);
+  if (!file.is_open()) {
+    Log::Print("[Sound] Failed to open: " + name);
+    return {};
+  }
+  file.seekg(0, std::ios_base::end);
+  const int64_t fileSize = static_cast<int64_t>(file.tellg());
+  file.seekg(0, std::ios_base::beg);
+
+  WAVEFORMATEX fmt{};
+  int64_t dataOffset = 0;
+  uint64_t dataSize = 0;
+  if (!SoundParseWaveHeader(file, fileSize, fmt, dataOffset, dataSize, name)) {
+    return {};
+  }
+  if (dataSize > 0xFFFFFFFFull) {
+    Log::Print("[Sound] WAV too large for memory playback (use streaming): " + name);
+    return {};
+  }
+
+  uint32_t pcmSize = static_cast<uint32_t>(dataSize);
+  auto pcm = std::make_unique<BYTE[]>(pcmSize);
+  file.clear();
+  file.seekg(dataOffset, std::ios_base::beg);
+  file.read(reinterpret_cast<char *>(pcm.get()), pcmSize);
+  if (!file) {
+    // 末尾が欠けているファイル。読めた分だけ使う
+    pcmSize = static_cast<uint32_t>(file.gcount());
+    file.clear();
+  }
+  if (pcmSize == 0) {
+    Log::Print("[Sound] Missing fmt/data chunk: " + name);
     return {};
   }
 
@@ -189,28 +225,22 @@ SoundData SoundLoadWave(const char *filename) {
 // =========================
 // Media Foundation 初期化
 // =========================
-/// @brief Media Foundation を初期化する（初回呼び出し時のみ実行）
-/// @return 初期化できていれば true
-static bool EnsureMediaFoundationStartup() {
-  static bool attempted = false;
+bool SoundEnsureMediaFoundation() {
+  // ストリーミングのワーカースレッドからも呼ばれ得るので call_once で守る
+  static std::once_flag once;
   static bool ok = false;
-  if (!attempted) {
-    attempted = true;
+  std::call_once(once, [] {
     HRESULT hr = MFStartup(MF_VERSION, MFSTARTUP_LITE);
     ok = SUCCEEDED(hr);
     if (!ok) {
       Log::Print(std::format("[Sound] MFStartup failed (hr=0x{:08X})。mp3 等のデコードは無効になります",
                              static_cast<unsigned>(hr)));
     }
-  }
+  });
   return ok;
 }
 
-/// @brief WAVEFORMATEXTENSIBLE を基本形式（PCM / IEEE float）の WAVEFORMATEX に読み替える
-/// @param wfex 入出力（EXTENSIBLE でなければ cbSize を 0 にするだけ）
-/// @param cb   wfex の実サイズ（バイト）
-/// @return 読み替えられた（または元から基本形式だった）ら true。未対応のサブフォーマットなら false
-static bool CollapseExtensibleFormat(WAVEFORMATEX &wfex, size_t cb) {
+bool SoundCollapseExtensibleFormat(WAVEFORMATEX &wfex, size_t cb) {
   if (wfex.wFormatTag != WAVE_FORMAT_EXTENSIBLE) {
     wfex.cbSize = 0;
     return true;
@@ -238,7 +268,7 @@ static bool CollapseExtensibleFormat(WAVEFORMATEX &wfex, size_t cb) {
 /// @return ロードされた音声データ
 /// @note 失敗時は空の SoundData を返す（assert で落とさない）。
 static SoundData SoundLoadWithMediaFoundation(const wchar_t *wpath, const std::string &nameForLog) {
-  if (!EnsureMediaFoundationStartup()) {
+  if (!SoundEnsureMediaFoundation()) {
     return {};
   }
 
@@ -290,7 +320,7 @@ static SoundData SoundLoadWithMediaFoundation(const wchar_t *wpath, const std::s
     }
     // マルチチャンネル等では WAVEFORMATEXTENSIBLE が返る。SoundData は WAVEFORMATEX しか
     // 持たないので基本形式に読み替える（読み替えられなければ失敗）
-    const bool okFmt = CollapseExtensibleFormat(*pwfx, cbwfx);
+    const bool okFmt = SoundCollapseExtensibleFormat(*pwfx, cbwfx);
     out = *pwfx; // 先頭 sizeof(WAVEFORMATEX) バイトだけコピー
     CoTaskMemFree(pwfx);
     return okFmt ? S_OK : E_FAIL;
@@ -374,15 +404,14 @@ SoundData SoundLoadAudio(const char *filenameIn) {
     return {};
   }
   // ゲーム側 Resources → エンジン側（Chaso/Resources）の順で探す
-  const std::string resolvedPath = Chaso::ResolvePath(filenameIn);
+  const std::string resolvedPath = SoundResolvePath(filenameIn);
   const char *filename = resolvedPath.c_str();
-  if (HasExtInsensitive(filename, ".wav")) {
+  if (SoundHasExt(filename, ".wav")) {
     return SoundLoadWave(filename);
   }
   // .mp3 以外にも Media Foundation が扱える形式は同じ経路で読める
-  if (HasExtInsensitive(filename, ".mp3") || HasExtInsensitive(filename, ".m4a") ||
-      HasExtInsensitive(filename, ".aac") || HasExtInsensitive(filename, ".wma")) {
-    std::wstring w = ToWideFromUTF8(filename);
+  if (SoundIsMediaFoundationFormat(filename)) {
+    std::wstring w = SoundPathToWide(filename);
     return SoundLoadWithMediaFoundation(w.c_str(), filename);
   }
   Log::Print(std::string("[Sound] Unsupported audio format: ") + filename);

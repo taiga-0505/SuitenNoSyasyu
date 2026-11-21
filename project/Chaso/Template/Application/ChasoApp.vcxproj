@@ -102,7 +102,8 @@
     </PreBuildEvent>
     <PostBuildEvent>
       <Command>copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxcompiler.dll" "$(TargetDir)dxcompiler.dll"
-copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dxil.dll"</Command>
+copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dxil.dll"
+if exist "$(SolutionDir)Chaso\Externals\steamaudio\lib\windows-x64\phonon.dll" copy /Y "$(SolutionDir)Chaso\Externals\steamaudio\lib\windows-x64\phonon.dll" "$(TargetDir)phonon.dll"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -137,7 +138,8 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     </PreBuildEvent>
     <PostBuildEvent>
       <Command>copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxcompiler.dll" "$(TargetDir)dxcompiler.dll"
-copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dxil.dll"</Command>
+copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dxil.dll"
+if exist "$(SolutionDir)Chaso\Externals\steamaudio\lib\windows-x64\phonon.dll" copy /Y "$(SolutionDir)Chaso\Externals\steamaudio\lib\windows-x64\phonon.dll" "$(TargetDir)phonon.dll"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Development|x64'">
@@ -172,7 +174,8 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     </PreBuildEvent>
     <PostBuildEvent>
       <Command>copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxcompiler.dll" "$(TargetDir)dxcompiler.dll"
-copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dxil.dll"</Command>
+copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dxil.dll"
+if exist "$(SolutionDir)Chaso\Externals\steamaudio\lib\windows-x64\phonon.dll" copy /Y "$(SolutionDir)Chaso\Externals\steamaudio\lib\windows-x64\phonon.dll" "$(TargetDir)phonon.dll"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -180,6 +183,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClCompile Include="..\main.cpp" />
     <!-- Framework -->
     <ClCompile Include="..\Chaso\Framework\App.cpp" />
+    <ClCompile Include="..\Chaso\Framework\AutoTest.cpp" />
     <ClCompile Include="..\Chaso\Editor\EditorManager.cpp" />
     <ClCompile Include="..\Chaso\Editor\CaptureMode.cpp" />
     <ClCompile Include="..\Chaso\Editor\KeyBindingsHelp.cpp" />
@@ -197,6 +201,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
   <ItemGroup>
     <!-- Framework -->
     <ClInclude Include="..\Chaso\Framework\App.h" />
+    <ClInclude Include="..\Chaso\Framework\AutoTest.h" />
     <ClInclude Include="..\Chaso\Framework\AppConfig.h" />
     <ClInclude Include="..\Chaso\Editor\EditorManager.h" />
     <ClInclude Include="..\Chaso\Editor\CaptureMode.h" />
@@ -211,6 +216,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClInclude Include="..\Chaso\Game\Framework\GameStateBase.h" />
     <ClInclude Include="..\Chaso\Game\Scene\Fade\Fade.h" />
     <ClInclude Include="..\Chaso\Game\Scene\Scene.h" />
+    <ClInclude Include="..\Chaso\Game\Scene\Prefab.h" />
     <ClInclude Include="..\Chaso\Game\Scene\SceneManager.h" />
     <ClInclude Include="..\Chaso\Game\Scene\DataDrivenScene\DataDrivenScene.h" />
   </ItemGroup>

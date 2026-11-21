@@ -1,6 +1,9 @@
 #pragma once
 #include "Entity.h"
+#include "PhysicsQuery.h"
+#include "TweenComponent.h"
 #include "Common/Math/MathUtils.h"
+#include <memory>
 #include <string>
 
 // 前方宣言
@@ -124,6 +127,47 @@ public:
   ///          斜め移動で壁に当たった場合は壁に沿ってスライドする。
   /// @note 実体は Application 側の Scene.cpp で定義している（Scene の完全型が必要なため）
   RC::Vector3 MoveAndSlide(const RC::Vector3& delta, float maxStep = 0.1f);
+
+  /// @brief レイを飛ばして最も近い当たりを返す（Scene::Raycast の省略形）
+  /// @param origin      起点
+  /// @param direction   方向（正規化していなくてよい）
+  /// @param maxDistance 最大距離（m）
+  /// @param outHit      当たった物の情報
+  /// @param filter      絞り込み条件（ignore を指定しなければ自分自身を除外する）
+  /// @return 当たれば true（シーン未設定なら false）
+  /// @note 実体は Scene.cpp
+  bool Raycast(const RC::Vector3& origin, const RC::Vector3& direction, float maxDistance,
+               RaycastHit& outHit, QueryFilter filter = {});
+
+  /// @brief 球を飛ばして最も近い当たりを返す（Scene::SphereCast の省略形）
+  /// @param origin      球の中心の起点
+  /// @param radius      半径（m）
+  /// @param direction   方向
+  /// @param maxDistance 最大距離（m）
+  /// @param outHit      当たった物の情報
+  /// @param filter      絞り込み条件（ignore を指定しなければ自分自身を除外する）
+  /// @return 当たれば true（シーン未設定なら false）
+  /// @note 実体は Scene.cpp
+  bool SphereCast(const RC::Vector3& origin, float radius, const RC::Vector3& direction,
+                  float maxDistance, RaycastHit& outHit, QueryFilter filter = {});
+
+  /// @brief プレハブを生成してシーンに追加する（Scene::InstantiatePrefab の省略形）
+  /// @param path     プレハブのパス（"Prefabs/Bullet" など）
+  /// @param position ルートを置く位置
+  /// @return 生成したルートエンティティ（失敗したら nullptr）
+  /// @note 実体は Scene.cpp。生成した物はこのフレームの更新が終わった後にシーンに加わる。
+  std::shared_ptr<Entity> InstantiatePrefab(const std::string& path, const RC::Vector3& position);
+
+  /// @brief このエンティティの Tween（無ければ TweenComponent を自動で付ける）
+  /// @return Tween の入れ物。To() / Value() / After() で値を動かす
+  /// @details 例: Tweens().To(GetComponent<TransformComponent>()->scale, {2, 2, 2}, 0.3f);
+  ///          TweenComponent はスクリプトより後に更新されるので、OnUpdate で作った Tween は
+  ///          同じフレームから動く（ただし TweenComponent を初めて付けたフレームだけは次のフレームから）。
+  Chaso::TweenRunner& Tweens() {
+    auto* tc = entity_->GetComponent<TweenComponent>();
+    if (!tc) tc = &entity_->AddComponent<TweenComponent>();
+    return tc->tweens;
+  }
 
   /// @brief 指定したシーンへの遷移を要求する
   /// @param name 遷移先のシーン名（Resources/Scenes/*.json のファイル名）
