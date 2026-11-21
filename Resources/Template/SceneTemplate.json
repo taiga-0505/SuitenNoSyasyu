@@ -1,0 +1,63 @@
+{
+  "sceneName": "SceneTemplate",
+  "entities": [
+    {
+      "name": "Directional Light",
+      "active": true,
+      "visible": true,
+      "locked": false,
+      "isFolder": false,
+      "tags": {},
+      "components": [
+        {
+          "type": "TransformComponent",
+          "enabled": true,
+          "data": {
+            "position": [0.0, 3.0, 0.0],
+            "rotation": [0.0, 0.0, 0.0],
+            "scale": [1.0, 1.0, 1.0]
+          }
+        },
+        {
+          "type": "DirectionalLightComponent",
+          "enabled": true,
+          "data": {
+            "color": [1.0, 1.0, 1.0, 1.0],
+            "direction": [0.0, -1.0, 0.5],
+            "intensity": 1.0,
+            "visible": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "Main Camera",
+      "active": true,
+      "visible": true,
+      "locked": false,
+      "isFolder": false,
+      "tags": {},
+      "components": [
+        {
+          "type": "TransformComponent",
+          "enabled": true,
+          "data": {
+            "position": [0.0, 1.0, -10.0],
+            "rotation": [0.0, 0.0, 0.0],
+            "scale": [1.0, 1.0, 1.0]
+          }
+        },
+        {
+          "type": "CameraComponent",
+          "enabled": true,
+          "data": {
+            "fovY": 0.44999998807907104,
+            "nearZ": 0.10000000149011612,
+            "farZ": 100.0,
+            "isMain": true
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+    "baseVelocity": [
+        0.0,
+        0.07999999821186066,
+        0.0
+    ],
+    "blendMode": 2,
+    "coneAngle": 0.5,
+    "emitCount": 6,
+    "emitterPosition": [
+        0.0,
+        0.0,
+        0.0
+    ],
+    "emitterShape": 1,
+    "endColor": [
+        1.0,
+        0.44999998807907104,
+        0.0,
+        0.0
+    ],
+    "gravity": 0.0,
+    "maxLifeTime": 0.4000000059604645,
+    "maxParticles": 1024,
+    "maxScale": 0.6499999761581421,
+    "minLifeTime": 0.15000000596046448,
+    "minScale": 0.20000000298023224,
+    "particleType": 0,
+    "pipelinePrefix": "gpu_particle",
+    "shapeBoxSize": [
+        1.0,
+        1.0,
+        1.0
+    ],
+    "shapeRadius": 0.8500000238418579,
+    "startColor": [
+        1.0,
+        0.949999988079071,
+        0.30000001192092896,
+        1.0
+    ],
+    "texturePath": "Resources/Particle/spark.png",
+    "velocityVariance": 0.05999999865889549
+}

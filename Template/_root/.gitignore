@@ -1,0 +1,130 @@
+## C++ / DirectX 12 (Visual Studio) プロジェクト用 .gitignore
+## ベース: github/gitignore の C++.gitignore / VisualStudio.gitignore から必要な部分のみ抜粋
+
+# ============================================================
+# ビルド出力フォルダ
+# ============================================================
+# 本プロジェクトの出力先（OutDir / IntDir）
+generated/
+
+# Visual Studio 標準の出力フォルダ（外部ライブラリ等が直下に出力した場合の保険）
+x64/
+x86/
+[Ww]in32/
+[Aa][Rr][Mm]64/
+[Dd]ebug/
+[Rr]elease/
+[Dd]evelopment/
+[Bb]in/
+[Oo]bj/
+[Dd]ebugPS/
+[Rr]eleasePS/
+
+# ============================================================
+# C++ コンパイル / リンク中間ファイル
+# ============================================================
+*.obj
+*.o
+*.ilk
+*.pch
+*.gch
+*.pzh
+*.idb
+*.pdb
+*.exp
+*.map
+*.iobj
+*.ipdb
+*.tlog
+*.lastbuildstate
+*.unsuccessfulbuild
+*.res
+*.aps
+dlldata.c
+
+# ============================================================
+# 実行バイナリ / ライブラリ
+# ============================================================
+*.exe
+*.dll
+*.so
+*.dylib
+*.out
+*.app
+
+# ============================================================
+# Visual Studio / IntelliSense キャッシュ・ユーザー設定
+# ============================================================
+.vs/
+ipch/
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.ncb
+*.opendb
+*.opensdf
+*.sdf
+*.cachefile
+*.VC.db
+*.VC.VC.opendb
+*.psess
+*.vsp
+*.vspx
+*.sap
+*.e2e
+*.binlog
+*.nvuser
+[Bb]uild[Ll]og.*
+.localhistory/
+
+# ============================================================
+# VS Code（タスク定義 tasks.json のみ共有）
+# ============================================================
+/.vscode/*
+!/.vscode/tasks.json
+
+# ============================================================
+# Python（scripts 用）
+# ============================================================
+__pycache__/
+*.pyc
+
+# ============================================================
+# 例外: アセット / 外部ライブラリは除外しない
+# ============================================================
+# Wavefront OBJ モデル（ビルド中間ファイルの *.obj と区別）
+!**/Resources/**/*.obj
+# 外部ライブラリの配布済みバイナリ（assimp/lib/Debug, Release など）
+!project/Chaso/Externals/*/lib/
+!project/Chaso/Externals/*/lib/[Dd]ebug/
+!project/Chaso/Externals/*/lib/[Rr]elease/
+!project/Chaso/Externals/*/lib/**/*.lib
+!project/Chaso/Externals/*/lib/**/*.dll
+
+# ============================================================
+# プロジェクト固有
+# ============================================================
+logs/
+media/
+Reference/
+project/imgui.ini
+project/Resources/desktop.ini
+pso_cache.bin
+.agents/workflows/
+
+# ステージ進行のセーブデータ（StageProgress）
+project/StageProgress.json
+
+# Engine design notes (local only)
+EngineNotes/
+/Docs/EngineInternalKnowledge/
+
+# ============================================================
+# OS / エディタの一時ファイル
+# ============================================================
+~$*
+*~
+Thumbs.db
+desktop.ini

@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
+  <ItemGroup>
+    <Filter Include="..">
+      <UniqueIdentifier>{58b9e70b-65a7-7700-ba66-e9c64d6b9f89}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Framework">
+      <UniqueIdentifier>{07782c22-a88d-1e82-a099-10124a9225a2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Game">
+      <UniqueIdentifier>{63d72051-e901-c069-f8aa-1b32aa0c43bb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Game\Framework">
+      <UniqueIdentifier>{12345678-cff7-b598-471f-844b704aa803}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Game\Scene">
+      <UniqueIdentifier>{257654ef-124c-c4e9-e8f4-ba8e3de21951}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Game\Scene\Fade">
+      <UniqueIdentifier>{1d5917ef-2d66-e5e3-be4e-94084a0fb9f1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Game\Scene\GameOverScene">
+      <UniqueIdentifier>{05671636-bdf8-58cb-e1a1-c77c13acbff7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Game\Scene\GameScene">
+      <UniqueIdentifier>{0e08a43d-0154-a148-5e98-f89944a188ba}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Game\Scene\LightScene">
+      <UniqueIdentifier>{09aa9018-e68d-8d1b-6faf-3a5c034579b9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Game\Scene\ResultScene">
+      <UniqueIdentifier>{84889b9b-b70e-b1c0-d6a3-efdd8c41adc1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Game\Scene\SampleScene">
+      <UniqueIdentifier>{af56e491-32ca-0b9d-d10c-8becd3517abd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Game\Scene\SelectScene">
+      <UniqueIdentifier>{e861b798-cff7-b598-471f-844b704aa802}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Game\Scene\TitleScene">
+      <UniqueIdentifier>{c8dde5de-1a5a-a7ac-6d65-07cc54cfeab0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resources">
+      <UniqueIdentifier>{ddcf50c2-9294-d441-4f3f-7c1bbc892cb5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resources\Shader">
+      <UniqueIdentifier>{992709fc-4716-38e5-cfc8-01b92b877647}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resources\Shader\Object3d">
+      <UniqueIdentifier>{7e1f3ecc-8cd5-7f8e-9cea-98e6454c124a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resources\Shader\Particle">
+      <UniqueIdentifier>{e16c3d54-ef2c-7b54-8bb1-f29e3d5dfc36}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resources\Shader\Post">
+      <UniqueIdentifier>{65a34bd5-f09e-a1fc-1254-e2c4b862e738}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resources\Shader\Primitive2D">
+      <UniqueIdentifier>{fd38a6c3-be20-c085-b0f9-ab2363eaa4e9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resources\Shader\Primitive3D">
+      <UniqueIdentifier>{008980ce-0bb4-6ecf-1f9d-a657dd08dc18}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resources\Shader\Font">
+      <UniqueIdentifier>{943006fd-535a-44fe-9f0b-5db3c78ee6f3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resources\Shader\Sprite">
+      <UniqueIdentifier>{e154087b-a457-5cd9-788f-df6d22fb77aa}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resources\Shader\CopyImage">
+      <UniqueIdentifier>{d7a1b2c3-e4f5-6789-abcd-ef123456789a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resources\Shader\Fullscreen">
+      <UniqueIdentifier>{a1b2c3d4-e5f6-7890-1234-567890abcdef}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resources\Shader\Grayscale">
+      <UniqueIdentifier>{b2c3d4e5-f6a7-8901-2345-67890abcdef1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resources\Shader\Sepia">
+      <UniqueIdentifier>{c3d4e5f6-a7b8-9012-3456-7890abcdef12}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\main.cpp">
+      <Filter>..</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Chaso\Framework\App.cpp">
+      <Filter>Framework</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Chaso\Editor\EditorManager.cpp">
+      <Filter>Framework</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Chaso\Editor\CaptureMode.cpp">
+      <Filter>Framework</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Chaso\Editor\KeyBindingsHelp.cpp">
+      <Filter>Framework</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Chaso\Editor\SceneFlowPanel.cpp">
+      <Filter>Framework</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Chaso\Game\Scene\SceneFlow.cpp">
+      <Filter>Game\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Chaso\Editor\EditorExtension.cpp">
+      <Filter>Framework</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Chaso\Game\Game.cpp">
+      <Filter>Game</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Chaso\Game\Framework\GameModeBase.cpp">
+      <Filter>Game\Framework</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Chaso\Game\Scene\Fade\Fade.cpp">
+      <Filter>Game\Scene\Fade</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Chaso\Game\Scene\SceneManager.cpp">
+      <Filter>Game\Scene</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\Chaso\Framework\App.h">
+      <Filter>Framework</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Chaso\Framework\AppConfig.h">
+      <Filter>Framework</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Chaso\Editor\EditorManager.h">
+      <Filter>Framework</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Chaso\Editor\CaptureMode.h">
+      <Filter>Framework</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Chaso\Editor\KeyBindingsHelp.h">
+      <Filter>Framework</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Chaso\Editor\SceneFlowPanel.h">
+      <Filter>Framework</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Chaso\Game\Scene\SceneFlow.h">
+      <Filter>Game\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Chaso\Editor\EditorExtension.h">
+      <Filter>Framework</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Chaso\Editor\DebugBridge.h">
+      <Filter>Framework</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Chaso\Game\Game.h">
+      <Filter>Game</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Chaso\Game\Framework\GameModeBase.h">
+      <Filter>Game\Framework</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Chaso\Game\Framework\GameStateBase.h">
+      <Filter>Game\Framework</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Chaso\Game\Scene\Fade\Fade.h">
+      <Filter>Game\Scene\Fade</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Chaso\Game\Scene\Scene.h">
+      <Filter>Game\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Chaso\Game\Scene\SceneManager.h">
+      <Filter>Game\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Chaso\Game\Scene\DataDrivenScene\DataDrivenScene.h">
+      <Filter>Game\Scene</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <FxCompile Include="..\Chaso\Resources\Shader\Object3d\Object3d.PS.hlsl">
+      <Filter>Resources\Shader\Object3d</Filter>
+    </FxCompile>
+    <FxCompile Include="..\Chaso\Resources\Shader\Object3d\Object3D_Inst.VS.hlsl">
+      <Filter>Resources\Shader\Object3d</Filter>
+    </FxCompile>
+    <FxCompile Include="..\Chaso\Resources\Shader\Object3d\Object3D_Single.VS.hlsl">
+      <Filter>Resources\Shader\Object3d</Filter>
+    </FxCompile>
+    <FxCompile Include="..\Chaso\Resources\Shader\Object3d\Object3D_Glass.PS.hlsl">
+      <Filter>Resources\Shader\Object3d</Filter>
+    </FxCompile>
+    <FxCompile Include="..\Chaso\Resources\Shader\Particle\Particle.PS.hlsl">
+      <Filter>Resources\Shader\Particle</Filter>
+    </FxCompile>
+    <FxCompile Include="..\Chaso\Resources\Shader\Particle\Particle.VS.hlsl">
+      <Filter>Resources\Shader\Particle</Filter>
+    </FxCompile>
+    <FxCompile Include="..\Chaso\Resources\Shader\Post\FogOverlay.hlsl">
+      <Filter>Resources\Shader\Post</Filter>
+    </FxCompile>
+    <FxCompile Include="..\Chaso\Resources\Shader\Primitive2D\Primitive2D.PS.hlsl">
+      <Filter>Resources\Shader\Primitive2D</Filter>
+    </FxCompile>
+    <FxCompile Include="..\Chaso\Resources\Shader\Primitive2D\Primitive2D.VS.hlsl">
+      <Filter>Resources\Shader\Primitive2D</Filter>
+    </FxCompile>
+    <FxCompile Include="..\Chaso\Resources\Shader\Primitive3D\Primitive3D.PS.hlsl">
+      <Filter>Resources\Shader\Primitive3D</Filter>
+    </FxCompile>
+    <FxCompile Include="..\Chaso\Resources\Shader\Primitive3D\Primitive3D.VS.hlsl">
+      <Filter>Resources\Shader\Primitive3D</Filter>
+    </FxCompile>
+    <FxCompile Include="..\Chaso\Resources\Shader\Sprite\Sprite.PS.hlsl">
+      <Filter>Resources\Shader\Sprite</Filter>
+    </FxCompile>
+    <FxCompile Include="..\Chaso\Resources\Shader\Sprite\Sprite.VS.hlsl">
+      <Filter>Resources\Shader\Sprite</Filter>
+    </FxCompile>
+    <FxCompile Include="..\Chaso\Resources\Shader\Font\Font.PS.hlsl">
+      <Filter>Resources\Shader\Font</Filter>
+    </FxCompile>
+    <FxCompile Include="..\Chaso\Resources\Shader\Font\Font.VS.hlsl">
+      <Filter>Resources\Shader\Font</Filter>
+    </FxCompile>
+    <FxCompile Include="..\Chaso\Resources\Shader\CopyImage\CopyImage.PS.hlsl">
+      <Filter>Resources\Shader\CopyImage</Filter>
+    </FxCompile>
+    <FxCompile Include="..\Chaso\Resources\Shader\Fullscreen\Fullscreen.VS.hlsl">
+      <Filter>Resources\Shader\Fullscreen</Filter>
+    </FxCompile>
+    <FxCompile Include="..\Chaso\Resources\Shader\Grayscale\Grayscale.PS.hlsl">
+      <Filter>Resources\Shader\Grayscale</Filter>
+    </FxCompile>
+    <FxCompile Include="..\Chaso\Resources\Shader\Sepia\Sepia.PS.hlsl">
+      <Filter>Resources\Shader\Sepia</Filter>
+    </FxCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\Chaso\Resources\Shader\Object3d\Object3d.hlsli">
+      <Filter>Resources\Shader\Object3d</Filter>
+    </None>
+    <None Include="..\Chaso\Resources\Shader\Particle\Particle.hlsli">
+      <Filter>Resources\Shader\Particle</Filter>
+    </None>
+    <None Include="..\Chaso\Resources\Shader\Fullscreen\Fullscreen.hlsli">
+      <Filter>Resources\Shader\Fullscreen</Filter>
+    </None>
+  </ItemGroup>
+</Project>

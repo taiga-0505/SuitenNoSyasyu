@@ -1,0 +1,7 @@
+# ChasoEngine 側の無視設定（ゲームリポジトリでは project/Chaso/ 配下に適用される）
+Externals/DirectXTex/Shaders/Compiled/
+Externals/**/*.lib
+!Externals/assimp/**/*.lib
+pso_cache.bin
+*.exp
+!Externals/curl/**/*.lib

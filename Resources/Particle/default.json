@@ -1,0 +1,43 @@
+{
+    "baseVelocity": [
+        0.0,
+        0.019999999552965164,
+        0.0
+    ],
+    "blendMode": 2,
+    "coneAngle": 0.5,
+    "emitCount": 10,
+    "emitterPosition": [
+        0.0,
+        0.0,
+        0.0
+    ],
+    "emitterShape": 0,
+    "endColor": [
+        1.0,
+        1.0,
+        1.0,
+        0.0
+    ],
+    "gravity": 0.0,
+    "maxLifeTime": 8.0,
+    "maxParticles": 1024,
+    "maxScale": 0.6000000238418579,
+    "minLifeTime": 3.0,
+    "minScale": 0.30000001192092896,
+    "particleType": 0,
+    "shapeBoxSize": [
+        4.0,
+        4.0,
+        4.0
+    ],
+    "shapeRadius": 2.0,
+    "startColor": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+    ],
+    "texturePath": "Resources/Particle/circle.png",
+    "velocityVariance": 0.019999999552965164
+}

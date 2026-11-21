@@ -1,0 +1,15 @@
+{
+    "fullscreen": false,
+    "height": 720,
+    "width": 1280,
+    "title": {
+        "Debug": "NewGame (Debug)",
+        "Development": "NewGame (Development)",
+        "Release": "NewGame"
+    },
+    "bootScene": {
+        "Debug": "Title",
+        "Development": "Title",
+        "Release": "Title"
+    }
+}
