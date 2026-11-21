@@ -42,89 +42,26 @@
 #include <vector>
 
 namespace {
-    /// @brief 線分と軸平行境界ボックス（AABB）が交差するか判定する（スラブ法）
-    /// @param p0 線分の始点
-    /// @param p1 線分の終点
-    /// @param min AABB の最小座標
-    /// @param max AABB の最大座標
-    /// @return 交差していれば true
-    bool IntersectSegmentAABB(const RC::Vector3& p0, const RC::Vector3& p1, const RC::Vector3& min, const RC::Vector3& max) {
-        RC::Vector3 d = { p1.x - p0.x, p1.y - p0.y, p1.z - p0.z };
-        // 線分を p0 + d*t (t = 0〜1) とし、各軸のスラブに入る/出る t の範囲を狭めていく
-        float tmin = 0.0f;
-        float tmax = 1.0f;
-
-        // X 軸（方向成分がほぼ 0 なら平行なので、始点がスラブ内かだけを見る）
-        if (std::abs(d.x) < 0.00001f) {
-            if (p0.x < min.x || p0.x > max.x) return false;
-        } else {
-            float ood = 1.0f / d.x;
-            float t1 = (min.x - p0.x) * ood;
-            float t2 = (max.x - p0.x) * ood;
-            if (t1 > t2) std::swap(t1, t2);
-            if (t1 > tmin) tmin = t1;
-            if (t2 < tmax) tmax = t2;
-            if (tmin > tmax) return false;
-        }
-        // Y 軸
-        if (std::abs(d.y) < 0.00001f) {
-            if (p0.y < min.y || p0.y > max.y) return false;
-        } else {
-            float ood = 1.0f / d.y;
-            float t1 = (min.y - p0.y) * ood;
-            float t2 = (max.y - p0.y) * ood;
-            if (t1 > t2) std::swap(t1, t2);
-            if (t1 > tmin) tmin = t1;
-            if (t2 < tmax) tmax = t2;
-            if (tmin > tmax) return false;
-        }
-        // Z 軸
-        if (std::abs(d.z) < 0.00001f) {
-            if (p0.z < min.z || p0.z > max.z) return false;
-        } else {
-            float ood = 1.0f / d.z;
-            float t1 = (min.z - p0.z) * ood;
-            float t2 = (max.z - p0.z) * ood;
-            if (t1 > t2) std::swap(t1, t2);
-            if (t1 > tmin) tmin = t1;
-            if (t2 < tmax) tmax = t2;
-            if (tmin > tmax) return false;
-        }
-        return true;
-    }
-
-    /// @brief start→end の線分が地形（is_terrain タグ付きの AABB コライダー）に遮られるか判定する
+    /// @brief start→end の線分が地形（is_terrain タグ付きのコライダー）に遮られるか判定する
+    /// @details 以前は全エンティティを回して AABB を自前で組み立て、スラブ法で判定していた（AABB 以外の形は素通り）。
+    ///          今はエンジンの Scene::RaycastAll（BVH で候補を絞る）に任せ、当たった物のうち地形があるかだけを見る。
+    ///          地形以外のコライダーも既定ではすべてのレイヤーに属しているため、レイヤーではなくタグで絞っている。
     /// @param scene 地形を探すシーン
     /// @param start 線分の始点
     /// @param end 線分の終点
     /// @return いずれかの地形と交差していれば true（scene が nullptr なら false）
     bool RaycastTerrain(Scene* scene, const RC::Vector3& start, const RC::Vector3& end) {
         if (!scene) return false;
-        for (auto& e : scene->GetEntities()) {
-            if (e->GetTagInt("is_terrain", 0) == 1) {
-                auto* col = e->GetComponent<ColliderComponent>();
-                auto* tr = e->GetComponent<TransformComponent>();
-                if (col && tr && col->IsEnabled() && col->shape == ColliderComponent::Shape::AABB) {
-                    // コライダーのサイズ・中心にスケールを反映してワールド空間の AABB を作る
-                    RC::Vector3 scaledSize = {
-                        std::abs(col->size.x * tr->scale.x),
-                        std::abs(col->size.y * tr->scale.y),
-                        std::abs(col->size.z * tr->scale.z)
-                    };
-                    RC::Vector3 halfSize = { scaledSize.x * 0.5f, scaledSize.y * 0.5f, scaledSize.z * 0.5f };
-                    RC::Vector3 center = {
-                        tr->position.x + col->center.x * tr->scale.x,
-                        tr->position.y + col->center.y * tr->scale.y,
-                        tr->position.z + col->center.z * tr->scale.z
-                    };
-                    RC::Vector3 minPos = { center.x - halfSize.x, center.y - halfSize.y, center.z - halfSize.z };
-                    RC::Vector3 maxPos = { center.x + halfSize.x, center.y + halfSize.y, center.z + halfSize.z };
+        const RC::Vector3 dir = { end.x - start.x, end.y - start.y, end.z - start.z };
+        const float length = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+        if (length <= 0.0001f) return false;
 
-                    if (IntersectSegmentAABB(start, end, minPos, maxPos)) {
-                        return true;
-                    }
-                }
-            }
+        QueryFilter filter;
+        filter.includeTriggers = true; // 以前と同じく、地形ならトリガーでも遮るものとして扱う
+        std::vector<RaycastHit> hits;
+        scene->RaycastAll(start, dir, length, hits, filter);
+        for (const auto& hit : hits) {
+            if (hit.entity && hit.entity->GetTagInt("is_terrain", 0) == 1) return true;
         }
         return false;
     }
