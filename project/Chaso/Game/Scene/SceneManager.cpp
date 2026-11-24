@@ -551,8 +551,11 @@ void Scene::SceneManager::ChangeImmediately(const std::string &name,
   // 新しいシーンでのテクスチャログ出力を許可するためにリセット
   RC::ClearTextureLogHistory();
 
-  // シーン切り替え直後のフレームで描画コマンドの順序をダンプする
+#if RC_ENABLE_IMGUI
+  // シーン切り替え直後のフレームで描画コマンドの順序をダンプする（エディタ付きのビルドだけ）。
+  // 数十〜数百行をそのフレームにまとめてログへ書くので、配布用ビルドではフェードインの頭が引っかかる
   RC::GetRenderContext().RequestDumpCommandOrder();
+#endif
 }
 
 void Scene::SceneManager::ReloadCurrentScene(SceneContext &ctx) {

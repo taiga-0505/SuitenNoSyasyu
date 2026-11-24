@@ -1113,12 +1113,14 @@ void RenderContext::Execute3DCommands() {
   // BindShadow(); // BindPipeline に移行したため不要
 
 
-  // 最初の 1 フレームだけ自動でダンプを要求する
+#if RC_ENABLE_IMGUI
+  // 最初の 1 フレームだけ自動でダンプを要求する（エディタ付きのビルドだけ）
   static bool s_firstDump = false;
   if (!s_firstDump) {
     dumpCommandOrder_ = true;
     s_firstDump = true;
   }
+#endif
 
   // ジオメトリだけを書くパス（シャドウ・マスク）。
   // これらは専用 PSO へ振り替えて描くため、線・ギズモ等のプリミティブは通してはいけない

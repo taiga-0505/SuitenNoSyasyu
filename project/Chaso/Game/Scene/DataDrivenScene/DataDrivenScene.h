@@ -96,6 +96,28 @@ public:
         InitializeRuntimeResources(*e, ctx);
     }
 
+    // スクリプトの生成（OnCreate）もシーンの読み込み中に済ませる。
+    // 以前は最初の Update（＝フェードインの最初のフレーム）で全スクリプトの OnCreate が走り、
+    // 文字アトラスの作成・カットシーン用モデルのロード・GPU パーティクルの初期化・宝箱の部位生成などが
+    // 1 フレームに集中して、ムービーの頭でカクついていた（60ms 超）。
+    // ここで呼べば SceneManager::ChangeImmediately の WaitAllLoads の内側に入る。
+    // 生成対象は UpdateEntities と同じく有効なエンティティだけ（無効な物は有効になった時に生成される）。
+    // OnCreate で作られたエンティティ（InitDynamicEntityRuntime を呼ぶ）のために、コンテキストも先に渡しておく。
+    currentContext_ = &ctx;
+    {
+        const size_t count = entities_.size(); // OnCreate で増えた分は pendingEntities_ に入る
+        for (size_t i = 0; i < count; ++i) {
+            auto& e = entities_[i];
+            if (!e || !e->IsActive() || e->IsPendingDestroy()) continue;
+            if (auto* nsc = e->GetComponent<NativeScriptComponent>()) {
+                nsc->SetScene(this);
+                nsc->SetSceneContext(&ctx);
+                nsc->InstantiatePending();
+            }
+        }
+        FlushPendingEntities();
+    }
+
     // 新シーンのクリップをロードし終えた後に、どのシーンからも参照されなくなった
     // 音声クリップを解放する。前のシーンと共有している BGM は参照が残るので消えない。
     AudioEngine::Get().PurgeUnusedClips();

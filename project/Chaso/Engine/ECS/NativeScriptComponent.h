@@ -108,22 +108,7 @@ public:
   ///          生成に失敗したスクリプトは、以後生成を試みない。
   void Update(float deltaTime) override {
     for (auto& entry : scripts) {
-      if (!entry.instance && entry.InstantiateScript) {
-        entry.instance = entry.InstantiateScript();
-        if (entry.instance) {
-          entry.instance->entity_ = GetEntity();
-          entry.instance->scene_ = scene_;
-          entry.instance->sceneContext_ = sceneContext_;
-          if (!entry.pendingData.is_null()) {
-            entry.instance->Deserialize(entry.pendingData);
-          }
-          entry.instance->OnCreate();
-        } else {
-          // スクリプトが見つからなかったので、以後は生成を試みないようにする（毎フレーム失敗し続けないため）
-          printf("ERROR: Failed to instantiate script: %s\n", entry.scriptTypeName.c_str());
-          entry.InstantiateScript = nullptr;
-        }
-      }
+      InstantiateEntry_(entry);
       if (entry.instance) {
         // シーンやコンテキストはフレーム間で変わりうるので、毎フレーム渡し直す
         entry.instance->scene_ = scene_;
@@ -143,6 +128,17 @@ public:
         entry.instance->OnUpdate(deltaTime);
 #endif
       }
+    }
+  }
+
+  /// @brief 未生成のスクリプトを生成して OnCreate だけ呼ぶ（OnUpdate は呼ばない）
+  /// @details シーンの読み込み中（DataDrivenScene::OnEnter）に呼び、OnCreate の重い初期化
+  ///          （フォントのアトラス・カットシーンのモデル・GPU パーティクルなど）を
+  ///          ロード待ち（WaitAllLoads）の内側へ寄せるために使う。
+  ///          呼ばなかった場合も、従来どおり最初の Update で生成される。
+  void InstantiatePending() {
+    for (auto& entry : scripts) {
+      InstantiateEntry_(entry);
     }
   }
 
@@ -208,6 +204,30 @@ public:
   }
 
 private:
+  /// @brief 1 つのスクリプトを未生成なら生成し、pendingData の Deserialize と OnCreate を行う
+  /// @param entry 対象のスクリプト
+  /// @details 生成に失敗したスクリプトは、以後生成を試みない。
+  template <class Entry>
+  void InstantiateEntry_(Entry& entry) {
+    if (entry.instance || !entry.InstantiateScript) {
+      return;
+    }
+    entry.instance = entry.InstantiateScript();
+    if (entry.instance) {
+      entry.instance->entity_ = GetEntity();
+      entry.instance->scene_ = scene_;
+      entry.instance->sceneContext_ = sceneContext_;
+      if (!entry.pendingData.is_null()) {
+        entry.instance->Deserialize(entry.pendingData);
+      }
+      entry.instance->OnCreate();
+    } else {
+      // スクリプトが見つからなかったので、以後は生成を試みないようにする（毎フレーム失敗し続けないため）
+      printf("ERROR: Failed to instantiate script: %s\n", entry.scriptTypeName.c_str());
+      entry.InstantiateScript = nullptr;
+    }
+  }
+
   class Scene* scene_ = nullptr;         ///< スクリプトに渡すシーン
   SceneContext* sceneContext_ = nullptr; ///< スクリプトに渡すシーンコンテキスト
 };
