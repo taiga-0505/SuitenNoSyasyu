@@ -4,6 +4,7 @@
 
 #include "Model/ModelObject.h"
 #include "Model/ModelMesh.h"
+#include "Texture/TextureManager/TextureManager.h"
 #include "Common/Log/Log.h"
 
 #include <filesystem>
@@ -91,33 +92,52 @@ std::shared_ptr<::ModelMesh> ModelManager::GetOrLoadMesh_(
     const std::string &path) {
   const std::string key = NormalizeMeshKey_(path);
 
-  // 既にロード済みなら共有する（ロックを取得して確認）
+  // 既にロード済みなら共有する。別のタスクがロード中なら、その結果を待って共有する。
+  // 以前は「ロード中」を見ていなかったため、同じモデルを置いたエンティティが同時にロードを始めると
+  // 全員がキャッシュを外し、同じファイルを人数ぶん読んでいた（岩 5 個 → 5 回、島 3 個 → 3 回）。
+  std::promise<std::shared_ptr<::ModelMesh>> promise;
   {
-    std::lock_guard lock(mtx_);
-    if (auto it = meshCache_.find(key); it != meshCache_.end()) {
-      if (it->second) {
-        return it->second;
+    std::shared_future<std::shared_ptr<::ModelMesh>> waiting;
+    {
+      std::lock_guard lock(mtx_);
+      if (auto it = meshCache_.find(key); it != meshCache_.end()) {
+        if (it->second) {
+          return it->second;
+        }
+        meshCache_.erase(it);
       }
-      meshCache_.erase(it);
+      if (auto it = meshLoading_.find(key); it != meshLoading_.end()) {
+        waiting = it->second;
+      } else {
+        meshLoading_[key] = promise.get_future().share();
+      }
+    }
+    if (waiting.valid()) {
+      return waiting.get(); // 先に始めたタスクの結果（失敗なら nullptr）
     }
   }
 
-  // 未ロードならロードする（重い処理なのでロックを外す）
-  auto mesh = std::make_shared<::ModelMesh>();
-  if (!mesh->LoadObj(device_,path)) {
-    return nullptr;
+  // 自分が読む（重い処理なのでロックを外す）
+  std::shared_ptr<::ModelMesh> mesh = std::make_shared<::ModelMesh>();
+  bool ok = false;
+  try {
+    ok = mesh->LoadObj(device_, path);
+  } catch (...) {
+    ok = false;
+  }
+  if (!ok) {
+    mesh = nullptr;
   }
 
-  // キャッシュに登録
+  // キャッシュに登録し、待っているタスクへ結果を渡す
   {
     std::lock_guard lock(mtx_);
-    if (auto it = meshCache_.find(key); it != meshCache_.end()) {
-      if (it->second) {
-        return it->second;
-      }
+    if (mesh) {
+      meshCache_[key] = mesh;
     }
-    meshCache_[key] = mesh;
+    meshLoading_.erase(key);
   }
+  promise.set_value(mesh);
 
   return mesh;
 }
@@ -158,6 +178,23 @@ int ModelManager::Load(const std::string &path) {
       if (!mesh) {
         Log::Print("[Model] ロード失敗: " + npath);
         return;
+      }
+
+      // 1.5 マテリアルのテクスチャを先読みする（このワーカーで待つ）。
+      // 以前はモデルが初めて描かれた瞬間に ModelResource::EnsureMaterialSrvsLoaded_ が
+      // TextureManager::Load（画像のデコード・ミップ生成・GPU 転送の完了待ち）をメインスレッドで行っていた。
+      // 大きなテクスチャだと 1 枚で数十〜数百 ms 止まり、モデルが画面に入るたび
+      // （シーン開始直後の演出やカメラワーク中）にカクついていた。
+      // ここで読んでおけば WaitAllLoads の対象になり、初回の描画はキャッシュから即座に返る。
+      if (texman_) {
+        const auto &mats = mesh->Materials();
+        if (mats.empty()) {
+          texman_->Preload(mesh->MaterialFile().textureFilePath, /*srgb=*/true);
+        } else {
+          for (const auto &m : mats) {
+            texman_->Preload(m.textureFilePath, /*srgb=*/true);
+          }
+        }
       }
 
       // 2. モデルオブジェクトの初期化（GPU リソース作成など）

@@ -188,6 +188,8 @@ private:
 
   std::vector<Slot> models_;           ///< モデルオブジェクトのリスト
   std::unordered_map<std::string, std::shared_ptr<::ModelMesh>> meshCache_; ///< メッシュの共有キャッシュ
+  /// @brief ロード中のメッシュ（同じパスを同時に要求したタスクは、最初のタスクの結果を待って共有する）
+  std::unordered_map<std::string, std::shared_future<std::shared_ptr<::ModelMesh>>> meshLoading_;
 
   mutable std::recursive_mutex mtx_;   ///< 排他制御用ミューテックス
   std::unordered_map<std::string, std::shared_future<void>> loadingTasks_; ///< ロードタスクの管理

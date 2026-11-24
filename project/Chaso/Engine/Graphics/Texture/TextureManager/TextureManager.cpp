@@ -75,6 +75,47 @@ D3D12_GPU_DESCRIPTOR_HANDLE TextureManager::Load(const std::string &path,
 
 }
 
+void TextureManager::Preload(const std::string &path, bool srgb) {
+  if (!srv_ || path.empty()) {
+    return;
+  }
+  const std::string npath = Log::NormalizePath(path);
+  {
+    std::lock_guard lock(mtx_);
+    if (cache_.find(npath) != cache_.end()) {
+      return; // ロード済み、または別のスレッドがロード中
+    }
+  }
+
+  auto start = std::chrono::high_resolution_clock::now();
+
+  // 1. CPU デコード（ロックの外。メインスレッドを止めない）
+  Texture2D local;
+  if (!local.LoadCPU(npath, srgb) || local.IsFallback()) {
+    local.Term(srv_);
+    return; // 読めない物は先読みしない（後の Load が従来どおり白 1x1 で代替してログを出す）
+  }
+
+  // 2. GPU 転送（コマンドリストを共有するのでロックする）
+  std::lock_guard lock(mtx_);
+  if (cache_.find(npath) != cache_.end()) {
+    local.Term(srv_); // デコード中に他から入った
+    return;
+  }
+  Texture2D &tex = cache_[npath];
+  tex = std::move(local);
+  auto uploadRes = tex.Upload(*srv_, loadCmd_);
+  if (uploadRes) {
+    uint64_t fence = loadCmd_.ExecuteAndReset();
+    pendingUploads_.push_back({uploadRes, fence});
+  }
+  auto end = std::chrono::high_resolution_clock::now();
+  Log::Print(std::format("[Texture] 先読み完了: {} (Time: {:.3f}ms), SRV Index: {}", npath,
+                         std::chrono::duration<float, std::milli>(end - start).count(),
+                         tex.SrvHandle().index));
+  loggedPaths_.insert(npath); // 後の Load で「キャッシュ利用」を重ねて出さない
+}
+
 std::vector<std::string> TextureManager::LoadedPaths() const {
   std::lock_guard lock(mtx_);
   std::vector<std::string> out;

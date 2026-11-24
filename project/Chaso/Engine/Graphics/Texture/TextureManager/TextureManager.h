@@ -40,6 +40,15 @@ public:
   /// @return GPU 上の SRV ハンドル
   D3D12_GPU_DESCRIPTOR_HANDLE Load(const std::string &path, bool srgb = true);
 
+  /// @brief テクスチャを先読みしてキャッシュへ入れる（呼んだスレッドで待つ。ロード用のワーカーから呼ぶ想定）
+  /// @details 後で同じパスを Load すると、キャッシュから即座に返る。
+  ///          Load と違い、重いデコード（画像の展開・ミップ生成）はロックの外で行うので、
+  ///          その間もメインスレッドの GetSrv などは止まらない。GPU 転送の部分だけロックする。
+  ///          同じパスがすでにキャッシュにある（ロード中も含む）なら何もしない。
+  /// @param path ファイルパス
+  /// @param srgb sRGB フォーマットとして扱うか
+  void Preload(const std::string &path, bool srgb = true);
+
   /// @brief パス指定で直接 Texture2D オブジェクトを取得する
   /// @param path ファイルパス
   /// @return Texture2D ポインタ（見つからなければ nullptr）
