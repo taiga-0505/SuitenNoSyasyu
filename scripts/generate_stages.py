@@ -15,6 +15,9 @@ Resources/Scenes/Game.json を雛形（カメラ・レール・ポーズ・ウ�
 地形・レール・ウェーブ・照明だけ差し替えて書き出す。エディタで調整したあとに再実行すると
 手調整が上書きされるので、初回の叩き台として使うこと（--force を付けないと既存ファイルは上書きしない）。
 
+屋外区間の地形（海の岩・海底・崖）と遠景の島は、生成したあとに
+scripts/modelgen/apply_seaworld_to_stages.py でモデルへ差し替えている。作り直したら続けて実行すること。
+
 使い方（リポジトリのルートで）:
   python scripts/generate_stages.py          # 無いステージだけ作る
   python scripts/generate_stages.py --force  # 5 面とも作り直す

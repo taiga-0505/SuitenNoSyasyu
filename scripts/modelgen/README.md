@@ -36,3 +36,46 @@ python scripts/modelgen/preview.py project/Resources/model/bird/bird.glb out.png
 | `ship/ship.glb` | m / 船体の中心（喫水 ≒ y 0） | hull, sail, flag_0..3 | Sail | ShipVisualScript（enemyScale 1）/ TitleAmbientScript の船（scale 0.53） |
 
 スクリプトから骨を直接動かすときは `RC::SetModelJointOverride`（RenderCommon.h）を使う。
+
+## seaworld — 水上ステージ（外洋）の地形
+
+箱プリミティブだった屋外の地形（海の岩・海底・洞窟の口の崖）と遠景の島を、手続き生成のモデルにしたもの。
+**1 モデル = 1 メッシュ = 1 マテリアル**（描画コマンドの数＝CPU 負荷は箱のときと同程度）で、
+質感はモデルごとに焼き込んだテクスチャ（albedo / 法線 / ラフネス）、形はポリゴン数（GPU）で出す。
+
+| ファイル | 役割 |
+| --- | --- |
+| `seaworld.py` | 地形モデルの形と、焼き込みの材質（岩の節理・地層・濡れた水際・海藻・地衣類・草・砂）。`project/Resources/model/seaworld/` に書き出す |
+| `terrainbake.py` | なめらかな法線、モデル専用 UV のアトラス詰め、UV 空間へのラスタライズ（画素ごとのワールド位置・法線）、glb 書き出し |
+| `apply_seaworld_to_stages.py` | Stage1 / Stage2 / Stage5 の屋外区間へ当てる（何度実行しても同じ結果。`generate_stages.py` で作り直したら再実行） |
+| `seaworld_preview.py` | モデル単体、またはステージ JSON を指定したカメラ位置から静止画にする（法線マップ込み。エンジンを起動せずに確かめる用） |
+
+```
+python scripts/modelgen/seaworld.py                 # 全部で 2〜3 分
+python scripts/modelgen/apply_seaworld_to_stages.py
+python scripts/modelgen/seaworld_preview.py scene Stage1 out.png 0,2,-50 0 -2   # x,y,z  yaw(度)  pitch(度)
+```
+
+| モデル | 単位 / 原点 | テクスチャ | 使う所 |
+| --- | --- | --- | --- |
+| `searock_stack / _twin / _boulder` | **±0.5 の箱に正規化** / 箱の中心（= 水面） | 1024 | SeaRock*（旧プリミティブの Transform・Collider をそのまま使う） |
+| `seabed` | 同上 | 1024 | SeabedA / SeabedB |
+| `cliff_cave` | m / 旧 Cliff の中心（x 0・水面・厚み 10m の中央）。前面は -z | 2048（約 10px/m） | CliffA_Model（向き 0）/ CliffB_Model（向き π） |
+| `island_large` | m / 島の中心（水面） | 2048 | Island_*（当たり判定なし） |
+| `island_medium / _low / _stacks` | 同上 | 1024 | 同上 |
+
+モデルごとに `<name>.glb`・`<name>_albedo.jpg`（glb が参照）・`<name>_normal.jpg`（normalMapPath）・
+共通の `rough_none.png`（roughnessMapPath。4x4 の白＝ハイライト無し）・`<name>_far.jpg`（遠景用に縮小して霞ませた albedo。texturePath で差し替え）を出す。
+
+- **法線マップとラフネスは sRGB でエンコードして保存している。** ModelRenderer の normalMapPath / roughnessMapPath は
+  `RC::LoadTex(path)`（既定 srgb = true）で読まれ、読み込み時に sRGB → リニアへ変換されるため。
+  エンジン側を `srgb = false` で読むように直したら、`terrainbake.py` / `seaworld.py` の `save_rgb(..., encode_srgb=True)` を
+  法線・ラフネスだけ `False` に戻すこと。
+- 法線マップの接空間はシェーダが ddx/ddy から作る（T = dP/du, B = dP/dv）。接線は glb に入れていない。
+- 崖の口は外側が幅 22m・高さ 17.5m、奥（z = +5）で洞窟の断面（幅 17m・高さ 11.5m）へ絞る漏斗状。
+  崖の裏面は洞窟の外殻（`cave_shell`、|x| ≦ 26・y ≦ 21）を覆う |x| ≦ 34・y ≦ 26 まで張ってある。
+  洞窟の幅や天井を変えたら `seaworld.py` の BACK_* と裏面の範囲も合わせること。
+- 旧 CliffA_L / _R / _Arch は見た目だけ外し、当たり判定の箱として残している。
+- 岩は当たり判定の箱を変えずに見た目だけ替えるので、水面の反射に使う半径は `water_obstacle_radius` タグ（10 倍の整数）で
+  岩の水際の実寸を渡している。
+- 水面（1000m 四方）は面の範囲を覆うよう中心の z を動かしている（Stage1/2 = 150、Stage5 = 1000）。カメラの farZ は 520。

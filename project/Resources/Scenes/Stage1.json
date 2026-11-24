@@ -57,7 +57,7 @@
             ],
             "rotation": [
               0.0,
-              0.0,
+              3.141592653589793,
               0.0
             ],
             "scale": [
@@ -68,30 +68,22 @@
           }
         },
         {
-          "type": "PrimitiveMeshComponent",
+          "type": "ModelRendererComponent",
           "enabled": true,
           "data": {
+            "blendMode": 0,
             "color": [
-              0.55,
-              0.5,
-              0.45,
+              1.0,
+              1.0,
+              1.0,
               1.0
             ],
             "environmentCoeff": 0.0,
             "lightingMode": 2,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
+            "modelPath": "Resources/model/seaworld/searock_stack.glb",
+            "normalMapPath": "Resources/model/seaworld/searock_stack_normal.jpg",
+            "roughnessMapPath": "Resources/model/seaworld/rough_none.png",
             "texturePath": "",
-            "type": 1,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
             "visible": true
           }
         }
@@ -102,7 +94,8 @@
       "name": "SeaRockA1",
       "parentGuid": 2303383149465349767,
       "tags": {
-        "is_terrain": 1
+        "is_terrain": 1,
+        "water_obstacle_radius": 22
       },
       "visible": true
     },
@@ -151,30 +144,22 @@
           }
         },
         {
-          "type": "PrimitiveMeshComponent",
+          "type": "ModelRendererComponent",
           "enabled": true,
           "data": {
+            "blendMode": 0,
             "color": [
-              0.55,
-              0.5,
-              0.45,
+              1.0,
+              1.0,
+              1.0,
               1.0
             ],
             "environmentCoeff": 0.0,
             "lightingMode": 2,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
+            "modelPath": "Resources/model/seaworld/searock_stack.glb",
+            "normalMapPath": "Resources/model/seaworld/searock_stack_normal.jpg",
+            "roughnessMapPath": "Resources/model/seaworld/rough_none.png",
             "texturePath": "",
-            "type": 1,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
             "visible": true
           }
         }
@@ -185,7 +170,8 @@
       "name": "SeaRockA2",
       "parentGuid": 2303383149465349767,
       "tags": {
-        "is_terrain": 1
+        "is_terrain": 1,
+        "water_obstacle_radius": 26
       },
       "visible": true
     },
@@ -223,7 +209,7 @@
             ],
             "rotation": [
               0.0,
-              0.0,
+              3.141592653589793,
               0.0
             ],
             "scale": [
@@ -234,30 +220,22 @@
           }
         },
         {
-          "type": "PrimitiveMeshComponent",
+          "type": "ModelRendererComponent",
           "enabled": true,
           "data": {
+            "blendMode": 0,
             "color": [
-              0.55,
-              0.5,
-              0.45,
+              1.0,
+              1.0,
+              1.0,
               1.0
             ],
             "environmentCoeff": 0.0,
             "lightingMode": 2,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
+            "modelPath": "Resources/model/seaworld/searock_stack.glb",
+            "normalMapPath": "Resources/model/seaworld/searock_stack_normal.jpg",
+            "roughnessMapPath": "Resources/model/seaworld/rough_none.png",
             "texturePath": "",
-            "type": 1,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
             "visible": true
           }
         }
@@ -268,7 +246,8 @@
       "name": "SeaRockA3",
       "parentGuid": 2303383149465349767,
       "tags": {
-        "is_terrain": 1
+        "is_terrain": 1,
+        "water_obstacle_radius": 18
       },
       "visible": true
     },
@@ -317,30 +296,22 @@
           }
         },
         {
-          "type": "PrimitiveMeshComponent",
+          "type": "ModelRendererComponent",
           "enabled": true,
           "data": {
+            "blendMode": 0,
             "color": [
-              0.55,
-              0.5,
-              0.45,
+              1.0,
+              1.0,
+              1.0,
               1.0
             ],
             "environmentCoeff": 0.0,
             "lightingMode": 2,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
+            "modelPath": "Resources/model/seaworld/searock_boulder.glb",
+            "normalMapPath": "Resources/model/seaworld/searock_boulder_normal.jpg",
+            "roughnessMapPath": "Resources/model/seaworld/rough_none.png",
             "texturePath": "",
-            "type": 1,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
             "visible": true
           }
         }
@@ -351,7 +322,8 @@
       "name": "SeaRockA4",
       "parentGuid": 2303383149465349767,
       "tags": {
-        "is_terrain": 1
+        "is_terrain": 1,
+        "water_obstacle_radius": 34
       },
       "visible": true
     },
@@ -389,7 +361,7 @@
             ],
             "rotation": [
               0.0,
-              0.0,
+              3.141592653589793,
               0.0
             ],
             "scale": [
@@ -400,30 +372,22 @@
           }
         },
         {
-          "type": "PrimitiveMeshComponent",
+          "type": "ModelRendererComponent",
           "enabled": true,
           "data": {
+            "blendMode": 0,
             "color": [
-              0.55,
-              0.5,
-              0.45,
+              1.0,
+              1.0,
+              1.0,
               1.0
             ],
             "environmentCoeff": 0.0,
             "lightingMode": 2,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
+            "modelPath": "Resources/model/seaworld/searock_stack.glb",
+            "normalMapPath": "Resources/model/seaworld/searock_stack_normal.jpg",
+            "roughnessMapPath": "Resources/model/seaworld/rough_none.png",
             "texturePath": "",
-            "type": 1,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
             "visible": true
           }
         }
@@ -434,7 +398,8 @@
       "name": "SeaRockA5",
       "parentGuid": 2303383149465349767,
       "tags": {
-        "is_terrain": 1
+        "is_terrain": 1,
+        "water_obstacle_radius": 24
       },
       "visible": true
     },
@@ -483,30 +448,22 @@
           }
         },
         {
-          "type": "PrimitiveMeshComponent",
+          "type": "ModelRendererComponent",
           "enabled": true,
           "data": {
+            "blendMode": 0,
             "color": [
-              0.55,
-              0.5,
-              0.45,
+              1.0,
+              1.0,
+              1.0,
               1.0
             ],
             "environmentCoeff": 0.0,
             "lightingMode": 2,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
+            "modelPath": "Resources/model/seaworld/searock_twin.glb",
+            "normalMapPath": "Resources/model/seaworld/searock_twin_normal.jpg",
+            "roughnessMapPath": "Resources/model/seaworld/rough_none.png",
             "texturePath": "",
-            "type": 1,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
             "visible": true
           }
         }
@@ -517,7 +474,8 @@
       "name": "SeaRockA6",
       "parentGuid": 2303383149465349767,
       "tags": {
-        "is_terrain": 1
+        "is_terrain": 1,
+        "water_obstacle_radius": 21
       },
       "visible": true
     },
@@ -555,7 +513,7 @@
             ],
             "rotation": [
               0.0,
-              0.0,
+              3.141592653589793,
               0.0
             ],
             "scale": [
@@ -566,30 +524,22 @@
           }
         },
         {
-          "type": "PrimitiveMeshComponent",
+          "type": "ModelRendererComponent",
           "enabled": true,
           "data": {
+            "blendMode": 0,
             "color": [
-              0.55,
-              0.5,
-              0.45,
+              1.0,
+              1.0,
+              1.0,
               1.0
             ],
             "environmentCoeff": 0.0,
             "lightingMode": 2,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
+            "modelPath": "Resources/model/seaworld/searock_boulder.glb",
+            "normalMapPath": "Resources/model/seaworld/searock_boulder_normal.jpg",
+            "roughnessMapPath": "Resources/model/seaworld/rough_none.png",
             "texturePath": "",
-            "type": 1,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
             "visible": true
           }
         }
@@ -600,7 +550,8 @@
       "name": "SeaRockA7",
       "parentGuid": 2303383149465349767,
       "tags": {
-        "is_terrain": 1
+        "is_terrain": 1,
+        "water_obstacle_radius": 26
       },
       "visible": true
     },
@@ -649,30 +600,22 @@
           }
         },
         {
-          "type": "PrimitiveMeshComponent",
+          "type": "ModelRendererComponent",
           "enabled": true,
           "data": {
+            "blendMode": 0,
             "color": [
-              0.55,
-              0.5,
-              0.45,
+              1.0,
+              1.0,
+              1.0,
               1.0
             ],
             "environmentCoeff": 0.0,
             "lightingMode": 2,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
+            "modelPath": "Resources/model/seaworld/searock_stack.glb",
+            "normalMapPath": "Resources/model/seaworld/searock_stack_normal.jpg",
+            "roughnessMapPath": "Resources/model/seaworld/rough_none.png",
             "texturePath": "",
-            "type": 1,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
             "visible": true
           }
         }
@@ -683,7 +626,8 @@
       "name": "SeaRockA8",
       "parentGuid": 2303383149465349767,
       "tags": {
-        "is_terrain": 1
+        "is_terrain": 1,
+        "water_obstacle_radius": 26
       },
       "visible": true
     },
@@ -732,30 +676,22 @@
           }
         },
         {
-          "type": "PrimitiveMeshComponent",
+          "type": "ModelRendererComponent",
           "enabled": true,
           "data": {
+            "blendMode": 0,
             "color": [
-              0.8,
-              0.7,
-              0.5,
+              1.0,
+              1.0,
+              1.0,
               1.0
             ],
             "environmentCoeff": 0.0,
             "lightingMode": 2,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
+            "modelPath": "Resources/model/seaworld/seabed.glb",
+            "normalMapPath": "Resources/model/seaworld/seabed_normal.jpg",
+            "roughnessMapPath": "Resources/model/seaworld/rough_none.png",
             "texturePath": "",
-            "type": 1,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
             "visible": true
           }
         }
@@ -766,7 +702,8 @@
       "name": "SeabedA",
       "parentGuid": 2303383149465349767,
       "tags": {
-        "is_terrain": 1
+        "is_terrain": 1,
+        "cast_shadow": 0
       },
       "visible": true
     },
@@ -812,34 +749,6 @@
               30,
               10
             ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              0.3,
-              0.27,
-              0.25,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 2,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 1,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
           }
         }
       ],
@@ -894,34 +803,6 @@
               10
             ]
           }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              0.3,
-              0.27,
-              0.25,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 2,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 1,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
-          }
         }
       ],
       "guid": 7730440810842612669,
@@ -974,34 +855,6 @@
               12,
               10
             ]
-          }
-        },
-        {
-          "type": "PrimitiveMeshComponent",
-          "enabled": true,
-          "data": {
-            "color": [
-              0.2,
-              0.18,
-              0.17,
-              1.0
-            ],
-            "environmentCoeff": 0.0,
-            "lightingMode": 2,
-            "normalMapPath": "",
-            "roughnessMapPath": "",
-            "shininess": 32.0,
-            "texturePath": "",
-            "type": 1,
-            "uvOffset": [
-              0.0,
-              0.0
-            ],
-            "uvTiling": [
-              1.0,
-              1.0
-            ],
-            "visible": true
           }
         }
       ],
@@ -1082,7 +935,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -1091,7 +944,9 @@
       "locked": false,
       "name": "ChannelWall_L0",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -1163,7 +1018,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -1172,7 +1027,9 @@
       "locked": false,
       "name": "ChannelWall_R0",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -1244,7 +1101,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -1253,7 +1110,9 @@
       "locked": false,
       "name": "ChannelCeiling_0",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -1325,7 +1184,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -1334,7 +1193,9 @@
       "locked": false,
       "name": "ChannelFloor_0",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -1406,7 +1267,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -1415,7 +1276,9 @@
       "locked": false,
       "name": "ChannelWall_L1",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -1487,7 +1350,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -1496,7 +1359,9 @@
       "locked": false,
       "name": "ChannelWall_R1",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -1568,7 +1433,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -1577,7 +1442,9 @@
       "locked": false,
       "name": "ChannelCeiling_1",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -1649,7 +1516,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -1658,7 +1525,9 @@
       "locked": false,
       "name": "ChannelFloor_1",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -1730,7 +1599,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -1739,7 +1608,9 @@
       "locked": false,
       "name": "ChannelWall_L2",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -1811,7 +1682,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -1820,7 +1691,9 @@
       "locked": false,
       "name": "ChannelWall_R2",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -1892,7 +1765,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -1901,7 +1774,9 @@
       "locked": false,
       "name": "ChannelCeiling_2",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -1973,7 +1848,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -1982,7 +1857,9 @@
       "locked": false,
       "name": "ChannelFloor_2",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -2054,7 +1931,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -2063,7 +1940,9 @@
       "locked": false,
       "name": "ChannelWall_L3",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -2135,7 +2014,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -2144,7 +2023,9 @@
       "locked": false,
       "name": "ChannelWall_R3",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -2216,7 +2097,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -2225,7 +2106,9 @@
       "locked": false,
       "name": "ChannelCeiling_3",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -2297,7 +2180,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -2306,7 +2189,9 @@
       "locked": false,
       "name": "ChannelFloor_3",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -2378,7 +2263,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -2387,7 +2272,9 @@
       "locked": false,
       "name": "ChannelWall_L4",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -2459,7 +2346,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -2468,7 +2355,9 @@
       "locked": false,
       "name": "ChannelWall_R4",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -2540,7 +2429,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -2549,7 +2438,9 @@
       "locked": false,
       "name": "ChannelCeiling_4",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -2621,7 +2512,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -2630,7 +2521,9 @@
       "locked": false,
       "name": "ChannelFloor_4",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -2682,7 +2575,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -2691,7 +2584,9 @@
       "locked": false,
       "name": "Stalactite22_0",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -2743,7 +2638,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -2752,7 +2647,9 @@
       "locked": false,
       "name": "Stalactite22_1",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -2804,7 +2701,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -2813,7 +2710,9 @@
       "locked": false,
       "name": "Stalactite22_2",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -2865,7 +2764,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -2874,7 +2773,9 @@
       "locked": false,
       "name": "Stalactite22_3",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -2926,7 +2827,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -2935,7 +2836,9 @@
       "locked": false,
       "name": "Stalactite22_4",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -2987,7 +2890,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -2996,7 +2899,9 @@
       "locked": false,
       "name": "Stalactite22_5",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -3048,7 +2953,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -3057,7 +2962,9 @@
       "locked": false,
       "name": "Stalactite22_6",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -3109,7 +3016,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -3118,7 +3025,9 @@
       "locked": false,
       "name": "Stalactite22_7",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -3170,7 +3079,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -3179,7 +3088,9 @@
       "locked": false,
       "name": "Stalactite22_8",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -3231,7 +3142,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -3240,7 +3151,9 @@
       "locked": false,
       "name": "Stalactite22_9",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -3292,7 +3205,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -3301,7 +3214,9 @@
       "locked": false,
       "name": "Stalactite22_10",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -3353,7 +3268,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -3362,7 +3277,9 @@
       "locked": false,
       "name": "Stalactite22_11",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -3414,7 +3331,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -3423,7 +3340,9 @@
       "locked": false,
       "name": "Stalactite22_12",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -3475,7 +3394,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -3484,7 +3403,9 @@
       "locked": false,
       "name": "Stalactite22_13",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -3536,7 +3457,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -3545,7 +3466,9 @@
       "locked": false,
       "name": "Stalactite22_14",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -3597,7 +3520,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -3606,7 +3529,9 @@
       "locked": false,
       "name": "Stalactite22_15",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -3658,7 +3583,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -3667,7 +3592,9 @@
       "locked": false,
       "name": "Stalactite22_16",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -3719,7 +3646,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -3728,7 +3655,9 @@
       "locked": false,
       "name": "Stalactite22_17",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -3780,7 +3709,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -3789,7 +3718,9 @@
       "locked": false,
       "name": "Stalactite22_18",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -3841,7 +3772,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -3850,7 +3781,9 @@
       "locked": false,
       "name": "Stalactite22_19",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -3922,7 +3855,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -3932,7 +3865,8 @@
       "name": "ChannelRock_0",
       "parentGuid": 2988614496493638630,
       "tags": {
-        "is_terrain": 1
+        "is_terrain": 1,
+        "seaworld_cave_merged": 1
       },
       "visible": true
     },
@@ -4005,7 +3939,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -4015,7 +3949,8 @@
       "name": "ChannelRock_1",
       "parentGuid": 2988614496493638630,
       "tags": {
-        "is_terrain": 1
+        "is_terrain": 1,
+        "seaworld_cave_merged": 1
       },
       "visible": true
     },
@@ -4088,7 +4023,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -4098,7 +4033,8 @@
       "name": "ChannelRock_2",
       "parentGuid": 2988614496493638630,
       "tags": {
-        "is_terrain": 1
+        "is_terrain": 1,
+        "seaworld_cave_merged": 1
       },
       "visible": true
     },
@@ -4171,7 +4107,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -4181,7 +4117,8 @@
       "name": "ChannelRock_3",
       "parentGuid": 2988614496493638630,
       "tags": {
-        "is_terrain": 1
+        "is_terrain": 1,
+        "seaworld_cave_merged": 1
       },
       "visible": true
     },
@@ -4254,7 +4191,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -4264,7 +4201,8 @@
       "name": "ChannelRock_4",
       "parentGuid": 2988614496493638630,
       "tags": {
-        "is_terrain": 1
+        "is_terrain": 1,
+        "seaworld_cave_merged": 1
       },
       "visible": true
     },
@@ -4337,7 +4275,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -4347,7 +4285,8 @@
       "name": "ChannelRock_5",
       "parentGuid": 2988614496493638630,
       "tags": {
-        "is_terrain": 1
+        "is_terrain": 1,
+        "seaworld_cave_merged": 1
       },
       "visible": true
     },
@@ -4420,7 +4359,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -4430,7 +4369,8 @@
       "name": "ChannelRock_6",
       "parentGuid": 2988614496493638630,
       "tags": {
-        "is_terrain": 1
+        "is_terrain": 1,
+        "seaworld_cave_merged": 1
       },
       "visible": true
     },
@@ -4553,7 +4493,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -4562,7 +4502,9 @@
       "locked": false,
       "name": "HallWall_L0",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -4634,7 +4576,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -4643,7 +4585,9 @@
       "locked": false,
       "name": "HallWall_R0",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -4715,7 +4659,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -4724,7 +4668,9 @@
       "locked": false,
       "name": "HallCeiling_0",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -4796,7 +4742,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -4805,7 +4751,9 @@
       "locked": false,
       "name": "HallFloor_0",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -4877,7 +4825,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -4886,7 +4834,9 @@
       "locked": false,
       "name": "HallWall_L1",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -4958,7 +4908,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -4967,7 +4917,9 @@
       "locked": false,
       "name": "HallWall_R1",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -5039,7 +4991,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -5048,7 +5000,9 @@
       "locked": false,
       "name": "HallCeiling_1",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -5120,7 +5074,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -5129,7 +5083,9 @@
       "locked": false,
       "name": "HallFloor_1",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -5181,7 +5137,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -5190,7 +5146,9 @@
       "locked": false,
       "name": "Stalactite32_0",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -5242,7 +5200,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -5251,7 +5209,9 @@
       "locked": false,
       "name": "Stalactite32_2",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -5303,7 +5263,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -5312,7 +5272,9 @@
       "locked": false,
       "name": "Stalactite32_3",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -5364,7 +5326,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -5373,7 +5335,9 @@
       "locked": false,
       "name": "Stalactite32_5",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -5425,7 +5389,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -5434,7 +5398,9 @@
       "locked": false,
       "name": "Stalactite32_6",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -5486,7 +5452,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -5495,7 +5461,9 @@
       "locked": false,
       "name": "Stalactite32_7",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -5547,7 +5515,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -5556,7 +5524,9 @@
       "locked": false,
       "name": "Stalactite32_9",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -5608,7 +5578,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -5617,7 +5587,9 @@
       "locked": false,
       "name": "Stalactite32_10",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -5669,7 +5641,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -5678,7 +5650,9 @@
       "locked": false,
       "name": "Stalactite32_13",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -5730,7 +5704,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -5739,7 +5713,9 @@
       "locked": false,
       "name": "Stalactite32_14",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -5791,7 +5767,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -5800,7 +5776,9 @@
       "locked": false,
       "name": "Stalactite32_17",
       "parentGuid": 2988614496493638630,
-      "tags": {},
+      "tags": {
+        "seaworld_cave_merged": 1
+      },
       "visible": true
     },
     {
@@ -5872,7 +5850,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -5882,7 +5860,8 @@
       "name": "HallRock_1",
       "parentGuid": 2988614496493638630,
       "tags": {
-        "is_terrain": 1
+        "is_terrain": 1,
+        "seaworld_cave_merged": 1
       },
       "visible": true
     },
@@ -5955,7 +5934,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -5965,7 +5944,8 @@
       "name": "HallRock_2",
       "parentGuid": 2988614496493638630,
       "tags": {
-        "is_terrain": 1
+        "is_terrain": 1,
+        "seaworld_cave_merged": 1
       },
       "visible": true
     },
@@ -6038,7 +6018,7 @@
               1.0,
               1.0
             ],
-            "visible": true
+            "visible": false
           }
         }
       ],
@@ -6048,7 +6028,8 @@
       "name": "HallRock_4",
       "parentGuid": 2988614496493638630,
       "tags": {
-        "is_terrain": 1
+        "is_terrain": 1,
+        "seaworld_cave_merged": 1
       },
       "visible": true
     },
@@ -6082,7 +6063,7 @@
             "position": [
               0.0,
               0.0,
-              0.0
+              150.0
             ],
             "rotation": [
               0.0,
@@ -6460,7 +6441,7 @@
         },
         {
           "data": {
-            "farZ": 260.0,
+            "farZ": 520.0,
             "fovY": 0.44999998807907104,
             "isMain": true,
             "nearZ": 0.10000000149011612
@@ -8050,6 +8031,747 @@
       "parentGuid": 0,
       "tags": {},
       "visible": true
+    },
+    {
+      "active": true,
+      "guid": 1199939843941423035,
+      "isFolder": true,
+      "locked": false,
+      "name": "SeaWorld",
+      "parentGuid": 0,
+      "tags": {
+        "seaworld": 1
+      },
+      "visible": true,
+      "components": []
+    },
+    {
+      "active": true,
+      "guid": 2591312899319812955,
+      "isFolder": false,
+      "locked": false,
+      "name": "CliffA_Model",
+      "parentGuid": 1199939843941423035,
+      "tags": {
+        "seaworld": 1,
+        "cast_shadow": 0
+      },
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "enabled": true,
+          "data": {
+            "position": [
+              0.0,
+              0.0,
+              180.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "type": "ModelRendererComponent",
+          "enabled": true,
+          "data": {
+            "blendMode": 0,
+            "color": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "environmentCoeff": 0.0,
+            "lightingMode": 2,
+            "modelPath": "Resources/model/seaworld/cliff_cave.glb",
+            "normalMapPath": "Resources/model/seaworld/cliff_cave_normal.jpg",
+            "roughnessMapPath": "Resources/model/seaworld/rough_none.png",
+            "texturePath": "",
+            "visible": true
+          }
+        }
+      ]
+    },
+    {
+      "active": true,
+      "guid": 7606391981189638627,
+      "isFolder": false,
+      "locked": false,
+      "name": "Island_1_stacks",
+      "parentGuid": 1199939843941423035,
+      "tags": {
+        "seaworld": 1,
+        "cast_shadow": 0
+      },
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "enabled": true,
+          "data": {
+            "position": [
+              88.0,
+              0.0,
+              -8.0
+            ],
+            "rotation": [
+              0.0,
+              1.2,
+              0.0
+            ],
+            "scale": [
+              0.9,
+              0.9,
+              0.9
+            ]
+          }
+        },
+        {
+          "type": "ModelRendererComponent",
+          "enabled": true,
+          "data": {
+            "blendMode": 0,
+            "color": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "environmentCoeff": 0.0,
+            "lightingMode": 2,
+            "modelPath": "Resources/model/seaworld/island_stacks.glb",
+            "normalMapPath": "Resources/model/seaworld/island_stacks_normal.jpg",
+            "roughnessMapPath": "Resources/model/seaworld/rough_none.png",
+            "texturePath": "",
+            "visible": true
+          }
+        }
+      ]
+    },
+    {
+      "active": true,
+      "guid": 5317990924662060015,
+      "isFolder": false,
+      "locked": false,
+      "name": "Island_2_large",
+      "parentGuid": 1199939843941423035,
+      "tags": {
+        "seaworld": 1,
+        "cast_shadow": 0
+      },
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "enabled": true,
+          "data": {
+            "position": [
+              -135.0,
+              0.0,
+              35.0
+            ],
+            "rotation": [
+              0.0,
+              0.6,
+              0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "type": "ModelRendererComponent",
+          "enabled": true,
+          "data": {
+            "blendMode": 0,
+            "color": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "environmentCoeff": 0.0,
+            "lightingMode": 2,
+            "modelPath": "Resources/model/seaworld/island_large.glb",
+            "normalMapPath": "Resources/model/seaworld/island_large_normal.jpg",
+            "roughnessMapPath": "Resources/model/seaworld/rough_none.png",
+            "texturePath": "",
+            "visible": true
+          }
+        }
+      ]
+    },
+    {
+      "active": true,
+      "guid": 532052594258603556,
+      "isFolder": false,
+      "locked": false,
+      "name": "Island_3_low",
+      "parentGuid": 1199939843941423035,
+      "tags": {
+        "seaworld": 1,
+        "cast_shadow": 0
+      },
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "enabled": true,
+          "data": {
+            "position": [
+              -66.0,
+              0.0,
+              112.0
+            ],
+            "rotation": [
+              0.0,
+              0.3,
+              0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "type": "ModelRendererComponent",
+          "enabled": true,
+          "data": {
+            "blendMode": 0,
+            "color": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "environmentCoeff": 0.0,
+            "lightingMode": 2,
+            "modelPath": "Resources/model/seaworld/island_low.glb",
+            "normalMapPath": "Resources/model/seaworld/island_low_normal.jpg",
+            "roughnessMapPath": "Resources/model/seaworld/rough_none.png",
+            "texturePath": "",
+            "visible": true
+          }
+        }
+      ]
+    },
+    {
+      "active": true,
+      "guid": 2737924194178416410,
+      "isFolder": false,
+      "locked": false,
+      "name": "Island_4_medium",
+      "parentGuid": 1199939843941423035,
+      "tags": {
+        "seaworld": 1,
+        "cast_shadow": 0
+      },
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "enabled": true,
+          "data": {
+            "position": [
+              98.0,
+              0.0,
+              72.0
+            ],
+            "rotation": [
+              0.0,
+              2.0,
+              0.0
+            ],
+            "scale": [
+              0.9,
+              0.9,
+              0.9
+            ]
+          }
+        },
+        {
+          "type": "ModelRendererComponent",
+          "enabled": true,
+          "data": {
+            "blendMode": 0,
+            "color": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "environmentCoeff": 0.0,
+            "lightingMode": 2,
+            "modelPath": "Resources/model/seaworld/island_medium.glb",
+            "normalMapPath": "Resources/model/seaworld/island_medium_normal.jpg",
+            "roughnessMapPath": "Resources/model/seaworld/rough_none.png",
+            "texturePath": "",
+            "visible": true
+          }
+        }
+      ]
+    },
+    {
+      "active": true,
+      "guid": 7560216298577462195,
+      "isFolder": false,
+      "locked": false,
+      "name": "Island_5_low",
+      "parentGuid": 1199939843941423035,
+      "tags": {
+        "seaworld": 1,
+        "cast_shadow": 0
+      },
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "enabled": true,
+          "data": {
+            "position": [
+              54.0,
+              0.0,
+              150.0
+            ],
+            "rotation": [
+              0.0,
+              0.8,
+              0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "type": "ModelRendererComponent",
+          "enabled": true,
+          "data": {
+            "blendMode": 0,
+            "color": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "environmentCoeff": 0.0,
+            "lightingMode": 2,
+            "modelPath": "Resources/model/seaworld/island_low.glb",
+            "normalMapPath": "Resources/model/seaworld/island_low_normal.jpg",
+            "roughnessMapPath": "Resources/model/seaworld/rough_none.png",
+            "texturePath": "",
+            "visible": true
+          }
+        }
+      ]
+    },
+    {
+      "active": true,
+      "guid": 8905975575393086989,
+      "isFolder": false,
+      "locked": false,
+      "name": "Island_6_stacks",
+      "parentGuid": 1199939843941423035,
+      "tags": {
+        "seaworld": 1,
+        "cast_shadow": 0
+      },
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "enabled": true,
+          "data": {
+            "position": [
+              -60.0,
+              0.0,
+              146.0
+            ],
+            "rotation": [
+              0.0,
+              4.4,
+              0.0
+            ],
+            "scale": [
+              0.8,
+              0.8,
+              0.8
+            ]
+          }
+        },
+        {
+          "type": "ModelRendererComponent",
+          "enabled": true,
+          "data": {
+            "blendMode": 0,
+            "color": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "environmentCoeff": 0.0,
+            "lightingMode": 2,
+            "modelPath": "Resources/model/seaworld/island_stacks.glb",
+            "normalMapPath": "Resources/model/seaworld/island_stacks_normal.jpg",
+            "roughnessMapPath": "Resources/model/seaworld/rough_none.png",
+            "texturePath": "",
+            "visible": true
+          }
+        }
+      ]
+    },
+    {
+      "active": true,
+      "guid": 8917957256003003239,
+      "isFolder": false,
+      "locked": false,
+      "name": "Island_7_stacks",
+      "parentGuid": 1199939843941423035,
+      "tags": {
+        "seaworld": 1,
+        "cast_shadow": 0
+      },
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "enabled": true,
+          "data": {
+            "position": [
+              -98.0,
+              0.0,
+              -62.0
+            ],
+            "rotation": [
+              0.0,
+              3.3,
+              0.0
+            ],
+            "scale": [
+              0.8,
+              0.8,
+              0.8
+            ]
+          }
+        },
+        {
+          "type": "ModelRendererComponent",
+          "enabled": true,
+          "data": {
+            "blendMode": 0,
+            "color": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "environmentCoeff": 0.0,
+            "lightingMode": 2,
+            "modelPath": "Resources/model/seaworld/island_stacks.glb",
+            "normalMapPath": "Resources/model/seaworld/island_stacks_normal.jpg",
+            "roughnessMapPath": "Resources/model/seaworld/rough_none.png",
+            "texturePath": "",
+            "visible": true
+          }
+        }
+      ]
+    },
+    {
+      "active": true,
+      "guid": 9135083084436729169,
+      "isFolder": false,
+      "locked": false,
+      "name": "Island_8_large",
+      "parentGuid": 1199939843941423035,
+      "tags": {
+        "seaworld": 1,
+        "cast_shadow": 0
+      },
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "enabled": true,
+          "data": {
+            "position": [
+              245.0,
+              0.0,
+              -30.0
+            ],
+            "rotation": [
+              0.0,
+              2.6,
+              0.0
+            ],
+            "scale": [
+              0.9,
+              0.9,
+              0.9
+            ]
+          }
+        },
+        {
+          "type": "ModelRendererComponent",
+          "enabled": true,
+          "data": {
+            "blendMode": 0,
+            "color": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "environmentCoeff": 0.0,
+            "lightingMode": 2,
+            "modelPath": "Resources/model/seaworld/island_large.glb",
+            "normalMapPath": "Resources/model/seaworld/island_large_normal.jpg",
+            "roughnessMapPath": "Resources/model/seaworld/rough_none.png",
+            "texturePath": "Resources/model/seaworld/island_large_far.jpg",
+            "visible": true
+          }
+        }
+      ]
+    },
+    {
+      "active": true,
+      "guid": 6681319378106317147,
+      "isFolder": false,
+      "locked": false,
+      "name": "Island_9_medium",
+      "parentGuid": 1199939843941423035,
+      "tags": {
+        "seaworld": 1,
+        "cast_shadow": 0
+      },
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "enabled": true,
+          "data": {
+            "position": [
+              -225.0,
+              0.0,
+              150.0
+            ],
+            "rotation": [
+              0.0,
+              4.0,
+              0.0
+            ],
+            "scale": [
+              1.2,
+              1.2,
+              1.2
+            ]
+          }
+        },
+        {
+          "type": "ModelRendererComponent",
+          "enabled": true,
+          "data": {
+            "blendMode": 0,
+            "color": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "environmentCoeff": 0.0,
+            "lightingMode": 2,
+            "modelPath": "Resources/model/seaworld/island_medium.glb",
+            "normalMapPath": "Resources/model/seaworld/island_medium_normal.jpg",
+            "roughnessMapPath": "Resources/model/seaworld/rough_none.png",
+            "texturePath": "Resources/model/seaworld/island_medium_far.jpg",
+            "visible": true
+          }
+        }
+      ]
+    },
+    {
+      "active": true,
+      "guid": 2456331887976058467,
+      "isFolder": false,
+      "locked": false,
+      "name": "Island_10_large",
+      "parentGuid": 1199939843941423035,
+      "tags": {
+        "seaworld": 1,
+        "cast_shadow": 0
+      },
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "enabled": true,
+          "data": {
+            "position": [
+              340.0,
+              0.0,
+              300.0
+            ],
+            "rotation": [
+              0.0,
+              1.1,
+              0.0
+            ],
+            "scale": [
+              1.3,
+              1.3,
+              1.3
+            ]
+          }
+        },
+        {
+          "type": "ModelRendererComponent",
+          "enabled": true,
+          "data": {
+            "blendMode": 0,
+            "color": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "environmentCoeff": 0.0,
+            "lightingMode": 2,
+            "modelPath": "Resources/model/seaworld/island_large.glb",
+            "normalMapPath": "Resources/model/seaworld/island_large_normal.jpg",
+            "roughnessMapPath": "Resources/model/seaworld/rough_none.png",
+            "texturePath": "Resources/model/seaworld/island_large_far.jpg",
+            "visible": true
+          }
+        }
+      ]
+    },
+    {
+      "active": true,
+      "guid": 4875372323112405828,
+      "isFolder": false,
+      "locked": false,
+      "name": "Island_11_stacks",
+      "parentGuid": 1199939843941423035,
+      "tags": {
+        "seaworld": 1,
+        "cast_shadow": 0
+      },
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "enabled": true,
+          "data": {
+            "position": [
+              -310.0,
+              0.0,
+              330.0
+            ],
+            "rotation": [
+              0.0,
+              5.2,
+              0.0
+            ],
+            "scale": [
+              1.2,
+              1.2,
+              1.2
+            ]
+          }
+        },
+        {
+          "type": "ModelRendererComponent",
+          "enabled": true,
+          "data": {
+            "blendMode": 0,
+            "color": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "environmentCoeff": 0.0,
+            "lightingMode": 2,
+            "modelPath": "Resources/model/seaworld/island_stacks.glb",
+            "normalMapPath": "Resources/model/seaworld/island_stacks_normal.jpg",
+            "roughnessMapPath": "Resources/model/seaworld/rough_none.png",
+            "texturePath": "Resources/model/seaworld/island_stacks_far.jpg",
+            "visible": true
+          }
+        }
+      ]
+    },
+    {
+      "active": true,
+      "guid": 5007750993699270479,
+      "isFolder": false,
+      "locked": false,
+      "name": "Cave_Merged",
+      "parentGuid": 2988614496493638630,
+      "tags": {
+        "seaworld": 1,
+        "cast_shadow": 0
+      },
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "enabled": true,
+          "data": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "type": "ModelRendererComponent",
+          "enabled": true,
+          "data": {
+            "blendMode": 0,
+            "color": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "environmentCoeff": 0.0,
+            "lightingMode": 1,
+            "modelPath": "Resources/model/seaworld/cave_backdrop_Stage1.glb",
+            "normalMapPath": "",
+            "roughnessMapPath": "",
+            "texturePath": "",
+            "visible": true
+          }
+        }
+      ]
     }
   ]
 }
