@@ -271,6 +271,19 @@ protected:
     hasBase_ = false;
     ResetDefeatState(); // 未開封・開封タイマー 0 に戻す
     bobTime_ = 0.0f;
+
+    // 部位（22 個のプリミティブ）は再生中ならここで作っておく。
+    // シーンの読み込み中（DataDrivenScene::OnEnter）に OnCreate が呼ばれるので、ロード待ちの内側に入る。
+    // 以前は最初の OnUpdate で作っており、宝箱 5 個 × 22 個の生成がフェードインの最初のフレームに集中していた。
+    // 基準の大きさは部位を作った後の値を最初の OnUpdate（PrepareBody）で記録するので、順番は以前と同じ。
+    if (chestLook_ && !chestBuilt_) {
+      SceneContext* ctx = GetSceneContext();
+      if (ctx && ctx->isPlaying()) {
+        if (auto* tr = self->GetComponent<TransformComponent>()) {
+          BuildChest(*tr);
+        }
+      }
+    }
   }
 
   /// @brief 待機中（未開封）の毎フレーム処理。ふわふわ上下 ＋ 任意で回転
