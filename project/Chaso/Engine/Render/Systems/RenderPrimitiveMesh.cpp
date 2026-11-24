@@ -2,6 +2,8 @@
 #include "RenderContext.h"
 #include "Mesh/PrimitiveMesh.h"
 #include "Mesh/MeshGenerator.h"
+#include "Math/BoundingBox.h"
+#include <algorithm>
 
 namespace RC {
 
@@ -26,6 +28,29 @@ static void ApplyDirLightMode_(RenderContext &ctx, PrimitiveMesh *m) {
       mat->lightingMode = active->GetLightingMode();
     }
   }
+}
+
+/// @brief 今のパス（メイン / 平行光源の影 / スポット影のタイル / マスク）の視錐台の外にあるかを判定する
+/// @details 以前の DrawPrimitiveMesh はカリングをしておらず、画面外や影の範囲外の物も
+///          パスごとに毎回コマンドを積んでいた（モデルのインスタンス描画は ModelInstanceBatcher がカリング済み）。
+///          洞窟の中身のように「そのステージではまず見えない物」が数十個あると、
+///          メイン + 影のパスでその 2 倍以上、CPU のコマンド記録と実行の時間がそのまま増える。
+///          積む前に捨てる。平行光源の影は正射影なので、範囲外の物が範囲内へ影を落とすことは無い。
+/// @param ctx   レンダーコンテキスト
+/// @param m     対象のプリミティブメッシュ
+/// @param world ワールド行列（行ベクトル規約。MakeAffineMatrix の結果）
+/// @return 視錐台の完全に外なら true（描かなくてよい）
+static bool IsCulledInCurrentPass_(RenderContext &ctx, const PrimitiveMesh *m, const Matrix4x4 &world) {
+  const BoundingBox &local = m->LocalBounds();
+  if (!local.IsValid()) {
+    return false; // 境界が分からない物は描く（安全側）
+  }
+  // 頂点シェーダでのわずかなずれ（法線方向の押し出し等）に備えて、境界をほんの少し広げる
+  const Vector3 h = local.HalfExtent();
+  const float margin = 0.05f + 0.02f * (std::max)({h.x, h.y, h.z});
+  const BoundingBox worldBounds = local.Expanded(margin).Transformed(world);
+  const Frustum frustum = Frustum::FromViewProjection(ctx.CurrentPassViewProjection());
+  return !frustum.Intersects(worldBounds);
 }
 
 } // namespace
@@ -145,9 +170,13 @@ void DrawPrimitiveMesh(int meshHandle, int texHandle) {
   auto *m = ctx.PrimitiveMeshes().Get(meshHandle);
   if (!m) return;
 
+  Matrix4x4 world = MakeAffineMatrix(m->T().scale, m->T().rotation, m->T().translation);
+  if (IsCulledInCurrentPass_(ctx, m, world)) {
+    return;
+  }
+
   ApplyDirLightMode_(ctx, m);
 
-  Matrix4x4 world = MakeAffineMatrix(m->T().scale, m->T().rotation, m->T().translation);
   D3D12_GPU_VIRTUAL_ADDRESS lightAddr = ctx.DirLights().GetActiveCBAddress();
   BlendMode blend = ctx.CurrentBlendMode();
 

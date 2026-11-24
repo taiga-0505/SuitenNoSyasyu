@@ -33,6 +33,12 @@ void PrimitiveMesh::Initialize(ID3D12Device *device, const ModelData &data) {
   UploadVB_(data.vertices);
   UploadIB_(data.indices);
 
+  // 視錐台カリング用の境界箱（DrawPrimitiveMesh がパスごとの視錐台と比べる）
+  localBounds_ = RC::BoundingBox::Empty();
+  for (const auto &v : data.vertices) {
+    localBounds_.Encapsulate({v.position.x, v.position.y, v.position.z});
+  }
+
   // 定数バッファ: WVP / Material は DynamicCB（CPU 側に値を持ち、バインド時に今フレームの領域へ送る）
   cbMat_.dyn.Ptr()->color = {1, 1, 1, 1};
   cbMat_.dyn.Ptr()->uvTransform = MakeIdentity4x4();

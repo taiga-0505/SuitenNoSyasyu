@@ -1,6 +1,7 @@
 #pragma once
 #include "struct.h"
 #include "Math/MathTypes.h"
+#include "Math/BoundingBox.h"
 #include "function/function.h"
 #include "Render/FrameResource.h" // RC::DynamicCB
 #include <d3d12.h>
@@ -100,6 +101,9 @@ public:
   /// @brief 可視状態を取得する
   /// @return 表示中なら true
   bool Visible() const { return visible_; }
+  /// @brief 頂点から求めたローカル空間の境界箱を取得する（視錐台カリング用）
+  /// @return Initialize で渡された頂点を囲む軸平行境界箱（頂点が無ければ IsValid() == false）
+  const RC::BoundingBox &LocalBounds() const { return localBounds_; }
 
 private:
   /// @brief 頂点バッファを作成してアップロードする
@@ -153,6 +157,7 @@ private:
 
   Transform transform_{{1, 1, 1}, {0, 0, 0}, {0, 0, 0}}; ///< ローカルトランスフォーム
   bool visible_ = true; ///< 可視フラグ
+  RC::BoundingBox localBounds_ = RC::BoundingBox::Empty(); ///< ローカル空間の境界箱（Initialize で頂点から求める）
 
   int lightingModeOverride_ = -1; ///< -1: DirectionalLight に追従 / 0 以上: 固定 LightingMode
 };
