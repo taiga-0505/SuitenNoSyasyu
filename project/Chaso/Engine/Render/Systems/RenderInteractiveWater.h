@@ -6,15 +6,21 @@
 namespace RC {
 
 /// @struct WaveSource
-/// @brief 波紋シミュレーションに与える 1 つの波源（泡の波源にも同じ形で使う）
+/// @brief 波紋シミュレーションに与える 1 つの波源（泡・墨の波源にも同じ形で使う）
 struct WaveSource {
-  RC::Vector2 uv;  ///< ハイトマップ上の位置（UV。0〜1）
+  /// @brief 位置。ワールド原点を中心にした固定の UV（= xz / kInteractiveWaterWorldSize + 0.5）
+  /// @details ハイトマップはカメラに合わせて動く（SetInteractiveWaterCenter）が、この値は
+  ///          以前と同じ「原点中心の固定 UV」として受け取り、内部でワールド座標へ戻して扱う。
+  ///          そのため従来の呼び出し側（uv = pos.xz / 100 + 0.5）は書き換えなくてよい。
+  ///          新しく書くコードは AddWaveSourceAtWorld などワールド座標の API を使うこと。
+  RC::Vector2 uv;
   float radius;    ///< 半径（UV 空間。0.01 = 1m）
-  float strength;  ///< 高さの加算値（負で押し下げ）。泡の波源では足す量
+  float strength;  ///< 高さの加算値（負で押し下げ）。泡・墨の波源では足す量
 };
 
-/// @brief 波紋ハイトマップが覆うワールドの一辺（m）。UV = xz / この値 + 0.5
-/// @details Water.VS.hlsl / Water.PS.hlsl の waveUV 計算と同じ値。変えるときはシェーダー側も揃える。
+/// @brief 波紋ハイトマップが覆うワールドの一辺（m）
+/// @details ハイトマップは SetInteractiveWaterCenter で指定した中心のまわり ±この値/2 を覆う。
+///          Water.VS.hlsl / Water.PS.hlsl は中心と一辺を WaterParams（gWaveWindow）で受け取る。
 inline constexpr float kInteractiveWaterWorldSize = 100.0f;
 
 /// @brief インタラクティブな波紋シミュレーションを初期化する（ハイトマップ 3 枚と定数バッファを作る）
@@ -27,7 +33,30 @@ void TermInteractiveWater();
 
 /// @brief 波源を追加する（次の UpdateInteractiveWater で消費される）
 /// @param source 追加する波源（1 フレーム 64 個まで。超えた分は捨てる）
+/// @note source.uv は「原点中心の固定 UV」。ハイトマップの範囲外なら Update 時に捨てられる。
 void AddWaveSource(const WaveSource& source);
+
+// ---------------------------------------------------------------------------
+// ハイトマップの範囲（カメラ追従）
+// ---------------------------------------------------------------------------
+// ハイトマップは 256×256 テクセル（1 テクセル = 100/256 ≒ 0.39m）で、一辺 100m しか覆えない。
+// ステージは原点から 1km 近く続くので、覆う範囲（窓）の中心を外から指定できるようにした。
+// 窓はテクセル単位で動き、動いたぶんだけ前フレームの中身をずらして読み直す（波紋・泡・墨は
+// ワールドに貼り付いたまま残る）。窓から外れた所の波紋・泡・墨は消える。
+// 誰も指定しなければ中心は原点のまま（以前と同じ挙動）。
+
+/// @brief ハイトマップが覆う範囲の中心を指定する（次の UpdateInteractiveWater から反映）
+/// @param worldX 中心のワールド X（m）
+/// @param worldZ 中心のワールド Z（m）
+/// @note 中心はテクセル単位（≒0.39m）に丸められる。シーンを抜けるときは (0, 0) に戻すこと。
+void SetInteractiveWaterCenter(float worldX, float worldZ);
+
+/// @brief いま描画に使っているハイトマップの範囲を取得する
+/// @param outCenterX 中心のワールド X（m）
+/// @param outCenterZ 中心のワールド Z（m）
+/// @param outSize    覆う一辺（m）
+/// @details GetInteractiveWaterHeightMap() が返すテクスチャと同じフレームの範囲を返す。
+void GetInteractiveWaterWindow(float& outCenterX, float& outCenterZ, float& outSize);
 
 /// @brief ワールド座標を指定して波源を追加する
 /// @param worldX   ワールド X（m）
@@ -75,13 +104,37 @@ void SetInteractiveFoamParams(float decayPerFrame, float spreadPerFrame, float c
 /// @param outCrestDecayPerFrame 波頭の毎フレーム残存率の出力先
 void GetInteractiveFoamParams(float& outDecayPerFrame, float& outSpreadPerFrame, float& outCrestDecayPerFrame);
 
+// ---------------------------------------------------------------------------
+// 墨（A チャンネル）
+// ---------------------------------------------------------------------------
+// 水面に落ちた墨の濃さ。波としては伝播せず、その場に残って周りへ滲みながらゆっくり薄れる
+// （引き波の泡と同じ仕組みで、残り方の値だけ別に持つ）。Water.PS.hlsl が水面の色を墨色へ寄せる。
+
+/// @brief ワールド座標を指定して水面に墨を落とす
+/// @param worldX ワールド X（m）
+/// @param worldZ ワールド Z（m）
+/// @param radius 半径（UV 空間。0.01 = 1m）
+/// @param amount このフレームに足す濃さ（中心の値。0〜2 にクランプされる。0 以下なら捨てる）
+/// @return 範囲外・上限超え（1 フレーム 64 個）で捨てられたら false
+bool AddInkSourceAtWorld(float worldX, float worldZ, float radius, float amount);
+
+/// @brief 墨の残り方を設定する（全シーン共通。既定 0.994 / 0.07）
+/// @param decayPerFrame  毎フレーム残存率（0.994 で 60fps のとき約 1.9 秒で半減）
+/// @param spreadPerFrame 毎フレームの滲み（0〜0.25。大きいほど速く周りへ広がる）
+void SetInteractiveInkParams(float decayPerFrame, float spreadPerFrame);
+
+/// @brief 現在の墨の残り方を取得する
+/// @param outDecayPerFrame  毎フレーム残存率の出力先
+/// @param outSpreadPerFrame 毎フレームの滲みの出力先
+void GetInteractiveInkParams(float& outDecayPerFrame, float& outSpreadPerFrame);
+
 /// @brief コンピュートシェーダーを実行し、波のシミュレーションを 1 ステップ進める
 /// @details 溜まった波源・泡の波源を定数バッファへ詰めて消費し、CS の実行コマンドを 3D 描画キューの先頭（sortKey 0）に積む。
 ///          読み戻しが有効なら、コピー済みのハイトマップを CPU 側へ写し、今回の結果のコピーも積む。
 void UpdateInteractiveWater();
 
 /// @brief 最新のハイトマップの GPU SRV ハンドルを取得する
-/// @return SRV ハンドル（R32G32B32A32_FLOAT。r: 高さ、g: 引き波の泡、b: 波頭の白波）。未初期化なら空
+/// @return SRV ハンドル（R32G32B32A32_FLOAT。r: 高さ、g: 引き波の泡、b: 波頭の白波、a: 墨）。未初期化なら空
 D3D12_GPU_DESCRIPTOR_HANDLE GetInteractiveWaterHeightMap();
 
 // ---------------------------------------------------------------------------
@@ -100,8 +153,8 @@ void SetInteractiveWaterReadback(bool enabled);
 /// @return 有効なら true
 bool IsInteractiveWaterReadbackEnabled();
 
-/// @brief 波紋の高さ（m）を取得する
-/// @details Water.VS.hlsl と同じ写像（xz/100+0.5）とサンプラ（linear, clamp）で読む。
+/// @brief 波紋の高さ（m）を取得する（窓の縁ではぼかし、窓の外は 0。水面シェーダーと同じ）
+/// @details 読み戻したハイトマップの窓（中心）を基準に、Water.VS.hlsl と同じサンプラ（linear, clamp）で読む。
 /// @param worldX ワールド X（m）
 /// @param worldZ ワールド Z（m）
 /// @return 波紋の高さ（m）。読み戻しが無効／未着なら 0

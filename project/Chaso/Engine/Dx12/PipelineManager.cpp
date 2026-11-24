@@ -1056,6 +1056,25 @@ void PipelineManager::RegisterDefaultPipelines() {
   }
 
   // ====================
+  // 墨の煙のインスタンシング版（EffectParticleSystem の InkCloud 用）
+  //   水球シェーダーで描くと縁が光る透明なシャボン玉に見えて墨にならないので、専用の PS にする。
+  //   中心ほど濃く縁ほど透ける・墨色そのまま（青い発光や空の映り込みを足さない）。
+  //   プレマルチプライド・深度テスト ON・書き込み OFF・BACK カリング。
+  // ====================
+  {
+    const std::wstring inkCloudPs = L"Resources/Shader/Object3d/Object3D_InkCloud.PS.hlsl";
+    GPipelineOptions opt{};
+    opt.rootType = RootSignatureType::Object3DInstancing;
+    opt.enableDepth = true;
+    opt.enableDepthWrite = false;
+    opt.enableAlphaBlend = true;
+    opt.blendMode = kBlendModePremultiplied;
+    opt.cull = D3D12_CULL_MODE_BACK;
+    CreateFromFiles(MakeKey("object3d_inkcloud_inst", kBlendModePremultiplied), objVsInst, inkCloudPs,
+                    InputLayoutType::Object3D, opt);
+  }
+
+  // ====================
   // Scan Ring / Scan Beam Shader（場所指定ホログラム用エフェクト）
   //   床に置くリングデカールと、そこへ伸びる接続ビームの2種。
   //   加算合成・深度テストON・深度書き込みOFF・カリング無し。

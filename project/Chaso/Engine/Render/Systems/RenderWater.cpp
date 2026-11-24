@@ -6,6 +6,7 @@
 #include "RenderInteractiveWater.h"
 #include "Common/SceneContext.h"
 #include "../Dx12/Dx12Core.h"
+#include <algorithm>
 #include <utility>
 
 namespace RC {
@@ -63,6 +64,11 @@ struct WaterParamsCB {
   // 屈折（スクリーンテクスチャ）
   // x: 有効（1/0。シーン色のコピーが取れたフレームだけ 1 になる）、y: 歪みの強さ（画面 UV）、z: 交差部のフェード幅（m）
   Vector4 refractParams = {0.0f, 0.04f, 0.5f, 0.0f};
+  // 波紋ハイトマップが覆う範囲（窓）。xy: 中心のワールド XZ、z: 一辺（m）、w: 未使用
+  // 窓はカメラに合わせて動くので、描く直前に RenderInteractiveWater から写す
+  Vector4 waveWindow = {0.0f, 0.0f, kInteractiveWaterWorldSize, 0.0f};
+  // 水面に落ちた墨（波紋テクスチャの A）の色。rgb: 墨の色、a: 強さ（0 で墨を描かない）
+  Vector4 inkColor = {0.03f, 0.028f, 0.042f, 1.0f};
 };
 static_assert(sizeof(WaterParamsCB) % 16 == 0, "WaterParamsCB は 16 バイト境界に揃えること（HLSL cbuffer と一致させる）");
 
@@ -320,6 +326,10 @@ void DrawWater(int meshHandle, int normalMapHandle) {
       // b6: WaterParams（Object3D と同じパラメータ 0〜10 の次、11 番）。
       // 値は CPU 側にあり、ここで今フレームの領域へ送る（屈折の有無を書いた後なので最新の値になる）
       if (s_waterCBMapped) {
+        // 波紋ハイトマップの窓。t4 に載せたテクスチャ（GetInteractiveWaterHeightMap）と同じフレームの値
+        float wx = 0.0f, wz = 0.0f, wsize = kInteractiveWaterWorldSize;
+        GetInteractiveWaterWindow(wx, wz, wsize);
+        s_waterCBMapped->waveWindow = {wx, wz, wsize, 0.0f};
         cl->SetGraphicsRootConstantBufferView(11, s_waterCB.Address());
       }
 
@@ -416,6 +426,12 @@ void SetWaterRefraction(bool enable, float strength, float edgeFade) {
   // x（実際に有効か）は描画時にコピーが取れたかで決めるのでここでは触らない
   s_waterCBMapped->refractParams.y = (strength > 0.0f) ? strength : 0.0f;
   s_waterCBMapped->refractParams.z = (edgeFade > 0.001f) ? edgeFade : 0.001f;
+}
+
+void SetWaterInkColor(const Vector4 &color) {
+  EnsureWaterCB();
+  if (!s_waterCBMapped) return;
+  s_waterCBMapped->inkColor = {color.x, color.y, color.z, (std::max)(color.w, 0.0f)};
 }
 
 void SetWaterTime(float timeSec) {

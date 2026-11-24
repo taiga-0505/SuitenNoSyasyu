@@ -8,6 +8,7 @@
 #include "Common/Math/Math.h"
 #include "Camera/CameraController.h" // ctx.camera->GetWorldPos()（Scene.h は前方宣言のみ）
 #include "RenderCommon.h"
+#include "Render/Systems/RenderInteractiveWater.h"
 #include <string>
 #include <fstream>
 #include <filesystem>
@@ -122,6 +123,8 @@ public:
     pendingEntities_.clear();
     broadphase_.Clear(); // 弱参照だけになった登録を捨てる
     RC::ClearEffectParticles();
+    // 波紋ハイトマップの窓はシーン共通。次のシーンが原点中心を前提にしていても困らないよう戻す
+    RC::SetInteractiveWaterCenter(0.0f, 0.0f);
   }
 
   /// @brief 毎フレームの更新。アニメーション・Transform 同期・ライト・パーティクル・スクリプト・衝突・決着判定を行う
@@ -1299,6 +1302,7 @@ public:
     entities_.clear();
     broadphase_.Clear();
     RC::ClearEffectParticles();
+    RC::SetInteractiveWaterCenter(0.0f, 0.0f); // 波紋ハイトマップの窓を原点中心へ戻す（シーン共通のため）
     gameMode_ = GameModeBase::Create(sceneName_); // GameMode のリセット（Application 側のファクトリで作る）
 
     if (!std::filesystem::exists(filePath_)) {
@@ -1425,6 +1429,7 @@ public:
       pendingEntities_.clear();
       broadphase_.Clear();
       RC::ClearEffectParticles();
+      RC::SetInteractiveWaterCenter(0.0f, 0.0f); // 波紋ハイトマップの窓を原点中心へ戻す
       gameMode_ = GameModeBase::Create(sceneName_); // GameMode のリセット（Application 側のファクトリで作る）
 
       // バックアップから作り直し、ランタイム資源と結果判定の状態を初期化する

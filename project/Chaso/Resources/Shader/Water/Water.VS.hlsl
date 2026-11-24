@@ -53,11 +53,13 @@ cbuffer WaterParams : register(b6)
     float4 gOceanParams2;  ///< x: 透明度（m）, y: 遠景フェード距離（m）, z: 法線マップのタイルサイズ（m。0 = 従来 UV）, w: 白波の量
     float4 gSssColor;      ///< rgb: 波頭を透ける光の色, a: 強さ
     float4 gRefractParams; ///< x: 屈折が有効（1/0）, y: 歪みの強さ（画面 UV）, z: 交差部のフェード幅（m）
+    float4 gWaveWindow;    ///< 波紋ハイトマップの範囲。xy: 中心のワールド XZ, z: 一辺（m）
+    float4 gInkColor;      ///< 水面の墨の色（rgb）と強さ（a。PS だけが使う）
 };
 
 #include "OceanWaves.hlsli"
 
-Texture2D<float4> gInteractiveWave : register(t4); // r: 高さ, g: 引き波の泡, b: 波頭の白波（VS では高さだけ使う）
+Texture2D<float4> gInteractiveWave : register(t4); // r: 高さ, g: 引き波の泡, b: 波頭の白波, a: 墨（VS では高さだけ使う）
 SamplerState gSamplerClamp : register(s2);
 
 struct VertexShaderInput
@@ -323,9 +325,10 @@ VertexShaderOutput main(VertexShaderInput input)
     GerstnerResult wave = ComputeGerstnerWave(worldPos.xyz, gTime);
 
     // インタラクティブ波紋のサンプリング
-    // WaterPlane のワールドサイズ（100x100）に合わせた UV 変換
-    float2 waveUV = (worldPos.xz / 100.0f) + 0.5f;
-    float interactiveHeight = gInteractiveWave.SampleLevel(gSamplerClamp, waveUV, 0).r;
+    // ハイトマップはカメラに合わせて動く窓（gWaveWindow）を覆う。窓の縁では 0 へフェードさせる
+    float2 waveUV = WaveWindowUV(worldPos.xz, gWaveWindow);
+    float interactiveHeight = gInteractiveWave.SampleLevel(gSamplerClamp, waveUV, 0).r
+                            * WaveWindowEdgeFade(waveUV);
 
     // 変位適用
     worldPos.xyz += wave.offset;

@@ -10,7 +10,11 @@
 //   B = 波頭の白波（0〜kFoamMax）。すぐ消える（毎フレーム置き直す前提）。
 //       船首の砕け波や V 字（ケルビン波）の腕の白い線のように「今その場所にだけある白」に使う。
 //       長く残すと腕が外へ動いた跡が塗りつぶされて V にならないため、残存率を小さくしている
-//   A = 未使用
+//   A = 墨（0〜kInkMax）。水面に落ちた墨の濃さ。G と同じく伝播せず、周りへ滲みながらゆっくり薄れる
+//
+// テクスチャが覆う範囲（窓）はカメラに合わせて動く。動いたぶん（gShiftPrev / gShiftPrevPrev）だけ
+// 前フレームの中身をずらして読むことで、波紋・泡・墨はワールドに貼り付いたまま残る。
+// 窓の外から入ってきた所は 0（何も無い水面）から始まる。
 // =============================================================================
 
 cbuffer SimulationParams : register(b0)
@@ -20,7 +24,7 @@ cbuffer SimulationParams : register(b0)
     int   gSourceCount;  ///< 現在の波源の数
     float gResetFlag;    ///< 1.0 なら状態をゼロにリセットするフラグ
 
-    // x, y = UV 座標（0.0〜1.0）
+    // x, y = UV 座標（0.0〜1.0。今回の窓の UV）
     // z = 波源の半径（UV 空間での半径）
     // w = 波源の強さ（高さの加算値）
     float4 gSources[64]; ///< 波紋の波源
@@ -38,9 +42,21 @@ cbuffer SimulationParams : register(b0)
     int    gCrestSourceCount;  ///< 波頭の波源の数
     float3 gCrestPad;          ///< 16 バイト境界合わせ
     float4 gCrestSources[128]; ///< 波頭の白波の波源（xy: UV 座標、z: 半径（UV）、w: このフレームに足す量）
+
+    // ---- 窓の移動 ----
+    int2   gShiftPrev;      ///< t0（1 フレーム前）を読むときのずらし量（テクセル）
+    int2   gShiftPrevPrev;  ///< t1（2 フレーム前）を読むときのずらし量（テクセル）
+
+    // ---- 墨（A）----
+    float  gInkDecay;        ///< 毎フレームの残存率（例: 0.997）
+    float  gInkSpread;       ///< 毎フレームの滲み（0〜0.25）
+    int    gInkSourceCount;  ///< 墨の波源の数
+    float  gInkPad;          ///< 16 バイト境界合わせ
+    float4 gInkSources[64];  ///< 墨の波源（xy: UV 座標、z: 半径（UV）、w: このフレームに足す量）
 };
 
 static const float kFoamMax = 2.0f; ///< 泡（G / B）の上限
+static const float kInkMax = 2.0f;  ///< 墨（A）の上限
 
 // t0: 1 フレーム前のハイトマップ
 Texture2D<float4> gPrevHeight : register(t0);
@@ -61,6 +77,20 @@ float Falloff(float2 uv, float4 src)
     return (t < 1.0f) ? (1.0f - t * t) : 0.0f;
 }
 
+/// @brief 前フレームのテクスチャを、窓の移動ぶんずらして読む（前フレームの窓の外なら 0）
+/// @param tex   読むテクスチャ
+/// @param p     今回の窓でのテクセル座標
+/// @param shift 今回の中心 − そのテクスチャを書いたときの中心（テクセル）
+/// @param size  テクスチャの一辺（テクセル）
+/// @return その場所の値
+float4 LoadShifted(Texture2D<float4> tex, int2 p, int2 shift, int2 size)
+{
+    int2 q = p + shift;
+    if (any(q < 0) || any(q >= size))
+        return float4(0.0f, 0.0f, 0.0f, 0.0f);
+    return tex.Load(int3(q, 0));
+}
+
 /// @brief エントリポイント。1 スレッドが 1 テクセルを 1 ステップ進める
 /// @param DTid ディスパッチスレッド ID（xy がテクセル座標）
 [numthreads(16, 16, 1)]
@@ -72,7 +102,8 @@ void main( uint3 DTid : SV_DispatchThreadID )
     if (DTid.x >= width || DTid.y >= height)
         return;
 
-    int3 pos = int3(DTid.x, DTid.y, 0);
+    int2 size = int2((int)width, (int)height);
+    int2 pos = int2(DTid.xy);
 
     // リセットフラグが立っている場合は強制的に 0 クリア
     if (gResetFlag > 0.5f)
@@ -81,20 +112,20 @@ void main( uint3 DTid : SV_DispatchThreadID )
         return;
     }
 
-    float4 c1 = gPrevHeight.Load(pos);
+    float4 c1 = LoadShifted(gPrevHeight, pos, gShiftPrev, size);
     float h1 = c1.x;
-    float h2 = gPrevPrevHeight.Load(pos).x;
+    float h2 = LoadShifted(gPrevPrevHeight, pos, gShiftPrevPrev, size).x;
 
-    // 上下左右のピクセル値を取得（境界では自分自身をクランプ扱い）
-    int xLeft  = max((int)DTid.x - 1, 0);
-    int xRight = min((int)DTid.x + 1, (int)width - 1);
-    int yUp    = max((int)DTid.y - 1, 0);
-    int yDown  = min((int)DTid.y + 1, (int)height - 1);
+    // 上下左右のピクセル値を取得（境界では自分自身をクランプ扱い。クランプは今回の窓で行う）
+    int xLeft  = max(pos.x - 1, 0);
+    int xRight = min(pos.x + 1, size.x - 1);
+    int yUp    = max(pos.y - 1, 0);
+    int yDown  = min(pos.y + 1, size.y - 1);
 
-    float4 cLeft  = gPrevHeight.Load(int3(xLeft, DTid.y, 0));
-    float4 cRight = gPrevHeight.Load(int3(xRight, DTid.y, 0));
-    float4 cUp    = gPrevHeight.Load(int3(DTid.x, yUp, 0));
-    float4 cDown  = gPrevHeight.Load(int3(DTid.x, yDown, 0));
+    float4 cLeft  = LoadShifted(gPrevHeight, int2(xLeft, pos.y), gShiftPrev, size);
+    float4 cRight = LoadShifted(gPrevHeight, int2(xRight, pos.y), gShiftPrev, size);
+    float4 cUp    = LoadShifted(gPrevHeight, int2(pos.x, yUp), gShiftPrev, size);
+    float4 cDown  = LoadShifted(gPrevHeight, int2(pos.x, yDown), gShiftPrev, size);
 
     // =========================
     // 高さ（R）：波動方程式
@@ -108,8 +139,8 @@ void main( uint3 DTid : SV_DispatchThreadID )
     // 2. 水面全体が自然に 0（平坦）に戻るように、全体に微小な減衰をかける
     hNew *= 0.99f;
 
-    // 波源（力）の加算
-    float2 uv = float2((float)DTid.x / (float)(width - 1), (float)DTid.y / (float)(height - 1));
+    // 波源（力）の加算。UV はテクセル中心（水面シェーダーのサンプル位置・CPU の読み戻しと同じ規則）
+    float2 uv = (float2(pos) + 0.5f) / float2(size);
     for (int i = 0; i < gSourceCount; ++i)
     {
         float2 sourceUV = gSources[i].xy;
@@ -153,5 +184,19 @@ void main( uint3 DTid : SV_DispatchThreadID )
     }
     cNew = clamp(cNew, 0.0f, kFoamMax);
 
-    gOutHeight[DTid.xy] = float4(hNew, fNew, cNew, 0.0f);
+    // =========================
+    // 墨（A）：その場に残り、周りへ滲みながら薄れる
+    // =========================
+    // 隣との平均へ寄せる（拡散）ので、落とした直後の濃い点がじわじわ輪になって広がり、
+    // 広がるほど中心が薄くなる。泡より長く残し、薄い所が水面の色に溶けて見えるよう最後に小さく引く。
+    float iAvg = (cLeft.w + cRight.w + cUp.w + cDown.w) * 0.25f;
+    float iNew = lerp(c1.w, iAvg, saturate(gInkSpread));
+    iNew = iNew * saturate(gInkDecay) - 0.0002f;
+    for (int n = 0; n < gInkSourceCount; ++n)
+    {
+        iNew += gInkSources[n].w * Falloff(uv, gInkSources[n]);
+    }
+    iNew = clamp(iNew, 0.0f, kInkMax);
+
+    gOutHeight[DTid.xy] = float4(hNew, fNew, cNew, iNew);
 }

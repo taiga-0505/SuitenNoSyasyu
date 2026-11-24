@@ -4,6 +4,7 @@
 #include "Engine/Input/Controller/Controller.h"
 #include "RenderCommon.h"
 #include "Engine/Render/RenderContext.h"
+#include "Render/Systems/RenderInteractiveWater.h"
 #include "Common/Math/MathUtils.h"
 #include "Framework/App.h"
 #include "Common/GameTime.h"
@@ -314,6 +315,11 @@ private:
     float currentCooldown = 0.0f;
     float bulletSpeed = 40.0f;
     float bulletLifetime = 3.0f;
+
+    /// @brief 波紋ハイトマップの窓（一辺 100m）の中心を、カメラの前方へどれだけずらすか（m）
+    /// @details 30 なら後ろ 20m・前 80m を覆う。大きくするほど遠くの着弾まで波紋・墨が出るが、
+    ///          真横〜斜め後ろの水面が窓から外れやすくなる。
+    float waterWindowLookAhead = 30.0f;
 
     // 演出用パラメータ
     float currentRecoil = 0.0f; // 射撃時のレティクル拡大量
@@ -892,6 +898,9 @@ protected:
         }
         ink.Update(RC::GetRenderContext().GetPostProcess(), deltaTime, IsUnderwater());
 
+        // 水面の波紋・泡・墨を描ける範囲（一辺 100m）をカメラの前方へ寄せる
+        UpdateWaterWindow();
+
         // Result シーンから読めるように、現在の成績を GameSession へ写す。
         // score / hp はこのスクリプトのメンバなので、シーンを抜けると失われるため。
         GameSession::Get().SetScore(score);
@@ -1082,6 +1091,29 @@ protected:
         }
     }
 
+    /// @brief 波紋ハイトマップが覆う範囲（窓）の中心を、カメラの少し前に置く
+    /// @details 窓は一辺 100m しかなく、以前は原点に固定されていたため、ステージを 50m 進むと
+    ///          弾の着水の波紋や水面の墨が出なくなっていた。敵や着弾はほとんど前方なので、
+    ///          中心をカメラの前方（水平方向）へ waterWindowLookAhead だけずらし、後ろは狭く・前は広く覆う。
+    ///          カメラ位置と向きは前フレームのビュー行列から取る（1 フレーム遅れても窓の位置には影響が無い）。
+    void UpdateWaterWindow() {
+        const RC::Matrix4x4 viewInv = Inverse(RC::GetRenderContext().View());
+        const float camX = viewInv.m[3][0];
+        const float camZ = viewInv.m[3][2];
+        // ビュー行列の逆行列の 3 行目がカメラの前方（行ベクトル規約）。水平成分だけ使う
+        float fx = viewInv.m[2][0];
+        float fz = viewInv.m[2][2];
+        const float len = std::sqrt(fx * fx + fz * fz);
+        if (len > 1e-4f) {
+            fx /= len;
+            fz /= len;
+        } else {
+            fx = 0.0f;
+            fz = 0.0f; // 真下・真上を向いているときは前方が決まらないので、カメラの真下を中心にする
+        }
+        RC::SetInteractiveWaterCenter(camX + fx * waterWindowLookAhead, camZ + fz * waterWindowLookAhead);
+    }
+
     /// @brief 現在の武器で弾を発射する（画面中央のレティクルからのレイ方向へ）
     /// @details 弾は Object Pool（EntityPool）から 1 発ずつ取り出す（非アクティブな "PlayerBullet" を
     ///          再利用し、無ければ新規作成）。取り出した弾はその場でアクティブになるので、
@@ -1136,11 +1168,16 @@ protected:
                 pm->type = PrimitiveType::Sphere;
                 pm->meshHandle = RC::GenerateSphere(1.0f);
             }
-            // 水の質感で描く（以前は DataDrivenScene がエンティティ名で判定していた）
-            pm->drawStyle = PrimitiveDrawStyle::Water;
+            // 墨の弾（T-24）。通常の描画（不透明・ライティングあり）で墨色に塗る。敵のタコの墨玉と同じ描き方。
+            // 以前の水の質感（PrimitiveDrawStyle::Water）では、水球シェーダーが青い発光と空の映り込みを
+            // 足すため、暗い色を渡しても青いガラス玉に見えて墨にならなかった
+            pm->drawStyle = PrimitiveDrawStyle::Default;
+            // コンポーネント側の色も墨色にする（新しく作った弾は InitDynamicEntityRuntime が pm->color で
+            // マテリアルを上書きするため、マテリアルだけ塗っても白に戻る）
+            pm->color = { 0.03f, 0.028f, 0.042f, 1.0f }; // WaterBullet の InkColor と同じ色
             if (pm->meshHandle >= 0) {
                 if (auto* mat = RC::GetPrimitiveMeshMaterialPtr(pm->meshHandle)) {
-                    mat->color = { 0.2f, 0.6f, 1.0f, 0.85f };
+                    mat->color = pm->color;
                 }
             }
 
@@ -1190,6 +1227,8 @@ protected:
         ink.Clear(RC::GetRenderContext().GetPostProcess());
         // 露出のオフセットも PostProcess に残るので戻す（自分で積んだ ColorGrade も外れる）
         waterFlash_.Clear(RC::GetRenderContext().GetPostProcess());
+        // 波紋ハイトマップの窓は全シーン共通なので、原点中心（タイトルなどが前提にしている位置）へ戻す
+        RC::SetInteractiveWaterCenter(0.0f, 0.0f);
         if (scoreFont_ >= 0) { RC::UnloadFont(scoreFont_); scoreFont_ = -1; }
         if (gameOverFont_ >= 0) { RC::UnloadFont(gameOverFont_); gameOverFont_ = -1; }
     }
@@ -1382,6 +1421,7 @@ public:
         ImGui::Separator();
         ImGui::Text("Player Stats");
         ImGui::DragInt("HP", &hp, 1, 0, maxHp);
+        ImGui::DragFloat("Water Window LookAhead (m)", &waterWindowLookAhead, 0.5f, 0.0f, 45.0f);
         ImGui::DragFloat("Damage HitStop (s)", &damageHitStop, 0.01f, 0.0f, 0.5f);
         ImGui::DragFloat("Death HitStop (s)", &deathHitStop, 0.01f, 0.0f, 1.0f);
         ImGui::Text("Score: %d", score);

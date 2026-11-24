@@ -40,6 +40,8 @@ enum class EffectParticleKind : uint8_t {
   Wake,        ///< 航跡の飛沫（球・水の質感）。上へ跳ねて水面で小さくバウンドする
   HeavySplash, ///< 水柱（円柱・水柱の質感）。一気に伸びて、終盤に薄くなって消える
   Bubble,      ///< 泡（球・不透明）。揺れながらゆっくり上がり、最後にはじける
+  InkCloud,    ///< 墨の煙（球・縁の柔らかい半透明）。重力を受けず、ふわっと膨らみながら薄れる
+  InkDrop,     ///< 墨の飛沫（球・不透明の墨）。Splash と同じ飛び方で、水面に落ちると水面に小さな墨の点を残す
 };
 
 /// @struct EffectParticleSpawn
@@ -49,7 +51,7 @@ struct EffectParticleSpawn {
   Vector3 position{0.0f, 0.0f, 0.0f}; ///< 出現位置（HeavySplash は水柱の根元）
   float scale = 0.2f;                 ///< 初期サイズ（球の半径 / 水柱の太さ）
   Vector4 color{1.0f, 1.0f, 1.0f, 1.0f}; ///< 色（α は種類ごとの式で上書きされる）
-  float impactFactor = 1.0f;          ///< 勢い（Splash の初速・HeavySplash の高さに掛かる）
+  float impactFactor = 1.0f;          ///< 勢い（Splash の初速・HeavySplash の高さ・InkCloud の膨らむ倍率に掛かる）
 };
 
 /// @class EffectParticleSystem
@@ -117,7 +119,8 @@ private:
     float lifetime = 1.0f;   ///< 寿命（秒）
     float startScale = 1.0f; ///< 出現時のサイズ
     float startY = 0.0f;     ///< HeavySplash: 根元の高さ
-    float maxHeight = 15.0f; ///< HeavySplash: 伸びきったときの高さ
+    float maxHeight = 15.0f; ///< HeavySplash: 伸びきったときの高さ / InkCloud: 膨らみきったときのサイズ
+    float startAlpha = 1.0f; ///< InkCloud: 出現時の不透明度（spawn の color.w）
     EffectParticleKind kind = EffectParticleKind::Splash; ///< 粒の種類
   };
 
@@ -126,7 +129,8 @@ private:
   enum class DrawGroup : uint8_t {
     Water,       ///< Splash / Wake（球・水の 2 パス描画）
     WaterColumn, ///< HeavySplash（円柱・水柱の 2 パス描画）
-    Bubble,      ///< Bubble（球・不透明）
+    Bubble,      ///< Bubble / InkDrop（球・不透明の object3d。色は粒ごと）
+    InkCloud,    ///< InkCloud（球・縁の柔らかい半透明。object3d_inkcloud_inst）
     Count,       ///< 種類の数（配列サイズ用）
   };
 

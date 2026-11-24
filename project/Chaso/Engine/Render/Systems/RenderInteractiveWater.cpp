@@ -31,35 +31,103 @@ struct WaveSimCB {
   int crestSourceCount;      ///< crestSources の有効数
   float crestPad[3];         ///< 16 バイト境界合わせ
   Vector4 crestSources[128]; ///< 波頭の白波の波源（xy: UV、z: 半径、w: 足す量）
+  // ---- 範囲（窓）の移動 ----
+  int shiftPrev[2];     ///< t0（1 フレーム前）を読むときのずらし量（テクセル。x, y）
+  int shiftPrevPrev[2]; ///< t1（2 フレーム前）を読むときのずらし量（テクセル。x, y）
+  // ---- 墨（A チャンネル）----
+  float inkDecay;         ///< 墨の毎フレーム残存率
+  float inkSpread;        ///< 墨の毎フレームの滲み
+  int inkSourceCount;     ///< inkSources の有効数
+  float inkPad;           ///< 16 バイト境界合わせ
+  Vector4 inkSources[64]; ///< 墨の波源（xy: UV、z: 半径、w: 足す量）
 };
-static_assert(sizeof(WaveSimCB) == 16 + 16 * 64 + 16 + 16 * 64 + 16 + 16 * 128,
+static_assert(sizeof(WaveSimCB) == 16 + 16 * 64 + 16 + 16 * 64 + 16 + 16 * 128 + 16 + 16 + 16 * 64,
               "WaveSimCB layout must match WaveSimulation.CS.hlsl");
 
 static constexpr int TEX_SIZE = 256; ///< ハイトマップの一辺（テクセル）
-/// @brief ハイトマップの形式。R = 高さ / G = 引き波の泡 / B = 波頭の白波 / A = 未使用
+/// @brief 1 テクセルが覆うワールドの長さ（m）。窓はこの単位で動く
+static constexpr float kTexelWorld = kInteractiveWaterWorldSize / static_cast<float>(TEX_SIZE);
+/// @brief ハイトマップの形式。R = 高さ / G = 引き波の泡 / B = 波頭の白波 / A = 墨
 /// @details 3 チャンネルの UAV 形式は無いので 4 チャンネルにしている。
 static constexpr DXGI_FORMAT kHeightMapFormat = DXGI_FORMAT_R32G32B32A32_FLOAT;
 static constexpr int kHeightMapChannels = 4;   ///< 1 テクセルあたりの float 数
+static constexpr int kMaxWaveSources = 64;     ///< 波紋の波源の上限（1 フレーム）
 static constexpr int kMaxFoamSources = 64;     ///< 引き波の泡の波源の上限（1 フレーム）
 static constexpr int kMaxCrestSources = 128;   ///< 波頭の白波の波源の上限（1 フレーム）
+static constexpr int kMaxInkSources = 64;      ///< 墨の波源の上限（1 フレーム）
 static Microsoft::WRL::ComPtr<ID3D12Resource> s_heightMaps[3]; ///< ハイトマップ（最新・1 つ前・書き込み先の 3 枚を回す）
 static SRVManager::Handle s_srvs[3]; ///< 各ハイトマップの SRV
 static SRVManager::Handle s_uavs[3]; ///< 各ハイトマップの UAV
 static int s_currIdx = 0; ///< 最新のハイトマップのインデックス
+
+/// @struct TexelCoord
+/// @brief 窓の中心（ワールド座標をテクセル単位に丸めたもの。x がワールド X、z がワールド Z）
+struct TexelCoord {
+  int x = 0; ///< ワールド X / kTexelWorld
+  int z = 0; ///< ワールド Z / kTexelWorld
+};
+/// @brief 各ハイトマップを書いたときの窓の中心
+/// @details 前フレームの中身を読むとき「書いたときの中心」と「今回の中心」の差だけずらす。
+///          1 つ前と 2 つ前で中心が違うことがあるので、テクスチャごとに持つ。
+static TexelCoord s_texCenter[3];
+static float s_desiredCenterX = 0.0f; ///< SetInteractiveWaterCenter で指定された中心（ワールド X）
+static float s_desiredCenterZ = 0.0f; ///< SetInteractiveWaterCenter で指定された中心（ワールド Z）
+
+/// @brief 波源をワールド座標で控える（窓が動いても位置がずれないよう、UV への変換は Update で行う）
+struct PendingSource {
+  float x;        ///< ワールド X（m）
+  float z;        ///< ワールド Z（m）
+  float radius;   ///< 半径（UV 空間。0.01 = 1m）
+  float strength; ///< 高さの加算値・足す量
+};
 
 /// @brief 波シミュレーションの CB。値は CPU 側に持ち、バインド時に今フレームの領域へ送る
 /// @details 以前は Map しっぱなしの固定 CB だった（CPU と GPU を並行させると上書き競合が起きる）。
 static RC::DynamicCB<WaveSimCB> s_simCB;
 static WaveSimCB* s_simCBMapped = nullptr; ///< 書き込み先（= s_simCB.Ptr()）
 
-static std::vector<WaveSource> s_pendingSources;      ///< 次の Update で消費する波源
-static std::vector<WaveSource> s_pendingFoamSources;  ///< 引き波の泡の波源（strength = 足す量）
-static std::vector<WaveSource> s_pendingCrestSources; ///< 波頭の白波の波源（strength = 足す量）
+static std::vector<PendingSource> s_pendingSources;      ///< 次の Update で消費する波源
+static std::vector<PendingSource> s_pendingFoamSources;  ///< 引き波の泡の波源（strength = 足す量）
+static std::vector<PendingSource> s_pendingCrestSources; ///< 波頭の白波の波源（strength = 足す量）
+static std::vector<PendingSource> s_pendingInkSources;   ///< 墨の波源（strength = 足す量）
 static float s_foamDecay = 0.992f; ///< 引き波の泡の毎フレーム残存率
 static float s_foamSpread = 0.10f; ///< 引き波の泡の毎フレームの滲み
 static float s_crestDecay = 0.80f; ///< 波頭の白波の毎フレーム残存率
+/// @brief 墨の毎フレーム残存率（0.994 で 60fps のとき約 1.9 秒で半減）
+/// @details 0.997 / 滲み 0.18 では、数発撃つと数 m の滑らかな染みが重なって大きな影のようになっていた
+static float s_inkDecay = 0.994f;
+static float s_inkSpread = 0.07f;  ///< 墨の毎フレームの滲み（小さくして、点々や筋の形を残す）
 static bool s_initialized = false; ///< InitInteractiveWater 済みか
 static int s_resetFrames = 3; ///< 残りのリセットフレーム数（最初の 3 フレームはテクスチャを 0 クリアする）
+
+/// @brief 指定された中心をテクセル単位に丸める（次の Update で使う窓の中心）
+/// @return 丸めた中心
+static TexelCoord SnappedDesiredCenter() {
+  TexelCoord c;
+  c.x = static_cast<int>(std::lround(s_desiredCenterX / kTexelWorld));
+  c.z = static_cast<int>(std::lround(s_desiredCenterZ / kTexelWorld));
+  return c;
+}
+
+/// @brief ワールド座標を、中心 c の窓の UV（0〜1）へ変換する
+/// @param c      窓の中心
+/// @param worldX ワールド X（m）
+/// @param worldZ ワールド Z（m）
+/// @return 窓の UV（範囲外もそのまま返す）
+static Vector2 WorldToWindowUV(const TexelCoord& c, float worldX, float worldZ) {
+  return {(worldX - static_cast<float>(c.x) * kTexelWorld) / kInteractiveWaterWorldSize + 0.5f,
+          (worldZ - static_cast<float>(c.z) * kTexelWorld) / kInteractiveWaterWorldSize + 0.5f};
+}
+
+/// @brief 半径 radius の波源が中心 c の窓に少しでも掛かるか
+/// @param c      窓の中心
+/// @param s      波源（ワールド座標）
+/// @return 掛かるなら true
+static bool OverlapsWindow(const TexelCoord& c, const PendingSource& s) {
+  const Vector2 uv = WorldToWindowUV(c, s.x, s.z);
+  const float r = (std::max)(s.radius, 0.0f);
+  return uv.x >= -r && uv.x <= 1.0f + r && uv.y >= -r && uv.y <= 1.0f + r;
+}
 
 // ---- CPU 読み戻し（任意） ----
 // GPU が書き終えたハイトマップを READBACK ヒープへコピーし、フェンスが通ったものだけ CPU 配列へ写す。
@@ -72,6 +140,7 @@ static constexpr int kReadbackCount = 4; ///< 読み戻しスロット数（Comm
 struct ReadbackSlot {
   Microsoft::WRL::ComPtr<ID3D12Resource> buffer; ///< READBACK ヒープのバッファ
   uint64_t fenceValue = 0; ///< このスロットへのコピーを含むコマンドが完了するフェンス値（0 = 未使用）
+  TexelCoord center;       ///< コピーしたハイトマップを書いたときの窓の中心
 };
 static ReadbackSlot s_readback[kReadbackCount]; ///< 読み戻しリング
 static int s_readbackWriteIdx = 0;              ///< 次にコピーを書き込むスロット
@@ -81,6 +150,7 @@ static bool s_readbackEnabled = false;          ///< CPU 読み戻しが有効�
 static bool s_readbackHasData = false;   ///< s_cpuHeight に有効なデータが入っているか
 static uint64_t s_readbackLastFence = 0; ///< 最後に CPU へ写したスロットのフェンス値
 static std::vector<float> s_cpuHeight;   ///< TEX_SIZE*TEX_SIZE、行優先（y*TEX_SIZE+x）
+static TexelCoord s_cpuCenter;           ///< s_cpuHeight を書いたときの窓の中心
 
 /// @brief UAV を許可した 2D テクスチャを DEFAULT ヒープに作る
 /// @param device D3D12 デバイス
@@ -196,7 +266,7 @@ static void ConsumeReadback() {
   if (SUCCEEDED(s_readback[best].buffer->Map(0, &readRange, &mapped)) && mapped) {
     const UINT rowPitch = s_readbackFootprint.Footprint.RowPitch;
     const auto* src = static_cast<const uint8_t*>(mapped);
-    // テクセルは (高さ, 引き波, 波頭, 未使用) の float4。CPU 側は高さ（R）だけを使う
+    // テクセルは (高さ, 引き波, 波頭, 墨) の float4。CPU 側は高さ（R）だけを使う
     for (int y = 0; y < TEX_SIZE; ++y) {
       const auto* row = reinterpret_cast<const float*>(src + static_cast<size_t>(y) * rowPitch);
       float* dst = &s_cpuHeight[static_cast<size_t>(y) * TEX_SIZE];
@@ -206,6 +276,7 @@ static void ConsumeReadback() {
     s_readback[best].buffer->Unmap(0, &noWrite);
     s_readbackHasData = true;
     s_readbackLastFence = bestFence;
+    s_cpuCenter = s_readback[best].center;
   }
   // 消費済み／古いスロットは捨てる（同じデータを二度読まない）
   for (int i = 0; i < kReadbackCount; ++i) {
@@ -258,20 +329,33 @@ void SetInteractiveWaterReadback(bool enabled) {
 
 bool IsInteractiveWaterReadbackEnabled() { return s_readbackEnabled; }
 
+/// @brief 窓の縁で 0 へ落とす重み（Water.hlsli の WaveWindowEdgeFade と同じ式）
+/// @param u 窓の UV の u
+/// @param v 窓の UV の v
+/// @return 重み（0〜1。窓の外は 0）
+static float WindowEdgeFade(float u, float v) {
+  const float d = (std::min)((std::min)(u, 1.0f - u), (std::min)(v, 1.0f - v));
+  return std::clamp(d / 0.04f, 0.0f, 1.0f);
+}
+
 float SampleInteractiveWaterHeight(float worldX, float worldZ) {
   if (!s_readbackEnabled || !s_readbackHasData) return 0.0f;
-  const float u = worldX / kInteractiveWaterWorldSize + 0.5f;
-  const float v = worldZ / kInteractiveWaterWorldSize + 0.5f;
-  return SampleCpuHeightMap(u, v);
+  const Vector2 uv = WorldToWindowUV(s_cpuCenter, worldX, worldZ);
+  // 水面の VS と同じく、窓の縁ではぼかし、窓の外は 0（浮かべた物が見えない波に揺れないように）
+  return SampleCpuHeightMap(uv.x, uv.y) * WindowEdgeFade(uv.x, uv.y);
 }
 
 bool SampleInteractiveWater(float worldX, float worldZ, float& outHeight, Vector3& outNormal) {
   outHeight = 0.0f;
   outNormal = {0.0f, 1.0f, 0.0f};
   if (!s_readbackEnabled || !s_readbackHasData) return false;
-  const float u = worldX / kInteractiveWaterWorldSize + 0.5f;
-  const float v = worldZ / kInteractiveWaterWorldSize + 0.5f;
-  outHeight = SampleCpuHeightMap(u, v);
+  const Vector2 uv = WorldToWindowUV(s_cpuCenter, worldX, worldZ);
+  const float u = uv.x;
+  const float v = uv.y;
+  // 水面の VS / PS と同じく、窓の縁ではぼかし、窓の外は平らな水面として扱う
+  const float fade = WindowEdgeFade(u, v);
+  if (fade <= 0.0f) return true;
+  outHeight = SampleCpuHeightMap(u, v) * fade;
 
   // Water.VS.hlsl の interactiveNormal と同じ有限差分：
   //   dX = (200*texel, hR-hL, 0), dZ = (0, hD-hU, 200*texel), N = normalize(cross(dZ, dX))
@@ -281,9 +365,9 @@ bool SampleInteractiveWater(float worldX, float worldZ, float& outHeight, Vector
   const float hR = SampleCpuHeightMap(u + texel, v);
   const float hU = SampleCpuHeightMap(u, v - texel);
   const float hD = SampleCpuHeightMap(u, v + texel);
-  const float nx = -(hR - hL);
+  const float nx = -(hR - hL) * fade;
   const float ny = 2.0f * kInteractiveWaterWorldSize * texel;
-  const float nz = -(hD - hU);
+  const float nz = -(hD - hU) * fade;
   const float len = std::sqrt(nx * nx + ny * ny + nz * nz);
   if (len > 1e-6f) outNormal = {nx / len, ny / len, nz / len};
   return true;
@@ -313,7 +397,17 @@ void InitInteractiveWater() {
     s_simCBMapped->foamSourceCount = 0;
     s_simCBMapped->crestDecay = s_crestDecay;
     s_simCBMapped->crestSourceCount = 0;
+    s_simCBMapped->shiftPrev[0] = s_simCBMapped->shiftPrev[1] = 0;
+    s_simCBMapped->shiftPrevPrev[0] = s_simCBMapped->shiftPrevPrev[1] = 0;
+    s_simCBMapped->inkDecay = s_inkDecay;
+    s_simCBMapped->inkSpread = s_inkSpread;
+    s_simCBMapped->inkSourceCount = 0;
+    s_simCBMapped->inkPad = 0.0f;
   }
+
+  // 3 枚とも「今の指定の中心」で書いたことにする（最初の 3 フレームは 0 クリアされる）
+  const TexelCoord c = SnappedDesiredCenter();
+  for (auto& tc : s_texCenter) tc = c;
 
   s_currIdx = 0;
   s_resetFrames = 3; // 初期化時にリセットカウンタを設定
@@ -346,31 +440,62 @@ void TermInteractiveWater() {
   }
   s_cpuHeight.clear();
   s_cpuHeight.shrink_to_fit();
+  s_cpuCenter = TexelCoord{};
+
+  s_pendingSources.clear();
+  s_pendingFoamSources.clear();
+  s_pendingCrestSources.clear();
+  s_pendingInkSources.clear();
 
   s_initialized = false;
   Log::Print("[RenderInteractiveWater] Terminated");
 }
 
-void AddWaveSource(const WaveSource& source) {
-  if (s_pendingSources.size() < 64) {
-    s_pendingSources.push_back(source);
-  }
+void SetInteractiveWaterCenter(float worldX, float worldZ) {
+  if (!std::isfinite(worldX) || !std::isfinite(worldZ)) return;
+  // テクセル数へ丸めるときに int（MSVC の long は 32bit）を溢れさせない範囲に収める
+  constexpr float kMaxCenter = 1.0e6f;
+  s_desiredCenterX = std::clamp(worldX, -kMaxCenter, kMaxCenter);
+  s_desiredCenterZ = std::clamp(worldZ, -kMaxCenter, kMaxCenter);
 }
 
-bool AddWaveSourceAtWorld(float worldX, float worldZ, float radius, float strength) {
-  const float u = worldX / kInteractiveWaterWorldSize + 0.5f;
-  const float v = worldZ / kInteractiveWaterWorldSize + 0.5f;
-  if (u < 0.0f || u > 1.0f || v < 0.0f || v > 1.0f) return false;
-  if (s_pendingSources.size() >= 64) return false;
-  WaveSource s;
-  s.uv = {u, v};
-  s.radius = radius;
-  s.strength = strength;
-  s_pendingSources.push_back(s);
+void GetInteractiveWaterWindow(float& outCenterX, float& outCenterZ, float& outSize) {
+  const TexelCoord& c = s_initialized ? s_texCenter[s_currIdx] : TexelCoord{};
+  outCenterX = static_cast<float>(c.x) * kTexelWorld;
+  outCenterZ = static_cast<float>(c.z) * kTexelWorld;
+  outSize = kInteractiveWaterWorldSize;
+}
+
+/// @brief 波源をリストへ積む（次の Update で使う窓に掛からない・上限超えは捨てる）
+/// @param list     積む先のリスト
+/// @param maxCount リストの上限
+/// @param worldX   ワールド X（m）
+/// @param worldZ   ワールド Z（m）
+/// @param radius   半径（UV 空間。0.01 = 1m）
+/// @param value    高さの加算値・足す量
+/// @return 積めたら true
+static bool PushSource(std::vector<PendingSource>& list, size_t maxCount, float worldX, float worldZ, float radius,
+                       float value) {
+  if (list.size() >= maxCount) return false;
+  const PendingSource s{worldX, worldZ, radius, value};
+  // 窓の中心は Update で決まるが、指定の中心から丸めるだけなので、ここで同じ窓を使って判定できる
+  if (!OverlapsWindow(SnappedDesiredCenter(), s)) return false;
+  list.push_back(s);
   return true;
 }
 
-/// @brief 泡系の波源をリストへ積む（範囲外・上限超えは捨てる）
+void AddWaveSource(const WaveSource& source) {
+  // uv は「原点中心の固定 UV」（以前の呼び出し側の書き方）。ワールド座標へ戻して積む
+  const float worldX = (source.uv.x - 0.5f) * kInteractiveWaterWorldSize;
+  const float worldZ = (source.uv.y - 0.5f) * kInteractiveWaterWorldSize;
+  PushSource(s_pendingSources, kMaxWaveSources, worldX, worldZ, source.radius, source.strength);
+}
+
+bool AddWaveSourceAtWorld(float worldX, float worldZ, float radius, float strength) {
+  return PushSource(s_pendingSources, kMaxWaveSources, worldX, worldZ, radius, strength);
+}
+
+/// @brief 泡・墨の波源をリストへ積む（足す量が 0 以下・範囲外・上限超えは捨てる）
 /// @param list     積む先のリスト
 /// @param maxCount リストの上限
 /// @param worldX   ワールド X（m）
@@ -378,19 +503,10 @@ bool AddWaveSourceAtWorld(float worldX, float worldZ, float radius, float streng
 /// @param radius   半径（UV 空間。0.01 = 1m）
 /// @param amount   足す量（0 以下なら捨てる）
 /// @return 積めたら true
-static bool PushFoamLike(std::vector<WaveSource>& list, size_t maxCount, float worldX, float worldZ, float radius,
+static bool PushFoamLike(std::vector<PendingSource>& list, size_t maxCount, float worldX, float worldZ, float radius,
                          float amount) {
   if (amount <= 0.0f) return false;
-  const float u = worldX / kInteractiveWaterWorldSize + 0.5f;
-  const float v = worldZ / kInteractiveWaterWorldSize + 0.5f;
-  if (u < 0.0f || u > 1.0f || v < 0.0f || v > 1.0f) return false;
-  if (list.size() >= maxCount) return false;
-  WaveSource s;
-  s.uv = {u, v};
-  s.radius = radius;
-  s.strength = amount;
-  list.push_back(s);
-  return true;
+  return PushSource(list, maxCount, worldX, worldZ, radius, amount);
 }
 
 bool AddFoamSourceAtWorld(float worldX, float worldZ, float radius, float amount) {
@@ -413,6 +529,37 @@ void GetInteractiveFoamParams(float& outDecayPerFrame, float& outSpreadPerFrame,
   outCrestDecayPerFrame = s_crestDecay;
 }
 
+bool AddInkSourceAtWorld(float worldX, float worldZ, float radius, float amount) {
+  return PushFoamLike(s_pendingInkSources, kMaxInkSources, worldX, worldZ, radius, amount);
+}
+
+void SetInteractiveInkParams(float decayPerFrame, float spreadPerFrame) {
+  s_inkDecay = std::clamp(decayPerFrame, 0.0f, 1.0f);
+  s_inkSpread = std::clamp(spreadPerFrame, 0.0f, 0.25f);
+}
+
+void GetInteractiveInkParams(float& outDecayPerFrame, float& outSpreadPerFrame) {
+  outDecayPerFrame = s_inkDecay;
+  outSpreadPerFrame = s_inkSpread;
+}
+
+/// @brief 控えた波源（ワールド座標）を、中心 c の窓の UV に直して CB の配列へ詰める
+/// @param list     控えた波源
+/// @param maxCount CB の配列の大きさ
+/// @param c        今回の窓の中心
+/// @param out      詰める先（CB の配列）
+/// @return 詰めた数
+static int PackSources(const std::vector<PendingSource>& list, int maxCount, const TexelCoord& c, Vector4* out) {
+  int n = 0;
+  for (const PendingSource& s : list) {
+    if (n >= maxCount) break;
+    if (!OverlapsWindow(c, s)) continue;
+    const Vector2 uv = WorldToWindowUV(c, s.x, s.z);
+    out[n++] = Vector4(uv.x, uv.y, s.radius, s.strength);
+  }
+  return n;
+}
+
 void UpdateInteractiveWater() {
   if (!s_initialized) return;
   auto& ctx = GetRenderContext();
@@ -425,8 +572,20 @@ void UpdateInteractiveWater() {
   // 今回レンダリングする「次(out)」のテクスチャ
   int nextIdx = (s_currIdx + 1) % 3;
 
+  // 今回の窓の中心。前の 2 枚はそれぞれ書いたときの中心との差だけずらして読む
+  const TexelCoord center = SnappedDesiredCenter();
+  const TexelCoord prevC = s_texCenter[h1Idx];
+  const TexelCoord prevPrevC = s_texCenter[h2Idx];
+  s_texCenter[nextIdx] = center;
+
   // CB の更新
   if (s_simCBMapped) {
+    // 窓の移動（テクセル。テクスチャの x がワールド X、y がワールド Z）
+    s_simCBMapped->shiftPrev[0] = center.x - prevC.x;
+    s_simCBMapped->shiftPrev[1] = center.z - prevC.z;
+    s_simCBMapped->shiftPrevPrev[0] = center.x - prevPrevC.x;
+    s_simCBMapped->shiftPrevPrev[1] = center.z - prevPrevC.z;
+
     s_simCBMapped->alpha = 0.15f;   // 波の伝播速度（穏やかな広がり）
     s_simCBMapped->damping = 0.95f; // 速度減衰（0.95^60≈0.05、約1秒でほぼ消滅）
     
@@ -438,44 +597,38 @@ void UpdateInteractiveWater() {
         s_simCBMapped->padding = 0.0f;
     }
 
-    int count = std::min(64, (int)s_pendingSources.size());
-    s_simCBMapped->sourceCount = count;
-    for (int i = 0; i < count; ++i) {
-      s_simCBMapped->sources[i] = Vector4(
-          s_pendingSources[i].uv.x,
-          s_pendingSources[i].uv.y,
-          s_pendingSources[i].radius,
-          s_pendingSources[i].strength);
-    }
+    // 波源は控えたワールド座標を、今回の窓の UV に直して詰める
+    s_simCBMapped->sourceCount = PackSources(s_pendingSources, kMaxWaveSources, center, s_simCBMapped->sources);
 
     // 引き波の泡
     s_simCBMapped->foamDecay = s_foamDecay;
     s_simCBMapped->foamSpread = s_foamSpread;
-    const int foamCount = std::min(kMaxFoamSources, (int)s_pendingFoamSources.size());
-    s_simCBMapped->foamSourceCount = foamCount;
-    for (int i = 0; i < foamCount; ++i) {
-      const WaveSource& f = s_pendingFoamSources[i];
-      s_simCBMapped->foamSources[i] = Vector4(f.uv.x, f.uv.y, f.radius, f.strength);
-    }
+    s_simCBMapped->foamSourceCount =
+        PackSources(s_pendingFoamSources, kMaxFoamSources, center, s_simCBMapped->foamSources);
     // 波頭の白波
     s_simCBMapped->crestDecay = s_crestDecay;
-    const int crestCount = std::min(kMaxCrestSources, (int)s_pendingCrestSources.size());
-    s_simCBMapped->crestSourceCount = crestCount;
-    for (int i = 0; i < crestCount; ++i) {
-      const WaveSource& c = s_pendingCrestSources[i];
-      s_simCBMapped->crestSources[i] = Vector4(c.uv.x, c.uv.y, c.radius, c.strength);
-    }
+    s_simCBMapped->crestSourceCount =
+        PackSources(s_pendingCrestSources, kMaxCrestSources, center, s_simCBMapped->crestSources);
+    // 墨
+    s_simCBMapped->inkDecay = s_inkDecay;
+    s_simCBMapped->inkSpread = s_inkSpread;
+    s_simCBMapped->inkSourceCount =
+        PackSources(s_pendingInkSources, kMaxInkSources, center, s_simCBMapped->inkSources);
   }
   s_pendingSources.clear();
   s_pendingFoamSources.clear();
   s_pendingCrestSources.clear();
+  s_pendingInkSources.clear();
 
   // 前のフレームまでにコピーが終わっているハイトマップを CPU へ写す（読み戻しが有効なときだけ）
   if (s_readbackEnabled && !s_readback[0].buffer) EnsureReadbackBuffers();
   ConsumeReadback();
   const bool doReadback = s_readbackEnabled && s_readback[0].buffer;
   const int readbackSlot = s_readbackWriteIdx;
-  if (doReadback) s_readbackWriteIdx = (s_readbackWriteIdx + 1) % kReadbackCount;
+  if (doReadback) {
+    s_readbackWriteIdx = (s_readbackWriteIdx + 1) % kReadbackCount;
+    s_readback[readbackSlot].center = center; // このスロットへ写すハイトマップの窓
+  }
 
   // リソースバリアから先の GPU コマンドをキューに積む（sortKey 0 で最初に処理させる）
   ctx.PushCommand3D(0, [h1Idx, h2Idx, nextIdx, doReadback, readbackSlot](ID3D12GraphicsCommandList* cl) {

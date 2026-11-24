@@ -4,6 +4,7 @@
 #include "Graphics/Mesh/MeshGenerator.h"
 #include "Graphics/Mesh/PrimitiveMesh.h"
 #include "Graphics/Model/ModelResource.h"
+#include "Render/Systems/RenderInteractiveWater.h" // InkDrop が水面に墨を落とす
 
 #include <algorithm>
 #include <cmath>
@@ -111,6 +112,26 @@ void EffectParticleSystem::Spawn(const EffectParticleSpawn &desc) {
     p.color = {0.8f, 0.9f, 1.0f, 0.6f};
     break;
   }
+  case EffectParticleKind::InkCloud: {
+    // 墨の煙：ほぼその場で、少しだけ漂いながら膨らむ。色（墨色）と出現時の不透明度は spawn の指定を使う
+    p.lifetime = 0.8f + RandMod(60) / 100.0f;
+    const float angle = RandMod(360) * kPi / 180.0f;
+    const float speed = 0.2f + RandMod(100) / 200.0f;
+    p.vel = {std::cos(angle) * speed, 0.1f + RandMod(100) / 400.0f, std::sin(angle) * speed};
+    p.maxHeight = desc.scale * (2.0f + 1.5f * (std::max)(impact, 0.0f)); // 膨らみきったときのサイズ
+    p.startAlpha = std::clamp(desc.color.w, 0.0f, 1.0f);
+    break;
+  }
+  case EffectParticleKind::InkDrop: {
+    // 飛び方は Splash と同じ式。墨は粘りがあるので少しだけ短命・低め
+    p.lifetime = 0.5f + RandMod(60) / 100.0f;
+    const float angle = RandMod(360) * kPi / 180.0f;
+    const float speed = (3.0f + RandMod(100) / 20.0f) * std::sqrt((std::max)(impact, 0.0f));
+    const float upSpeed = (3.0f + RandMod(100) / 20.0f) * impact;
+    p.vel = {std::cos(angle) * speed, upSpeed, std::sin(angle) * speed};
+    p.color.w = 1.0f; // 不透明で描く
+    break;
+  }
   }
 
   particles_.push_back(p);
@@ -180,6 +201,38 @@ bool EffectParticleSystem::Step_(Particle &p, float dt) {
     p.color = {0.8f, 0.9f, 1.0f, (1.0f - t) * 0.6f};
     return true;
   }
+  case EffectParticleKind::InkCloud: {
+    // 水の抵抗で漂いがすぐ止まる（毎秒 exp(-2) 倍）
+    const float k = std::exp(-2.0f * dt);
+    p.vel.x *= k;
+    p.vel.y *= k;
+    p.vel.z *= k;
+    p.pos.x += p.vel.x * dt;
+    p.pos.y += p.vel.y * dt;
+    p.pos.z += p.vel.z * dt;
+    // 最初に一気に広がってから、ゆっくり大きくなる（ease-out）。薄れ方は早めにして視界を塞がない
+    const float easeOut = 1.0f - (1.0f - t) * (1.0f - t);
+    const float s = (std::max)(p.startScale + (p.maxHeight - p.startScale) * easeOut, 0.01f);
+    p.scale = {s, s, s};
+    p.color.w = p.startAlpha * std::pow(1.0f - t, 2.0f);
+    return true;
+  }
+  case EffectParticleKind::InkDrop: {
+    p.vel.y -= 14.0f * dt;
+    p.pos.x += p.vel.x * dt;
+    p.pos.y += p.vel.y * dt;
+    p.pos.z += p.vel.z * dt;
+    if (p.pos.y < 0.0f && p.vel.y < 0.0f) {
+      // 水面に落ちた：粒の大きさに応じた小さな墨の点を水面に残して消える。
+      // 1 発の飛沫が散らばって落ちるので、水面の墨が 1 つの丸い染みではなく点々になる
+      AddInkSourceAtWorld(p.pos.x, p.pos.z, (std::max)(p.startScale * 0.035f, 0.003f), 0.6f);
+      return false;
+    }
+    // 終盤だけ縮める（最後まで同じ大きさだと、空中でぷつっと消えて見える）
+    const float s = (std::max)(p.startScale * (t < 0.7f ? 1.0f : (1.0f - (t - 0.7f) / 0.3f)), 0.01f);
+    p.scale = {s, s, s};
+    return true;
+  }
   }
   return false;
 }
@@ -232,6 +285,8 @@ EffectParticleSystem::DrawGroup EffectParticleSystem::GroupOf_(EffectParticleKin
   switch (k) {
   case EffectParticleKind::HeavySplash: return DrawGroup::WaterColumn;
   case EffectParticleKind::Bubble:      return DrawGroup::Bubble;
+  case EffectParticleKind::InkDrop:     return DrawGroup::Bubble; // 不透明の object3d（敵の墨玉と同じ描き方）
+  case EffectParticleKind::InkCloud:    return DrawGroup::InkCloud;
   default:                              return DrawGroup::Water;
   }
 }
@@ -261,6 +316,8 @@ void EffectParticleSystem::Flush(RenderContext &ctx) {
   // 視錐台カリング（球は半径 = scale、円柱は半径 = scale.x・高さ = scale.y）
   for (uint32_t i = 0; i < particles_.size(); ++i) {
     const Particle &p = particles_[i];
+    // 墨の煙は半透明の大きな球なので、影を落とすと黒い円盤が地面に出る。影パスでは描かない
+    if (shadowPass && p.kind == EffectParticleKind::InkCloud) continue;
     const Vector3 half = (p.kind == EffectParticleKind::HeavySplash)
                              ? Vector3{p.scale.x, p.scale.y * 0.5f, p.scale.z}
                              : p.scale;
@@ -390,8 +447,10 @@ void EffectParticleSystem::EmitGroup_(RenderContext &ctx, DrawGroup group,
   stats_.drawn += count;
 
   const bool translucent = (group != DrawGroup::Bubble);
+  const char *translucentPso =
+      (group == DrawGroup::InkCloud) ? "object3d_inkcloud_inst" : "object3d_water_inst";
   const uint64_t sortKey =
-      translucent ? SortKey::Make(SortKey::kLayerGlass, SortKey::HashPSO("object3d_water_inst"), 0)
+      translucent ? SortKey::Make(SortKey::kLayerGlass, SortKey::HashPSO(translucentPso), 0)
                   : SortKey::Make(SortKey::kLayerOpaque, SortKey::HashPSO("object3d_inst"), 0);
 
   ctx.PushCommand3D(
@@ -428,6 +487,10 @@ void EffectParticleSystem::EmitGroup_(RenderContext &ctx, DrawGroup group,
               draw("object3d_watercolumn_inst_front", kBlendModePremultiplied);
               draw("object3d_watercolumn_inst", kBlendModePremultiplied);
               break;
+            case DrawGroup::InkCloud:
+              // 縁ほど透ける墨の煙（表面だけ。水の 2 パス描画のような裏面は要らない）
+              draw("object3d_inkcloud_inst", kBlendModePremultiplied);
+              break;
             default:
               // 泡は従来どおり不透明の object3d（DrawPrimitiveMesh はブレンド無しで描いていた）
               draw("object3d_inst", kBlendModeNone);
@@ -440,7 +503,10 @@ void EffectParticleSystem::EmitGroup_(RenderContext &ctx, DrawGroup group,
         }
         rc.SetBlendMode(prevBlend);
       },
-      translucent ? "EffectParticles(Water)" : "EffectParticles(Bubble)", -1);
+      (group == DrawGroup::InkCloud) ? "EffectParticles(InkCloud)"
+      : translucent                  ? "EffectParticles(Water)"
+                                     : "EffectParticles(Bubble)",
+      -1);
 }
 
 } // namespace RC

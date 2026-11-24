@@ -1225,6 +1225,12 @@ void SetWaterOceanParams(float detailStrength, float choppiness, float minWavele
 ///          コピーが取れない描画先（MSAA など）では自動で従来の α ブレンドに戻る。
 void SetWaterRefraction(bool enable, float strength, float edgeFade);
 
+/// @brief 水面に落ちた墨（AddInkSourceAtWorld）の色を設定する
+/// @param color rgb: 墨の色、a: 強さ（0 で墨を描かない。1 で濃い所は墨色そのものになる）
+/// @details 墨は水面の色（拡散・屈折）だけを置き換え、空の映り込みとスペキュラは残す。
+///          真っ黒にすると暗い水面に溶けて見えないので、少し紫や紺に寄せた暗色にするとよい。
+void SetWaterInkColor(const Vector4 &color);
+
 /// @brief 水面用のフレーム時間を設定する
 /// @param timeSec 累積時間（秒）
 void SetWaterTime(float timeSec);

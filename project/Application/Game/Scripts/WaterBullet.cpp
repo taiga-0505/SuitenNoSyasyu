@@ -30,6 +30,7 @@ struct UnderwaterBulletTuning {
     float minSpeed = 6.0f;        ///< この速さを下回ったら泡になって消える
     float bubbleInterval = 0.04f; ///< 水中の軌跡に泡を出す間隔（秒）
     int burstBubbles = 10;        ///< 水中で消える・当たるときに弾ける泡の数
+    float inkTrailInterval = 0.05f; ///< 墨の弾が水中で墨の煙の尾を出す間隔（秒）
 };
 
 namespace {
@@ -49,16 +50,113 @@ void SpawnBubbleParticles(const RC::Vector3& pos, int count, float baseScale) {
     }
 }
 
-/// @brief 水面に波を加える（ワールド座標 -50〜50 を水面 UV 0〜1 に変換）
-/// @param pos 波を立てる位置（ワールド座標）
-/// @param radius 波の半径（UV 単位）
+/// @brief 水面に波を加える
+/// @param pos 波を立てる位置（ワールド座標。y は見ない）
+/// @param radius 波の半径（UV 単位。0.01 = 1m）
 /// @param strength 波の強さ
+/// @details 以前は「ワールド -50〜50 = UV 0〜1」に自前で変換していたため、原点から 50m 以上
+///          離れると波が立たなかった。ハイトマップはカメラに合わせて動くので、ワールド座標で渡す。
 void AddSurfaceWave(const RC::Vector3& pos, float radius, float strength) {
-    RC::WaveSource source;
-    source.uv = RC::Vector2((pos.x / 100.0f) + 0.5f, (pos.z / 100.0f) + 0.5f);
-    source.radius = radius;
-    source.strength = strength;
-    RC::AddWaveSource(source);
+    RC::AddWaveSourceAtWorld(pos.x, pos.z, radius, strength);
+}
+
+/// @brief これより高い所で消えた弾は、水面に波・しぶき・墨を出さない（m）
+/// @details 以前は空中の鳥に当てても、真下の水面に波紋が立っていた。
+constexpr float kSurfaceEffectMaxHeight = 1.0f;
+
+/// @brief 自機の墨の色
+/// @param alpha 不透明度
+/// @return 墨の色
+/// @details 墨（青みのある黒）。以前は紫寄りにしていたが、水面では紫の影、粒では青いガラス玉に見えて
+///          墨に見えなかった。粒は不透明の通常描画（敵の墨玉と同じ）にして、黒さはこの色で出す。
+///          RailShooterController の弾の色・水面の墨の色（RC::SetWaterInkColor の既定値）とそろえる。
+RC::Vector4 InkColor(float alpha) { return {0.03f, 0.028f, 0.042f, alpha}; }
+
+/// @brief カメラにどれだけ近いと墨の演出を絞るか（m）。kNearCameraFull 以上離れていれば絞らない
+/// @details 目の前で敵に当てたとき、飛沫や煙が画面いっぱいに広がって敵も照準も見えなくなっていた。
+constexpr float kNearCameraMin = 2.0f;
+constexpr float kNearCameraFull = 8.0f;
+
+/// @brief 墨の煙（InkCloud）はカメラからこれより近い所には出さない（m）
+constexpr float kInkCloudMinCameraDistance = 4.0f;
+
+/// @brief カメラからの距離に応じた、墨の演出の強さ
+/// @param cameraDistance カメラからの距離（m）
+/// @return 0（kNearCameraMin 以下。最小限だけ出す）〜 1（kNearCameraFull 以上。そのまま出す）
+float NearCameraFactor(float cameraDistance) {
+    return std::clamp((cameraDistance - kNearCameraMin) / (kNearCameraFull - kNearCameraMin), 0.0f, 1.0f);
+}
+
+/// @brief 水しぶきの粒を出す（空中で弾けた水の弾。水面の波は立てない）
+/// @param pos 出す位置（ワールド座標）
+/// @param count 個数
+void SpawnWaterDroplets(const RC::Vector3& pos, int count) {
+    for (int i = 0; i < count; ++i) {
+        RC::EffectParticleSpawn splash;
+        splash.kind = RC::EffectParticleKind::Splash;
+        splash.position = pos;
+        splash.scale = 0.15f + (i % 4) * 0.05f;
+        const float r = 0.3f + (i % 3) * 0.15f;
+        const float g = 0.6f + (i % 2) * 0.2f;
+        splash.color = { r, g, 1.0f, 0.85f };
+        splash.impactFactor = 1.0f;
+        RC::SpawnEffectParticle(splash);
+    }
+}
+
+/// @brief 墨の飛沫を出す（空中・水面だけ。水中では出さない）
+/// @param pos 出す位置（ワールド座標）
+/// @param count 個数（0 以下なら何もしない）
+/// @param baseScale いちばん小さい粒の大きさ
+/// @param impact 勢い（初速に掛かる）
+/// @details 粒は不透明の墨（InkDrop）。水面に落ちると、落ちた所に小さな墨の点を残す（エンジン側で行う）ので、
+///          水面の墨が 1 つの丸い染みではなく、飛び散った点々になる。
+void SpawnInkDroplets(const RC::Vector3& pos, int count, float baseScale, float impact) {
+    if (pos.y < -0.05f) return;
+    for (int i = 0; i < count; ++i) {
+        RC::EffectParticleSpawn drop;
+        drop.kind = RC::EffectParticleKind::InkDrop;
+        drop.position = pos;
+        // 大小を混ぜる（小さい粒が多いほど飛び散った感じが出る）
+        drop.scale = baseScale * ((i % 5 == 0) ? 1.8f : (1.0f + (i % 3) * 0.25f));
+        drop.color = InkColor(1.0f);
+        drop.impactFactor = impact;
+        RC::SpawnEffectParticle(drop);
+    }
+}
+
+/// @brief 墨の煙を出す（水中で墨が広がる。空中でも使える）
+/// @param pos 出す位置（ワールド座標）
+/// @param count 個数（同じ場所に重ならないよう少しずつずらす）
+/// @param baseScale 出現時の大きさ
+/// @param alpha 出現時の不透明度
+/// @param grow 膨らむ倍率（EffectParticleSpawn::impactFactor）
+void SpawnInkClouds(const RC::Vector3& pos, int count, float baseScale, float alpha, float grow) {
+    for (int i = 0; i < count; ++i) {
+        const float a = static_cast<float>(i) * 2.399963f; // 黄金角で散らす
+        const float r = (i == 0) ? 0.0f : baseScale * 0.8f;
+        RC::EffectParticleSpawn cloud;
+        cloud.kind = RC::EffectParticleKind::InkCloud;
+        cloud.position = { pos.x + std::cos(a) * r, pos.y + ((i % 2) ? 0.5f : -0.5f) * r, pos.z + std::sin(a) * r };
+        // 水中で出した煙が、ずらした拍子に水面の上へ出ないようにする
+        if (pos.y < 0.0f) cloud.position.y = (std::min)(cloud.position.y, -0.15f);
+        cloud.scale = baseScale * (1.0f - 0.15f * static_cast<float>(i % 3));
+        cloud.color = InkColor(alpha);
+        cloud.impactFactor = grow;
+        RC::SpawnEffectParticle(cloud);
+    }
+}
+
+/// @brief 墨の弾が発射直後、見た目の大きさを小さい所から広げる時間（秒）
+/// @details 弾はカメラの位置から出るので、最初の数フレームは画面の真ん中を大きな玉が塞いでいた。
+constexpr float kInkGrowTime = 0.12f;
+
+/// @brief 水面に墨を落とす（波紋テクスチャの墨チャンネル。その場で滲みながら薄れていく）
+/// @param pos 落とす位置（ワールド座標。y は見ない）
+/// @param radius 半径（UV 単位。0.01 = 1m）
+/// @param amount 濃さ（1 で中心がほぼ墨色になる）
+void DropInkOnWater(const RC::Vector3& pos, float radius, float amount) {
+    RC::AddInkSourceAtWorld(pos.x, pos.z, radius, amount);
 }
 
 // ----------------------------------------------------------------------------
@@ -81,8 +179,8 @@ public:
     /// @param gravity [in,out] 重力加速度（負で下向き）
     /// @param baseSpeed [in,out] 初速。速度タグが無いときだけ弾種の既定値で上書きする
     /// @param hasSpeedTag bullet_speed タグで速度が指定されているか
-    /// @details 通常弾は何も書き換えない（以前の実装と同じ。プールで再利用された弾は
-    ///          前回の弾種の値を引き継ぐ点も含めて挙動を変えていない）。
+    /// @details 通常弾は何も書き換えない（WaterBullet の初期値 damage 1・gravity -3 のまま）。
+    ///          プールで再利用された弾は reused の処理で初期値へ戻してから呼ばれる（D-13）。
     virtual void ApplyStats(int& damage, float& gravity, float& baseSpeed, bool hasSpeedTag) const {
         (void)damage;
         (void)gravity;
@@ -130,18 +228,24 @@ public:
     ///            弾を撃つと数百個の Entity が増えて更新・描画・エディタ表示が重くなっていた）
     virtual void SpawnSurfaceEffect(const RC::Vector3& pos) const {
         AddSurfaceWave(pos, 0.05f, 0.5f);
-        const int splashCount = 12;
-        for (int i = 0; i < splashCount; ++i) {
-            RC::EffectParticleSpawn splash;
-            splash.kind = RC::EffectParticleKind::Splash;
-            splash.position = pos;
-            splash.scale = 0.15f + (i % 4) * 0.05f;
-            const float r = 0.3f + (i % 3) * 0.15f;
-            const float g = 0.6f + (i % 2) * 0.2f;
-            splash.color = { r, g, 1.0f, 0.85f };
-            splash.impactFactor = 1.0f;
-            RC::SpawnEffectParticle(splash);
-        }
+        SpawnWaterDroplets(pos, 12);
+    }
+
+    /// @brief 墨の量・大きさの倍率（弾の見た目の大きさに合わせる）
+    /// @return 倍率（通常弾 1）
+    virtual float InkScale() const { return 1.0f; }
+
+    /// @brief 墨の弾（自機の弾）が水面を打ったときの演出
+    /// @param pos 水面の位置（ワールド座標）
+    /// @param closeness カメラからの距離に応じた強さ（NearCameraFactor。0 で目の前）。※ near は Windows のマクロなので変数名に使わない
+    /// @details 小さな波と墨の飛沫に加え、水面に墨を落とす。落とした墨はその場で滲みながら薄れていく
+    ///          （RC::AddInkSourceAtWorld。水面シェーダーが墨色に塗る）。目の前では飛沫を減らし小さくする。
+    virtual void SpawnInkSurfaceEffect(const RC::Vector3& pos, float closeness) const {
+        const float s = InkScale();
+        AddSurfaceWave(pos, 0.05f * s, 0.5f * s);
+        SpawnInkDroplets(pos, static_cast<int>(std::lround(8.0f * s * (0.3f + 0.7f * closeness))),
+                         0.06f * s * (0.6f + 0.4f * closeness), 0.8f);
+        DropInkOnWater(pos, 0.008f * s, 1.2f);
     }
 
 protected:
@@ -175,6 +279,9 @@ public:
         outVelocity = { dx * baseSpeed, 1.5f, dz * baseSpeed };
         return true;
     }
+
+    /// @brief 拡散弾は弾が小さい（0.2）ので墨も少なめ
+    float InkScale() const override { return 0.75f; }
 };
 
 /// @brief 重い弾（bullet_type = 2）。高ダメージで遅く、速く落ち、着弾で水柱が立つ
@@ -196,7 +303,26 @@ public:
     /// @brief 大きく強い波と、水柱を 1 本出す（水しぶきの粒は出さない）
     void SpawnSurfaceEffect(const RC::Vector3& pos) const override {
         AddSurfaceWave(pos, 0.1f, 1.5f);
-        // 水柱：太さ 1.5 の平たい状態から一気に伸びる（旧 HeavySplash の impact_factor = 150）
+        SpawnColumn(pos);
+    }
+
+    /// @brief 重い弾は弾が大きい（0.6）ので墨も多め
+    float InkScale() const override { return 1.6f; }
+
+    /// @brief 墨の弾でも水柱は立てる（水を押し上げる勢いは同じ）。墨は大きく濃く落とす
+    /// @details 目の前（closeness が小さい）では高さ 15m 以上の水柱で前が見えなくなるので立てない
+    void SpawnInkSurfaceEffect(const RC::Vector3& pos, float closeness) const override {
+        AddSurfaceWave(pos, 0.1f, 1.5f);
+        if (closeness > 0.25f) SpawnColumn(pos);
+        SpawnInkDroplets(pos, static_cast<int>(std::lround(12.0f * (0.3f + 0.7f * closeness))),
+                         0.09f * (0.6f + 0.4f * closeness), 1.3f);
+        DropInkOnWater(pos, 0.015f, 1.5f);
+    }
+
+private:
+    /// @brief 水柱：太さ 1.5 の平たい状態から一気に伸びる（旧 HeavySplash の impact_factor = 150）
+    /// @param pos 水柱の根元（ワールド座標）
+    static void SpawnColumn(const RC::Vector3& pos) {
         RC::EffectParticleSpawn column;
         column.kind = RC::EffectParticleKind::HeavySplash;
         column.position = pos;
@@ -230,7 +356,7 @@ const BulletKind& HeavyKind() {
 
 /// @brief bullet_type タグの値から弾種を引く（Factory Method）
 /// @param tag bullet_type タグの値（0:normal / 1:spread / 2:heavy）
-/// @return 弾種。未知の値なら nullptr（呼び出し側は前回の弾種のままにする。以前の実装と同じ）
+/// @return 弾種。未知の値なら nullptr（呼び出し側は今の弾種のまま。再利用時は通常弾に戻してあるので通常弾になる）
 /// @details タグ（int）→ 振る舞いクラスへの変換をここ 1 か所に閉じ込め、
 ///          WaterBullet 本体からは弾種の番号を見えなくするために置いた。
 const BulletKind* FindBulletKind(int tag) {
@@ -274,6 +400,10 @@ public:
     /// @return 加算するなら true
     virtual bool ScoresOnHit() const = 0;
 
+    /// @brief 墨の弾か（着弾・水面・水中の演出を墨で出すか）
+    /// @return 墨なら true（false なら水の弾として水しぶき・泡を出す）
+    virtual bool IsInk() const = 0;
+
     /// @brief 当たり判定の対象か（ダメージ対象・地形・アイテム）
     /// @param other 調べる相手
     /// @return 対象なら true
@@ -303,6 +433,8 @@ public:
     }
     /// @brief 敵に当てたらスコア +1
     bool ScoresOnHit() const override { return true; }
+    /// @brief 自機（タコ）の弾は墨（T-24）
+    bool IsInk() const override { return true; }
 };
 
 /// @brief 敵の弾（"EnemyBullet" など、PlayerBullet 以外）
@@ -318,6 +450,8 @@ public:
     bool IsShootable(const Entity& self) const override { return self.GetTagInt("shootable", 0) == 1; }
     /// @brief 敵弾が当たってもスコアは増えない
     bool ScoresOnHit() const override { return false; }
+    /// @brief 敵の弾（船の砲弾など）は水の弾のまま
+    bool IsInk() const override { return false; }
 };
 
 /// @brief 弾の陣営を名前から決める
@@ -338,6 +472,9 @@ const BulletFaction& FactionOf(const Entity* self) {
 ///          自機弾は水面を越えても消えず、しぶきを出して水中（または水上）へ進む。空中から飛び込んだ弾は
 ///          抵抗で減速し、泡の軌跡を残して、遅くなったら泡になって消える（水中で撃った弾は減速しない）。
 ///          敵弾は従来どおり水面で消える。
+///          自機の弾はタコの墨（T-24）で、着弾・着水・水中の演出を墨で出す（BulletFaction::IsInk）。
+///          水面を打つと水面に墨が落ち、その場で滲みながら薄れていく（RC::AddInkSourceAtWorld）。
+///          敵の弾は水の弾のまま。
 ///          弾種ごとの違いは BulletKind、撃ち手の陣営ごとの違いは BulletFaction に分けている。
 ///
 ///          生存中 / 消滅済み・空中 / 水中は bool フラグのままにしている（State パターンにしない）。
@@ -346,14 +483,24 @@ const BulletFaction& FactionOf(const Entity* self) {
 ///          空中 / 水中も物理の係数が変わるだけなので、状態クラスに分けると却って追いにくくなるため。
 class WaterBullet : public ScriptableEntity {
 protected:
-    /// @brief 弾を消滅させる（現在位置に水しぶきを出して非アクティブ化）
+    /// @brief 弾が消えた理由（消えるときの演出を変える）
+    enum class DeathCause {
+        Fade,     ///< 寿命切れ・水中で止まった（外れ）
+        Terrain,  ///< 地形に当たった（外れ）
+        Target,   ///< ダメージ対象（敵 / 自機）に当たった
+        Item,     ///< 宝箱などのアイテムに当たった
+        ShotDown, ///< 自機の弾に撃ち落とされた（敵弾）
+    };
+
+    /// @brief 弾を消滅させる（現在位置に演出を出して非アクティブ化）
+    /// @param cause 消えた理由（命中か外れかで演出を変える）
     /// @note 二重に呼ばれても 1 回だけ処理する
-    void Die() {
+    void Die(DeathCause cause) {
         if (isDead_) return;
         isDead_ = true;
         if (Entity* self = GetEntity()) {
             if (auto* tr = self->GetComponent<TransformComponent>()) {
-                SpawnSplash(tr->position);
+                SpawnSplash(tr->position, cause);
             }
             // エンティティを破棄せず、非アクティブにしてプール（再利用）する
             self->SetActive(false);
@@ -387,6 +534,13 @@ protected:
             velocity_ = {0.0f, 0.0f, 0.0f};
             inWater_ = false;
             bubbleTimer_ = 0.0f;
+            trailTimer_ = 0.0f;
+            // D-13: 弾種で書き換わる値も初期値へ戻す。以前は戻しておらず、重い弾を一度プールへ入れると
+            // そのスロットは以後ずっと damage 3・gravity -6 のまま（通常弾として撃っても）だった
+            damage_ = kDefaultDamage;
+            gravity_ = kDefaultGravity;
+            lifetime_ = kDefaultLifetime;
+            kind_ = &NormalKind();
             self->ClearTag("reused");
         }
 
@@ -407,10 +561,18 @@ protected:
             // 減速するのは「空中から水に飛び込んだ」弾だけ（水中戦の射程を変えないため）
             inWater_ = false;
             bubbleTimer_ = 0.0f;
+            baseScale_ = tr->scale; // 撃ち手が決めた見た目の大きさ（墨の弾はここまで広げる）
             initialized_ = true;
         }
 
         const BulletFaction& faction = FactionOf(self);
+
+        // 墨の弾は発射直後だけ小さく出し、kInkGrowTime かけて元の大きさへ広げる。
+        // 弾はカメラの位置から出るので、最初から元の大きさだと画面の真ん中を黒い玉が塞ぐ
+        if (faction.IsInk()) {
+            const float g = (std::min)(1.0f, 0.2f + 0.8f * (elapsed_ / kInkGrowTime));
+            tr->scale = {baseScale_.x * g, baseScale_.y * g, baseScale_.z * g};
+        }
 
         // === 物理（重力を加えて移動。水中では抵抗で減速し、重力も弱まる） ===
         RC::Vector3 oldPos = tr->position;
@@ -536,7 +698,7 @@ protected:
         // 寿命切れで消滅
         elapsed_ += deltaTime;
         if (elapsed_ >= lifetime_) {
-            Die();
+            Die(DeathCause::Fade);
             return;
         }
 
@@ -544,33 +706,51 @@ protected:
         const bool crossedDown = (oldPos.y > 0.0f && tr->position.y <= 0.0f);
         const bool crossedUp = (oldPos.y < 0.0f && tr->position.y >= 0.0f);
         if (crossedDown || crossedUp) {
-            if (!faction.PassesWaterSurface()) {
-                // 敵弾は従来どおり着水で消滅（砲弾が水面で弾ける演出を残す）
-                Die();
-                return;
-            }
-            // 自機弾は水面を越えた点でしぶきを上げ、そのまま進む
+            // 水面を越えた点
             const float denom = oldPos.y - tr->position.y;
             const float t = (std::abs(denom) > 1e-6f) ? (oldPos.y / denom) : 0.0f;
             const RC::Vector3 surfacePos = {
                 oldPos.x + (tr->position.x - oldPos.x) * t,
                 0.0f,
                 oldPos.z + (tr->position.z - oldPos.z) * t};
+            if (!faction.PassesWaterSurface()) {
+                // 敵弾は従来どおり着水で消滅（砲弾が水面で弾ける演出を残す）。
+                // 以前は水面より下（y < 0）の位置のまま消していたので、水中の扱いになって泡しか出ていなかった。
+                // 水面の点へ戻してから消し、水面の波・しぶきを出す
+                tr->position = surfacePos;
+                Die(DeathCause::Fade);
+                return;
+            }
+            // 自機弾は水面を越えた点でしぶきを上げ、そのまま進む
             SpawnSurfaceSplash(surfacePos);
             inWater_ = crossedDown;
             if (inWater_) SpawnBubbleParticles(surfacePos, 3, 0.04f); // 潜り込んだ瞬間の泡
         }
 
-        // 飛び込んだ弾：泡の軌跡を残し、遅くなったら泡になって消える
+        // 墨の弾は水中にいる間、墨の煙の尾を引く（水中で撃った弾も、飛び込んだ弾も）。
+        // 水中で撃つと弾はカメラの位置から出るので、カメラのすぐ前では出さない（画面の真ん中が煙で塞がる）
+        if (faction.IsInk() && tr->position.y < 0.0f) {
+            trailTimer_ += deltaTime;
+            if (trailTimer_ >= s_underwater.inkTrailInterval) {
+                trailTimer_ = 0.0f;
+                if (CameraDistance(tr->position) >= kInkCloudMinCameraDistance) {
+                    SpawnInkClouds(tr->position, 1, 0.12f * kind_->InkScale(), 0.5f, 1.0f);
+                }
+            }
+        }
+
+        // 飛び込んだ弾：軌跡を残し（水の弾は泡。墨の弾は上の墨の尾）、遅くなったら消える
         if (inWater_) {
-            bubbleTimer_ += deltaTime;
-            if (bubbleTimer_ >= s_underwater.bubbleInterval) {
-                bubbleTimer_ = 0.0f;
-                SpawnBubbleParticles(tr->position, 1, 0.05f);
+            if (!faction.IsInk()) {
+                bubbleTimer_ += deltaTime;
+                if (bubbleTimer_ >= s_underwater.bubbleInterval) {
+                    bubbleTimer_ = 0.0f;
+                    SpawnBubbleParticles(tr->position, 1, 0.05f);
+                }
             }
             const float speedSq = velocity_.x * velocity_.x + velocity_.y * velocity_.y + velocity_.z * velocity_.z;
             if (speedSq < s_underwater.minSpeed * s_underwater.minSpeed) {
-                Die();
+                Die(DeathCause::Fade);
                 return;
             }
         }
@@ -586,6 +766,7 @@ public:
         ImGui::DragFloat("Min Speed##WaterBullet", &s_underwater.minSpeed, 0.1f, 0.0f, 40.0f);
         ImGui::DragFloat("Bubble Interval##WaterBullet", &s_underwater.bubbleInterval, 0.005f, 0.005f, 1.0f);
         ImGui::DragInt("Burst Bubbles##WaterBullet", &s_underwater.burstBubbles, 1.0f, 0, 40);
+        ImGui::DragFloat("Ink Trail Interval##WaterBullet", &s_underwater.inkTrailInterval, 0.005f, 0.01f, 1.0f);
         ImGui::Text("InWater: %s", inWater_ ? "yes" : "no");
 #endif
     }
@@ -616,7 +797,7 @@ public:
         if (hitItem) {
             int pendingDmg = other->GetTagInt("pending_damage", 0);
             other->SetTag("pending_damage", pendingDmg + damage_);
-            Die();
+            Die(DeathCause::Item);
         } else if (hitTarget) {
             // 相手の pending_damage に加算（実際の減算は相手側スクリプトが行う）
             int pendingDmg = other->GetTagInt("pending_damage", 0);
@@ -641,20 +822,24 @@ public:
                     cam->SetTag("score_add", scoreAdd + 1);
                 }
             }
-            Die();
+            Die(DeathCause::Target);
         } else if (hitTerrain) {
             // 地形に当たって消滅（エフェクトは Die() 内で出す）
-            Die();
+            Die(DeathCause::Terrain);
         }
     }
 
 private:
     static inline UnderwaterBulletTuning s_underwater; ///< 水中の挙動の調整値（全自機弾で共通。Inspector から調整）
 
+    static constexpr float kDefaultLifetime = 3.0f; ///< 寿命の初期値（秒）
+    static constexpr float kDefaultGravity = -3.0f; ///< 重力加速度の初期値（通常弾）
+    static constexpr int kDefaultDamage = 1;        ///< ダメージの初期値（通常弾）
+
     RC::Vector3 velocity_ = { 0.0f, 0.0f, 0.0f }; ///< 現在の速度（m/s）
-    float lifetime_ = 3.0f;                        ///< 寿命（秒）。bullet_lifetime タグで上書き
-    float gravity_ = -3.0f;                        ///< 重力加速度（弾種で変わる）
-    int damage_ = 1;                               ///< 命中で与えるダメージ（弾種で変わる）
+    float lifetime_ = kDefaultLifetime;            ///< 寿命（秒）。bullet_lifetime タグで上書き
+    float gravity_ = kDefaultGravity;              ///< 重力加速度（弾種で変わる）
+    int damage_ = kDefaultDamage;                  ///< 命中で与えるダメージ（弾種で変わる）
     bool initialized_ = false;                     ///< タグから初期化済みか
     const BulletKind* kind_ = &NormalKind();       ///< 弾種（bullet_type タグから決まる振る舞い）
     bool isDead_ = false;                          ///< 消滅済みか（プールへ戻した）
@@ -662,6 +847,8 @@ private:
     bool markedForDestroy_ = false;
     bool inWater_ = false;      ///< 空中から水に飛び込んで減速中か（自機弾のみ。水中で撃った弾は false のまま）
     float bubbleTimer_ = 0.0f;  ///< 水中の泡の軌跡を出すためのタイマー
+    float trailTimer_ = 0.0f;   ///< 墨の弾が水中で墨の尾を出すためのタイマー
+    RC::Vector3 baseScale_ = {1.0f, 1.0f, 1.0f}; ///< 撃ち手が決めた見た目の大きさ（墨の弾の広がり先）
     std::weak_ptr<Entity> cachedCamera_;
 
     /// @brief エンティティ名とタグから弾種・速度・寿命・飛行方向を決める（初回更新時）
@@ -669,7 +856,7 @@ private:
     /// @param myPos 弾の現在位置（狙いの基準）
     void InitializeFromTags(Entity& self, const RC::Vector3& myPos) {
         std::string name = self.GetName();
-        // 弾種（0:normal / 1:spread / 2:heavy）。未知の値なら前回の弾種のまま
+        // 弾種（0:normal / 1:spread / 2:heavy）。未知の値なら今の弾種（新規・再利用とも通常弾）のまま
         if (const BulletKind* kind = FindBulletKind(self.GetTagInt("bullet_type", 0))) {
             kind_ = kind;
         }
@@ -745,7 +932,7 @@ private:
             if (auto* tr = GetComponent<TransformComponent>()) {
                 tr->position = { from.x + seg.x * t, from.y + seg.y * t, from.z + seg.z * t };
             }
-            Die();
+            Die(DeathCause::ShotDown);
             return true;
         }
         return false;
@@ -818,25 +1005,107 @@ private:
     }
 
     /// @brief 消滅位置にエフェクトを出す
-    /// @details 水中なら泡がまとめて弾けるだけ（水面の波・しぶきは出さない）。
-    ///          水上なら水面の波と水しぶき（heavy は水柱）に泡を添える。数は弾種が決める。
+    /// @details 消えた高さで 3 通りに分ける。
+    ///            水中        : 水の弾は泡がまとめて弾ける。墨の弾は墨の煙が広がる（命中なら多め）
+    ///            水面の近く  : 水面の波としぶき（heavy は水柱）。墨の弾は水面に墨も落とす
+    ///            空中（kSurfaceEffectMaxHeight より上）: 飛沫だけ。以前は空中で当てても真下の水面に
+    ///                          波紋が立っていたので、水面には何も出さない
+    ///          墨の弾は命中（Target）とそれ以外で量を変え、当たったかどうかが見て分かるようにする。
+    ///          空中で飛び散った墨の粒は、水面に落ちた所に墨の点を残す（エンジンの InkDrop が行う）。
+    ///
+    ///          目の前（カメラの近く）では量と大きさを絞る（NearCameraFactor）。以前は目の前の敵に当てると
+    ///          大きな球が画面を覆い、敵も照準も見えなくなっていた。空中では煙の球はそもそも出さない
+    ///          （タコの墨玉を撃ち落としたときの演出 SpawnInkBurst で一度同じ問題を踏んで、飛沫だけにしている）。
     /// @param pos 消滅位置（ワールド座標）
-    void SpawnSplash(const RC::Vector3& pos) {
+    /// @param cause 消えた理由
+    void SpawnSplash(const RC::Vector3& pos, DeathCause cause) {
+        const bool ink = FactionOf(GetEntity()).IsInk();
+        const bool hit = (cause == DeathCause::Target);
+        const float s = kind_->InkScale();
+        const float camDist = ink ? CameraDistance(pos) : 1.0e6f;
+        const float closeness = NearCameraFactor(camDist);
+
+        // --- 水中 ---
         if (pos.y < 0.0f) {
-            SpawnBubbleParticles(pos, s_underwater.burstBubbles * kind_->BurstBubbleMultiplier(), 0.06f);
+            if (ink) {
+                if (camDist >= kInkCloudMinCameraDistance) {
+                    SpawnInkClouds(pos, hit ? 4 : 2, 0.22f * s * (0.5f + 0.5f * closeness), hit ? 0.7f : 0.5f,
+                                   hit ? 1.2f : 0.8f);
+                }
+                SpawnBubbleParticles(pos, s_underwater.burstBubbles * kind_->BurstBubbleMultiplier() / 3, 0.04f);
+            } else {
+                SpawnBubbleParticles(pos, s_underwater.burstBubbles * kind_->BurstBubbleMultiplier(), 0.06f);
+            }
             return;
         }
+
+        // --- 空中 ---
+        if (pos.y > kSurfaceEffectMaxHeight) {
+            if (ink) {
+                const float count = (hit ? 14.0f : 6.0f) * s * (0.3f + 0.7f * closeness);
+                SpawnInkDroplets(pos, static_cast<int>(std::lround(count)), 0.06f * s * (0.6f + 0.4f * closeness),
+                                 hit ? 1.0f : 0.6f);
+            } else {
+                SpawnWaterDroplets(pos, 8);
+            }
+            return;
+        }
+
+        // --- 水面の近く ---
         SpawnSurfaceSplash(pos);
-        SpawnBubbleParticles(pos, kind_->SurfaceBubbleCount(), 0.05f);
+        if (ink) {
+            if (hit) { // 命中の上乗せ
+                SpawnInkDroplets(pos, static_cast<int>(std::lround(8.0f * s * (0.3f + 0.7f * closeness))),
+                                 0.06f * s * (0.6f + 0.4f * closeness), 1.0f);
+            }
+        } else {
+            SpawnBubbleParticles(pos, kind_->SurfaceBubbleCount(), 0.05f);
+        }
     }
 
     /// @brief 水面の波と水しぶき（heavy は水柱）を出す（泡は出さない）
     /// @param pos 出す位置（ワールド座標）
-    /// @details 波・しぶきの出し方は弾種（BulletKind::SpawnSurfaceEffect）に任せる。
+    /// @details 波・しぶきの出し方は弾種（BulletKind）に任せる。墨の弾は水面に墨も落とす。
     void SpawnSurfaceSplash(const RC::Vector3& pos) {
         Scene* scene = GetScene();
         if (!scene) return;
-        kind_->SpawnSurfaceEffect(pos);
+        if (FactionOf(GetEntity()).IsInk()) {
+            kind_->SpawnInkSurfaceEffect(pos, NearCameraFactor(CameraDistance(pos)));
+        } else {
+            kind_->SpawnSurfaceEffect(pos);
+        }
+    }
+
+    /// @brief カメラ（自機）のエンティティを取得する（見つけたらキャッシュする）
+    /// @return カメラ。見つからなければ nullptr
+    std::shared_ptr<Entity> FindCamera() {
+        std::shared_ptr<Entity> cam = cachedCamera_.lock();
+        if (cam && !cam->IsPendingDestroy() && cam->IsActive()) return cam;
+        cam = nullptr;
+        if (Scene* scene = GetScene()) {
+            for (auto& pe : scene->GetEntities()) {
+                if (pe && pe->HasComponent<CameraComponent>()) {
+                    cam = pe;
+                    cachedCamera_ = pe;
+                    break;
+                }
+            }
+        }
+        return cam;
+    }
+
+    /// @brief カメラから pos までの距離
+    /// @param pos 調べる位置（ワールド座標）
+    /// @return 距離（m）。カメラが見つからなければ十分大きな値（演出を絞らない）
+    float CameraDistance(const RC::Vector3& pos) {
+        std::shared_ptr<Entity> cam = FindCamera();
+        if (!cam) return 1.0e6f;
+        auto* ctr = cam->GetComponent<TransformComponent>();
+        if (!ctr) return 1.0e6f;
+        const float dx = pos.x - ctr->position.x;
+        const float dy = pos.y - ctr->position.y;
+        const float dz = pos.z - ctr->position.z;
+        return std::sqrt(dx * dx + dy * dy + dz * dz);
     }
 };
 

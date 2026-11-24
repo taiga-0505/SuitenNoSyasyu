@@ -78,6 +78,8 @@ cbuffer WaterParams : register(b6)
     float4 gOceanParams2;  ///< x: 透明度（m）, y: 遠景フェード距離（m）, z: 法線マップのタイルサイズ（m。0 = 従来 UV）, w: 白波の量
     float4 gSssColor;      ///< rgb: 波頭を透ける光の色, a: 強さ
     float4 gRefractParams; ///< x: 屈折が有効（1/0）, y: 歪みの強さ（画面 UV）, z: 交差部のフェード幅（m）
+    float4 gWaveWindow;    ///< 波紋ハイトマップの範囲。xy: 中心のワールド XZ, z: 一辺（m）
+    float4 gInkColor;      ///< 水面の墨の色（rgb）と強さ（a。0 で描かない）
 };
 
 #include "OceanWaves.hlsli"
@@ -88,7 +90,7 @@ Texture2D<float4> gTexture : register(t0);
 // t1: 環境キューブマップ（反射用）
 TextureCube<float4> gEnvironmentTexture : register(t1);
 
-// t4: インタラクティブ波紋ハイトマップ（r: 高さ, g: 引き波の泡, b: 波頭の白波）
+// t4: インタラクティブ波紋ハイトマップ（r: 高さ, g: 引き波の泡, b: 波頭の白波, a: 墨）
 Texture2D<float4> gInteractiveWave : register(t4);
 
 // t5: 泡（フォーム）用の深度テクスチャ
@@ -397,22 +399,24 @@ PixelShaderOutput main(VertexShaderOutput input)
     // 跳ね返り方向（沖方向）に法線を傾ける
     float3 bounceNormal = depthGradient * returnSlope;
 
-    // 波紋ハイトマップの法線計算
-    float2 waveUV = (input.worldPosition.xz / 100.0f) + 0.5f;
+    // 波紋ハイトマップの法線計算（ハイトマップはカメラに合わせて動く窓 gWaveWindow を覆う）
+    float2 waveUV = WaveWindowUV(input.worldPosition.xz, gWaveWindow);
     float texelSize = 1.0f / 256.0f;
     float hL = gInteractiveWave.Sample(gSamplerClamp, waveUV + float2(-texelSize, 0)).r;
     float hR = gInteractiveWave.Sample(gSamplerClamp, waveUV + float2(texelSize, 0)).r;
     float hD = gInteractiveWave.Sample(gSamplerClamp, waveUV + float2(0, -texelSize)).r;
     float hU = gInteractiveWave.Sample(gSamplerClamp, waveUV + float2(0, texelSize)).r;
-    // r: 中心の高さ / g: 引き波 / b: 波頭。範囲外（UV が 0〜1 の外）はクランプで端の値になるので 0 に落とす
+    // r: 中心の高さ / g: 引き波 / b: 波頭 / a: 墨。
+    // 範囲外（UV が 0〜1 の外）はクランプで端の値になるので 0 に落とし、窓の縁ではぼかして切れ目を消す
     float4 waveCenter = gInteractiveWave.Sample(gSamplerClamp, waveUV);
-    float inWaveArea = (all(waveUV > 0.0) && all(waveUV < 1.0)) ? 1.0 : 0.0;
+    float inWaveArea = WaveWindowEdgeFade(waveUV);
     float2 foamSample = waveCenter.gb * inWaveArea;
     float wakeFoam  = foamSample.x;
     float crestFoam = foamSample.y;
+    float inkAmount = waveCenter.a * inWaveArea;
 
     // 波紋の法線（光の計算用に傾きを強める。ShapeRippleSlope 参照）と、集光に使う曲率（ラプラシアン）
-    float texelWorld = 100.0f * texelSize;
+    float texelWorld = gWaveWindow.z * texelSize;
     float2 rippleSlope = float2(hL - hR, hD - hU) / (2.0f * texelWorld) * inWaveArea;
     rippleSlope = ShapeRippleSlope(rippleSlope);
     float3 interactiveNormal = normalize(float3(rippleSlope.x, 1.0f, rippleSlope.y));
@@ -641,6 +645,51 @@ PixelShaderOutput main(VertexShaderOutput input)
         finalColor = sceneCol * transmit * T + finalColor * (1.0 - T);
     }
 
+    // =========================
+    // 墨（波紋テクスチャの A チャンネル）
+    // =========================
+    // 水面に落ちた墨は表面に浮いて広がるので、水の色（拡散・屈折で透けた水中）だけを変え、
+    // このあと足す空の映り込み・スペキュラは残す（墨の膜も光を照り返す）。
+    //
+    // 以前は「濃さ × 低周波ノイズ」を 1 段のしきい値で紫色に塗っていたため、なめらかな紫の影に見えて
+    // 墨に見えなかった。墨流しのように
+    //   - 芯 : 濃い所。青みのある黒（墨色）でほぼ塗りつぶす
+    //   - 筋 : 薄く滲んだ所。水の色を暗くするだけ（灰色の濃淡）。ドメインワープで渦を巻いた筋にする
+    // の 2 段に分ける。ノイズは法線マップの成分を借用し（泡の lace と同じ）、ゆっくり流して渦を動かす。
+    float inkT = 0.0;
+    if (inkAmount > 0.001 && gInkColor.a > 0.0)
+    {
+        float2 ip = input.worldPosition.xz;
+        // ドメインワープ：座標を低周波ノイズでずらしてから細かいノイズを引くと、筋が渦を巻いて流れる
+        float2 warp = float2(gTexture.Sample(gSampler, ip * 0.11 + float2(gTime * 0.010, 0.37)).r,
+                             gTexture.Sample(gSampler, ip * 0.11 + float2(0.71, -gTime * 0.008)).g) - 0.5;
+        float2 q = ip + warp * 9.0;
+        float m1 = gTexture.Sample(gSampler, q * 0.35 + float2(gTime * 0.004, 0.0)).r;
+        float m2 = gTexture.Sample(gSampler, q * 0.9 + float2(0.0, -gTime * 0.006)).g;
+        float marble = saturate(((m1 * 0.6 + m2 * 0.4) - 0.5) * 3.0 + 0.5); // 0〜1 に引き伸ばす
+
+        // 筋（墨流しの縞）：濃さの等高線をノイズでゆがめた細い帯。薄い所ほど縞が目立つ
+        float bands = 1.0 - abs(frac(inkAmount * 2.5 + marble * 1.3) * 2.0 - 1.0); // 0〜1 の三角波
+
+        float d = inkAmount * lerp(0.35, 1.65, marble);
+        float coreT = smoothstep(0.45, 0.95, d);                                  // 芯
+        float wispT = smoothstep(0.03, 0.4, d) * lerp(0.35, 1.0, bands);         // 滲んだ筋
+        float strength = saturate(gInkColor.a);
+        coreT *= strength;
+        wispT *= strength;
+
+        // 筋：水の色を暗く沈める（色を置き換えないので、灰色がかった滲みになる）
+        finalColor *= lerp(1.0, 0.4, wispT);
+        // 芯：墨色（光は受ける。日陰では暗く）
+        float3 inkLit = gInkColor.rgb * lightColor * lerp(0.6, 1.0, diffuse) * shadowTint;
+        finalColor = lerp(finalColor, inkLit, coreT);
+        inkT = max(coreT, wispT * 0.6);
+
+        // 墨の上では泡を薄くする（白い泡が墨を突き抜けて見えないように）
+        wakeFoam  *= 1.0 - inkT * 0.8;
+        crestFoam *= 1.0 - inkT * 0.5;
+    }
+
     finalColor = lerp(finalColor, envColor.rgb, fresnel * gMaterial.environmentCoefficient);
     finalColor += gSssColor.rgb * lightColor * sss * (1.0 - fresnel);
     finalColor += lightColor * specular;
@@ -745,7 +794,8 @@ PixelShaderOutput main(VertexShaderOutput input)
     // 泡は不透明（浅瀬で透けている所でも白く乗る）
     // 屈折ありのときは自前で水中を合成済みなので不透明。物体との交差部だけ α でぼかしてクリッピングの線を消す
     float baseAlpha = refractionOn ? saturate(depthDiff / max(gRefractParams.z, 0.001)) : waterColor.a;
-    output.color = float4(finalColor, lerp(baseAlpha, 1.0, max(max(foamMask, milkyT * 0.4), whitecap)));
+    // 墨も水面に浮いた不透明な膜なので、濃い所は透かさない
+    output.color = float4(finalColor, lerp(baseAlpha, 1.0, max(max(max(foamMask, milkyT * 0.4), whitecap), inkT * 0.85)));
 
     return output;
 }
