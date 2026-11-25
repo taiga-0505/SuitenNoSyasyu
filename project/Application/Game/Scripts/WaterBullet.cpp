@@ -266,17 +266,14 @@ public:
         if (!hasSpeedTag) baseSpeed = 35.0f;
     }
 
-    /// @brief 自機の拡散弾は向きの水平成分だけを使い、上向き 1.5 を与える
-    /// @details 敵弾の拡散は向きを決めない（以前の実装どおり。ShipEnemyScript の D-13 参照）。
+    /// @brief 自機の拡散弾はレティクルの向き（dir_x/y/z）へ飛ばし、山なりにするため上向き 1.5 を足す
+    /// @details 以前は向きの水平成分だけを使い縦の初速を 1.5 に固定していたため、
+    ///          照準を上下に動かしても拡散弾は常に同じ高さへ飛んでいた。
+    ///          敵弾の拡散は向きを決めない（以前の実装どおり。ShipEnemyScript の D-13 参照）。
     bool AimFromTags(const Entity& self, bool isPlayerBullet, float baseSpeed, RC::Vector3& outVelocity) const override {
         if (!isPlayerBullet) return false;
-        float dx = static_cast<float>(self.GetTagInt("dir_x", 0)) / 1000.0f;
-        float dz = static_cast<float>(self.GetTagInt("dir_z", 1000)) / 1000.0f;
-        // 念のため正規化
-        float len = std::sqrt(dx * dx + dz * dz);
-        if (len > 0.01f) { dx /= len; dz /= len; }
-        else { dx = 0.0f; dz = 1.0f; }
-        outVelocity = { dx * baseSpeed, 1.5f, dz * baseSpeed };
+        if (!BulletKind::AimFromTags(self, isPlayerBullet, baseSpeed, outVelocity)) return false;
+        outVelocity.y += 1.5f;
         return true;
     }
 
