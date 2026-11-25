@@ -137,7 +137,7 @@ public:
   /// @param cam Camera エンティティ
   static void ClearTags(Entity &cam) {
     for (const char *k : {"demo_invincible", "demo_look", "demo_look_yaw_mrad", "demo_look_pitch_mrad", "demo_fire",
-                          "demo_rail_jump", "demo_rail_hold", "demo_skip_waves"}) {
+                          "demo_rail_jump", "demo_rail_hold", "demo_skip_waves", "demo_weapon"}) {
       cam.ClearTag(k);
     }
   }

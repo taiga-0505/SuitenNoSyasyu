@@ -69,6 +69,8 @@
 ///       （game_over → 沈む → "gameover" で Result へ）。サメはカメラに食らいついたまま一緒に沈む。
 ///     Mode::Clear: 序盤を少し遊んで見せ、暗転で終盤へ飛び、正面に出るサメを撃ち倒してクリアする
 ///       （ClearRunDemo。暗転の幕はこのスクリプトの OnOverlayRender で描く）。
+///     Mode::Effects: レールを出発点で止め、エフェクトの見せ場を順に流す（EffectsShowcaseDemo）。
+///       見せ終わって暗転しきったら、遷移表のきっかけ kEffectsExitTrigger（"demo_end"）で Select へ戻る。
 ///
 ///   JSON (scriptDataList):
 ///     "enabled" / "delay" / "fallTime" / "sinkTime" / "depth" / "lookUpPitch" / "tiltTime" /
@@ -152,6 +154,7 @@ protected:
     screenFx.Clear(nullptr); // 状態だけ初期化（PostProcess はシーン切り替えで片付いている）
     if (Entity *self = GetEntity()) self->ClearTag(kOwnerTag); // 前回のプレイで保存された分を消す
     stageDemo_->Reset(GetEntity());                            // 見せ用デモの状態と、前回残ったデモのタグ
+    demoExitRequested_ = false;
     if (enabled && bubbles) bubbles_.Spawn(GetScene(), "DeathBubbles");
     if (enabled && breath) breath_.Spawn(GetScene(), "DeathBreath");
   }
@@ -174,6 +177,11 @@ protected:
     frame.outroStarted = !fsm_.IsIn<IdleState>();
     frame.dt = dt;
     stageDemo_->Update(frame);
+    // 見せ終わったデモ（エフェクト）は、暗転しきったところで遷移表のきっかけを引いて抜ける（通るまで毎フレーム試す）
+    if (stageDemo_->WantsExit() && !demoExitRequested_) {
+      demoExitRequested_ = RequestTransition(TransitionDemo::kEffectsExitTrigger);
+      if (demoExitRequested_) Log::Print("[DeathSinkScript] demo finished, leaving");
+    }
   }
 
   /// @brief 瞼を描く（GAME OVER の文字より手前。スクリプト順で RailShooterController の後に呼ばれる）
@@ -424,6 +432,7 @@ private:
   float requestT_ = 0.0f;    ///< 遷移の要求を出し始めてからの経過（要求が通らないときの保険用）
   /// @brief 見せ用デモ（ステージ側）。種類は Factory Method で決め、ここでは基底の参照として扱う
   std::unique_ptr<TransitionDemo::StageDemo> stageDemo_ = TransitionDemo::CreateStageDemo();
+  bool demoExitRequested_ = false; ///< 見せ終わったデモの遷移要求が通ったか
   std::string resultTarget_;    ///< 遷移表で引いた行き先（Done に入ってから 1 回だけ引く）
   std::string resultTransition_; ///< 遷移表で引いた演出
   WaterCameraFx::Bubbles bubbles_;

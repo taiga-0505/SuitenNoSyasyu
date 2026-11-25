@@ -51,6 +51,13 @@
       "note": "ポーズ「セレクトへ」（画面を深海色へ沈めてから遷移し、セレクトは深海から浮上）"
     },
     {
+      "from": "Stage*",
+      "trigger": "demo_end",
+      "to": "Select",
+      "transition": "dive",
+      "note": "見せ用デモ（エフェクト）を見せ終わった（EffectsShowcase が深海色へ暗転してから遷移し、セレクトは深海から浮上）"
+    },
+    {
       "from": "Result",
       "trigger": "next",
       "to": "$nextStage",

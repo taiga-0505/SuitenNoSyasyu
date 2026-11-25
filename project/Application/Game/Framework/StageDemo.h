@@ -6,6 +6,7 @@
 #include "Game/Framework/TransitionDemo.h"
 #include "Game/Framework/ClearRunDemo.h"
 #include "Game/Framework/SharkFrenzyDemo.h"
+#include "Game/Framework/EffectsShowcaseDemo.h"
 #include "Game/Framework/WaterCameraFx.h"
 
 #include <memory>
@@ -19,8 +20,9 @@
 //   デモの種類ごとに振る舞いが丸ごと違うので、「ステージ側のデモ」という基底クラス StageDemo を作り、
 //     ClearStageDemo    : 暗転で終盤へ飛び、サメを倒してクリア（ClearRun）
 //     GameOverStageDemo : サメの群れに食われて力尽きる（SharkFrenzy）
+//     EffectsStageDemo  : パーティクル・エフェクトの見せ場を順に流し、暗転して Select へ戻る（EffectsShowcase）
 //     NoStageDemo       : デモを流さない（TransitionDemo::kEnabled が false）
-//   の 3 つに分けた（ポリモーフィズム）。DeathSinkScript は StageDemo の参照経由で呼ぶだけで、
+//   に分けた（ポリモーフィズム）。DeathSinkScript は StageDemo の参照経由で呼ぶだけで、
 //   どのデモかを知らない。
 //
 //   どれを作るかは CreateStageDemo()（Factory Method）1 か所だけで決める。
@@ -61,6 +63,12 @@ public:
   /// @brief 画面全体に敷く暗転の濃さ（暗転を使わないデモは 0）
   /// @return 0〜1
   virtual float FadeAlpha() const { return 0.0f; }
+
+  /// @brief 見せ終わってシーンを抜けたいか
+  /// @details true になったら、呼び出し側が遷移表のきっかけ kEffectsExitTrigger で遷移を要求する。
+  ///          クリア・力尽きるデモはゲーム本来の決着で抜けるので、既定は false。
+  /// @return 抜けたいなら true
+  virtual bool WantsExit() const { return false; }
 
   /// @brief デモの名前（インスペクタ・ログ表示用）
   /// @return 名前の文字列リテラル
@@ -188,6 +196,40 @@ private:
   bool waveSeen_ = false;   ///< 最初のウェーブの開始を見たか
 };
 
+/// @brief レールを出発点で止め、パーティクル・エフェクトの見せ場を順に流すデモ（Mode::Effects）
+/// @details 見せ終わると深海色へ暗転し、WantsExit() で Select へ戻りたいと伝える。
+class EffectsStageDemo final : public StageDemo {
+public:
+  /// @brief EffectsShowcase の状態とタグを初期化する
+  /// @param cam Camera エンティティ（nullptr なら状態だけ初期化）
+  void Reset(Entity *cam) override { show_.Reset(cam); }
+
+  /// @brief 再生中だけ見せ場を進める（編集モードでは敵を作らない）
+  /// @param f このフレームの入力
+  void Update(const StageDemoFrame &f) override {
+    if (!f.scriptEnabled || !f.ctx || !f.ctx->isPlaying()) return;
+    show_.Update(f.scene, f.ctx, *f.cam, *f.camTr, WaterCameraFx::FindWaterY(f.scene), f.dt);
+  }
+
+  /// @brief タグを消し、出した敵などを片付ける
+  /// @param cam Camera エンティティ（nullptr ならタグは触らない）
+  void End(Entity *cam) override { show_.End(cam); }
+
+  /// @brief 暗転の濃さ
+  /// @return 0〜1
+  float FadeAlpha() const override { return show_.FadeAlpha(); }
+
+  /// @brief 見せ終わってシーンを抜けたいか
+  /// @return 抜けたいなら true
+  bool WantsExit() const override { return show_.WantsExit(); }
+
+  /// @brief デモの名前
+  const char *Name() const override { return "effects"; }
+
+private:
+  EffectsShowcase show_; ///< 見せ場の進行
+};
+
 /// @brief 今のデモ設定（kEnabled / kMode）に合ったステージ側のデモを作る（Factory Method）
 /// @details Mode による分岐はここ 1 か所だけ。呼び出し側は StageDemo の参照で扱うので、
 ///          デモの種類を増やしても DeathSinkScript は変更しなくてよい。
@@ -197,6 +239,8 @@ inline std::unique_ptr<StageDemo> CreateStageDemo() {
     return std::make_unique<ClearStageDemo>();
   } else if constexpr (IsGameOverDemo()) {
     return std::make_unique<GameOverStageDemo>();
+  } else if constexpr (IsEffectsDemo()) {
+    return std::make_unique<EffectsStageDemo>();
   } else {
     return std::make_unique<NoStageDemo>();
   }

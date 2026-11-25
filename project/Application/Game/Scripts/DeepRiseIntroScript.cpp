@@ -17,6 +17,7 @@
 #include "Scene.h"
 #include "Common/Tween/Easing.h"
 #include "Game/Framework/WaterCameraFx.h"
+#include "Game/Framework/TransitionDemo.h"
 
 #if RC_ENABLE_IMGUI
 #include "imgui/imgui.h"
@@ -210,6 +211,8 @@ protected:
       // 深海へ動かした状態やタグがエディタの保存で JSON に焼き付くので、再生中だけ始める
       if (!ctx->isPlaying()) play = false;
     }
+    // 見せ用デモ（エフェクト）は開始演出を飛ばし、すぐ見せ場を始める
+    if constexpr (TransitionDemo::SkipsStageIntro()) play = false;
     if (play) {
       Begin();
     } else {

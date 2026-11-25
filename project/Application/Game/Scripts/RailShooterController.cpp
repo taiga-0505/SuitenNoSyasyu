@@ -169,6 +169,12 @@ namespace {
         /// @brief 次の武器へ（末尾からは先頭へ循環）
         void SelectNext() { index_ = (index_ + 1) % weapons_.size(); }
 
+        /// @brief i 番目の武器を選ぶ（範囲外なら何もしない）
+        /// @param i 番号（0 始まり）
+        void Select(std::size_t i) {
+            if (i < weapons_.size()) index_ = i;
+        }
+
         /// @brief 持っている武器の数
         /// @return 武器の数
         std::size_t Count() const { return weapons_.size(); }
@@ -944,6 +950,11 @@ protected:
         }
         if (GameInput::Triggered(GameInput::kWeaponNext)) {
             weapons_.SelectNext();
+        }
+        // 見せ用デモ（EffectsShowcaseDemo）が武器を指定しているときはそれを持つ（1:通常 / 2:拡散 / 3:重い弾）
+        if (GetEntity()) {
+            const int demoWeapon = GetEntity()->GetTagInt("demo_weapon", 0);
+            if (demoWeapon >= 1) weapons_.Select(static_cast<std::size_t>(demoWeapon - 1));
         }
 
         // === 視点操作（画面中央固定エイム） ===
