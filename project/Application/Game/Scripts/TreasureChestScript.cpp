@@ -43,7 +43,7 @@
 //   開封後の消滅タイマーを敵（EnemyBaseScript）と同じ形で二重に実装していた。
 //   いまは「弾で壊せるもの」の共通基底 DamageableScript を継承し（is-a: 宝箱は弾で壊せるもの）、
 //   共通の流れは基底の Template Method に任せて、宝箱に固有の部分だけを仮想関数で差し替えている:
-//     OnDefeated        … 開封（スコア加算・取得数・泡）
+//     OnDefeated        … 開封（スコア加算・取得数・金貨の噴き上げ）
 //     OnUpdateAlive     … 待機中のふわふわ上下・回転
 //     OnUpdateDefeated  … 開いたあと跳ねて回って縮む演出
 //     DamageFlashColor / DamageFlashDuration … 白っぽい黄色で短く光る
@@ -71,6 +71,12 @@
 //   ふわふわ上下・被弾の点滅・開いたときに跳ねて回って縮む演出にもそのまま付いてくる。
 //   錠前は -Z 側（レールを進む自機から見える面）、ちょうつがいは +Z 側。開くとふたが後ろへ倒れ、
 //   中の財宝（光る金貨の山）がせり上がる。
+//
+// 開封エフェクト（金貨の噴き上げ）
+//   以前は敵撃破と同じ白い泡（GPUBubbleEmitter）を出していたが、敵との見分けがつかず宝箱らしくないので、
+//   箱の口から金貨が噴水のように噴き上がって落ちる GPU パーティクル（ChestCoinEmitter）に置き換えた。
+//   エミッターは開封中だけ宝箱の口（下箱の上面）に追従させ、跳ね上がる箱から金貨があふれ出るように見せる。
+//   放出が終わったら宝箱が消えたあとも粒が消えきるまで残り、寿命で自分自身を破棄する。
 //   当たり判定・HP・スコアは今までどおり本体が持つ（部位には当たり判定もスクリプトも無い）。
 //   部位は再生中だけ作る（編集モードで作るとシーン保存や Undo の対象に混ざるため）。
 //   ※ エンジンの描画は Transform の親子を解決しないので、部位のワールド姿勢は PartPose で合成して書き込む。
@@ -160,6 +166,104 @@ const ChestLidMotion kChestLidMotion{};
 const ChestTreasureMotion kChestTreasureMotion{};
 
 } // namespace
+
+/// @brief 宝箱を開けたときに、箱の口から金貨を噴水のように噴き上げる GPU パーティクルのエミッター
+/// @details EmitParticle.CS（ParticleType::Default）の Cone 形状で真上へ扇状に打ち上げ、重力で落とす。
+///          最初の 1 フレームでまとめて出して勢いを付け、その後 kEmitDuration 秒だけ毎秒 kEmitRate 個ずつ
+///          出し続けて「あふれ出る」感じにする。放出後は粒が消えきる頃に自分自身を破棄する。
+///          金貨はくっきりした円（circle2.png）を通常合成で描き、加算合成の光の玉に見えないようにしている。
+///          ※ UpdateParticle.CS の速度・重力は「1 フレームあたりの移動量」基準（60fps 想定の値）。
+class ChestCoinEmitter : public ScriptableEntity {
+public:
+  static constexpr uint32_t kMaxParticles = 512;  ///< 同時に存在できる金貨の数
+  static constexpr uint32_t kBurstCount = 48;     ///< 最初の 1 フレームで一気に出す数
+  static constexpr float kEmitRate = 520.0f;      ///< 続けて出す数（個/秒）
+  static constexpr float kEmitDuration = 0.4f;    ///< 出し続ける時間（秒。ふたが開ききる頃まで）
+  static constexpr float kMaxLife = 1.4f;         ///< 金貨 1 枚の最大寿命（秒）
+  static constexpr float kLifetime = kEmitDuration + kMaxLife + 0.2f; ///< エミッター自体の寿命（秒）
+
+protected:
+  /// @brief パーティクルシステムを金貨用の設定（Cone で真上へ・重力で落下・金色）にする
+  void OnCreate() override {
+    elapsed_ = 0.0f;
+    emitAccum_ = 0.0f;
+    burstSent_ = false;
+    markedForDestroy_ = false;
+
+    GPUParticle* ps = GetParticleSystem();
+    if (!ps) return;
+    ps->SetMaxParticles(kMaxParticles);
+    ps->SetParticleType(ParticleType::Default); // EmitParticle.CS：形状・速度・寿命・色を全部使う
+    ps->SetPipelinePrefix("gpu_particle");
+    ps->SetBlendMode(kBlendModeNormal);
+    // 画像（circle2.png）は生成側が GPUParticleComponent::texturePath に入れておく
+    // （OnCreate は最初の Update で呼ばれ、その時点でパーティクルシステムは初期化済みのため）
+    ps->minScale_ = 0.12f;
+    ps->maxScale_ = 0.22f;
+    ps->minLifeTime_ = 0.9f;
+    ps->maxLifeTime_ = kMaxLife;
+    // 明るい金 → 少し赤みのある金（α は UpdateParticle.CS が寿命に合わせて下げる）
+    ps->startColor_ = {1.0f, 0.88f, 0.32f, 1.0f};
+    ps->endColor_ = {1.0f, 0.62f, 0.14f, 1.0f};
+    // 真上へ扇状に打ち上げる。0.14m/フレーム ≒ 8.4m/s、重力 0.32 ≒ 19m/s² で頂点は約 1.8m
+    ps->emitterShape_ = EmitterShape::Cone;
+    ps->baseVelocity_ = {0.0f, 0.14f, 0.0f};
+    ps->velocityVariance_ = 0.04f;
+    ps->coneAngle_ = 0.55f; // 半角 約 31 度
+    // 発生位置の広がり。生成側が "coin_spread_cm" タグ（cm 単位の整数）で箱の横幅に合わせて渡す
+    ps->shapeRadius_ = 0.8f;
+    if (Entity* self = GetEntity()) {
+      const int spreadCm = self->GetTagInt("coin_spread_cm", 0);
+      if (spreadCm > 0) ps->shapeRadius_ = static_cast<float>(spreadCm) / 100.0f;
+    }
+    ps->gravity_ = 0.32f;
+    ps->SetEmitCount(0); // 実際の放出数は OnUpdate で毎フレーム決める
+  }
+
+  /// @brief 最初のフレームにまとめて放出し、その後は一定時間だけ毎秒 kEmitRate 個出し、寿命で破棄する
+  /// @param deltaTime 前フレームからの経過時間（秒）
+  void OnUpdate(float deltaTime) override {
+    if (markedForDestroy_) return;
+    elapsed_ += deltaTime;
+
+    if (GPUParticle* ps = GetParticleSystem()) {
+      uint32_t count = 0;
+      if (!burstSent_) {
+        count = kBurstCount;
+        burstSent_ = true;
+      } else if (elapsed_ < kEmitDuration) {
+        // フレームレートに依らず毎秒 kEmitRate 個になるよう端数を持ち越す
+        emitAccum_ += kEmitRate * deltaTime;
+        count = static_cast<uint32_t>(emitAccum_);
+        emitAccum_ -= static_cast<float>(count);
+      }
+      ps->SetEmitCount(count);
+    }
+
+    // 放出済みの金貨が消えきる頃にエンティティごと破棄する
+    if (elapsed_ >= kLifetime) {
+      markedForDestroy_ = true;
+      if (Entity* self = GetEntity()) self->Destroy();
+    }
+  }
+
+private:
+  float elapsed_ = 0.0f;          ///< 生成からの経過秒数
+  float emitAccum_ = 0.0f;        ///< 放出数の端数の持ち越し
+  bool burstSent_ = false;        ///< 最初のまとめ出しを済ませたか
+  bool markedForDestroy_ = false; ///< 破棄を依頼済みか
+
+  /// @brief 自分の GPUParticleComponent のパーティクルシステムを取得する
+  /// @return パーティクルシステム（無ければ nullptr）
+  GPUParticle* GetParticleSystem() const {
+    Entity* self = GetEntity();
+    if (!self) return nullptr;
+    auto* gpu = self->GetComponent<GPUParticleComponent>();
+    return gpu ? gpu->particleSystem.get() : nullptr;
+  }
+};
+
+REGISTER_SCRIPT(ChestCoinEmitter)
 
 /// @brief 宝箱。弾を当てると HP が減り、0 になると開いてポイントを獲得する
 class TreasureChestScript : public DamageableScript {
@@ -327,6 +431,10 @@ protected:
       const float eased = 1.0f - (1.0f - lt) * (1.0f - lt) * (1.0f - lt);
       PlaceChest(*tr, eased);
     }
+    // 金貨のエミッターを跳ね上がる箱の口に付いていかせる（放出済みの金貨はワールドに残るので影響しない）
+    if (auto emitter = coinEmitter_.lock()) {
+      if (auto* etr = emitter->GetComponent<TransformComponent>()) etr->position = MouthPosition(*tr);
+    }
   }
 
   /// @brief 開く。ポイントを加算し、以後は弾が当たらないようにする
@@ -352,8 +460,8 @@ protected:
 
     Log::Print(std::format("[TreasureChest] {} opened! +{} points", self->GetName(), points_));
 
-    // 開いた瞬間の泡エフェクト（敵撃破と同じ GPU 泡）
-    SpawnBubbles();
+    // 開いた瞬間に箱の口から金貨を噴き上げる（敵撃破の泡とは見分けがつくように）
+    SpawnCoins();
   }
 
   /// @brief 被弾フラッシュの色（敵の赤ではなく、白っぽい黄色で光らせて手応えを出す）
@@ -434,6 +542,7 @@ private:
   float bobTime_ = 0.0f;                          ///< 上下動・回転の経過時間
   bool restoringParts_ = false;                   ///< RestoreColor 中か（部位を元の色へ戻す）
   std::weak_ptr<Entity> cachedPlayer_;            ///< スコアの積み先のキャッシュ
+  std::weak_ptr<Entity> coinEmitter_;             ///< 開封時に出した金貨のエミッター（開封中は口に追従させる）
 
   /// @brief 生存中・開封後のどちらでも毎フレーム必要な前処理（部位の生成と基準の記録）
   /// @return 本体の Transform（無ければ nullptr）
@@ -486,22 +595,43 @@ private:
     }
   }
 
-  /// @brief 宝箱の位置に GPU 泡エフェクトのエミッターを生成する
-  void SpawnBubbles() {
+  /// @brief 宝箱の口（下箱の上面の中心）のワールド位置
+  /// @param tr 本体の Transform
+  /// @return 金貨を噴き上げる位置
+  RC::Vector3 MouthPosition(const TransformComponent& tr) const {
+    // 開く演出で本体が縮むので、その倍率を上面の高さにも掛ける（PlaceChest と同じ考え方）
+    const float k = (hasBase_ && std::fabs(baseScale_.x) > 1e-4f) ? tr.scale.x / baseScale_.x : 1.0f;
+    const float topY = chestBuilt_ ? chestTopY_ * k : std::fabs(tr.scale.y) * 0.5f;
+    return {tr.position.x, tr.position.y + topY, tr.position.z};
+  }
+
+  /// @brief 宝箱の口に、金貨を噴き上げる GPU パーティクルのエミッター（ChestCoinEmitter）を生成する
+  /// @details 噴き上げの広がりは宝箱の横幅に合わせる。開封中は OnUpdateDefeated で口に追従させる。
+  void SpawnCoins() {
     Scene* scene = GetScene();
     Entity* self = GetEntity();
     if (!scene || !self) return;
+    auto* myTr = self->GetComponent<TransformComponent>();
 
-    auto emitter = scene->CreateEntity("GPUBubbleEmitter");
+    auto emitter = scene->CreateEntity("ChestCoinEmitter");
+    if (!emitter) return;
+    emitter->SetTag("transient", 1); // 実行時だけの演出なのでシーン保存に含めない
+    // 発生位置の広がりを箱の横幅に合わせる（Cone の広がり半径 = tan(半角) × 半径。最大で横幅の 35% ほど）
+    const float width = myTr ? std::fabs(myTr->scale.x) : 1.0f;
+    emitter->SetTag("coin_spread_cm", static_cast<int>((std::max)(0.2f, width * 0.57f) * 100.0f));
     auto* tr = &emitter->AddComponent<TransformComponent>();
-    if (auto* myTr = self->GetComponent<TransformComponent>()) tr->position = myTr->position;
+    if (myTr) tr->position = MouthPosition(*myTr);
     auto* gpu = &emitter->AddComponent<GPUParticleComponent>();
-    if (gpu->particleSystem) gpu->particleSystem->SetPipelinePrefix("gpu_particle_bubble");
+    gpu->texturePath = "Resources/Particle/circle2.png"; // くっきりした円を金貨に見立てる（初期化時に読まれる）
     auto* nsc = &emitter->AddComponent<NativeScriptComponent>();
-    nsc->AddScript("GPUBubbleEmitter");
+    nsc->AddScript("ChestCoinEmitter");
     nsc->SetScene(scene);
     if (GetSceneContext()) nsc->SetSceneContext(GetSceneContext());
+    // パーティクルシステムを初期化する。金貨用の設定は次フレームの最初の Update（ChestCoinEmitter::OnCreate）で入る
     scene->InitDynamicEntityRuntime(*emitter);
+    // OnCreate までの間に既定の設定（毎フレーム 10 個の白い粒）で描かれないよう、放出を止めておく
+    if (gpu->particleSystem) gpu->particleSystem->SetEmitCount(0);
+    coinEmitter_ = emitter;
   }
 
   // --- 宝箱の部位 ---
