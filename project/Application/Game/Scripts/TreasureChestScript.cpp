@@ -8,8 +8,10 @@
 #include "ECS/GPUParticleComponent.h"
 #include "ECS/NativeScriptComponent.h"
 #include "ECS/CameraComponent.h"
+#include "ECS/WaterComponent.h"
 #include "Particle/GPUParticle.h"
 #include "RenderCommon.h"
+#include "Render/Systems/RenderInteractiveWater.h"
 #include "Scene.h"
 #include "Common/Log/Log.h"
 #include "Game/Framework/GameSession.h"
@@ -19,6 +21,7 @@
 #include <cmath>
 #include <format>
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -77,6 +80,7 @@
 //   箱の口から金貨が噴水のように噴き上がって落ちる GPU パーティクル（ChestCoinEmitter）に置き換えた。
 //   エミッターは開封中だけ宝箱の口（下箱の上面）に追従させ、跳ね上がる箱から金貨があふれ出るように見せる。
 //   放出が終わったら宝箱が消えたあとも粒が消えきるまで残り、寿命で自分自身を破棄する。
+//   落ちた金貨は水面に小さな波紋を立てる（着水の時刻と位置を CPU 側で予測して予約する。詳細は ChestCoinEmitter）。
 //   当たり判定・HP・スコアは今までどおり本体が持つ（部位には当たり判定もスクリプトも無い）。
 //   部位は再生中だけ作る（編集モードで作るとシーン保存や Undo の対象に混ざるため）。
 //   ※ エンジンの描画は Transform の親子を解決しないので、部位のワールド姿勢は PartPose で合成して書き込む。
@@ -173,22 +177,48 @@ const ChestTreasureMotion kChestTreasureMotion{};
 ///          出し続けて「あふれ出る」感じにする。放出後は粒が消えきる頃に自分自身を破棄する。
 ///          金貨はくっきりした円（circle2.png）を通常合成で描き、加算合成の光の玉に見えないようにしている。
 ///          ※ UpdateParticle.CS の速度・重力は「1 フレームあたりの移動量」基準（60fps 想定の値）。
+///
+///          水面の波紋（着水の予約）
+///            金貨は GPU 上で動くので、CPU はどこに落ちたかを知らない。そこで放出した金貨のうち
+///            kRippleChance の割合だけ、EmitParticle.CS（Cone）と同じ分布で初速・発生位置を CPU 側でも引き、
+///            放物線から水面に届く時刻と位置を計算して予約しておく。時刻が来たら RC::AddWaveSourceAtWorld で
+///            小さな波紋を立てる。金貨 1 枚ずつと完全には一致しないが、パラパラと雨のように波紋が立つ。
+///            水面（WaterComponent）が無いシーンや、口が水面より下にあるときは予約しない。
 class ChestCoinEmitter : public ScriptableEntity {
 public:
   static constexpr uint32_t kMaxParticles = 512;  ///< 同時に存在できる金貨の数
   static constexpr uint32_t kBurstCount = 48;     ///< 最初の 1 フレームで一気に出す数
   static constexpr float kEmitRate = 520.0f;      ///< 続けて出す数（個/秒）
   static constexpr float kEmitDuration = 0.4f;    ///< 出し続ける時間（秒。ふたが開ききる頃まで）
-  static constexpr float kMaxLife = 1.4f;         ///< 金貨 1 枚の最大寿命（秒）
+  static constexpr float kMinLife = 1.3f;         ///< 金貨 1 枚の最小寿命（秒）
+  static constexpr float kMaxLife = 1.8f;         ///< 金貨 1 枚の最大寿命（秒。着水時にまだ見えているよう長め）
   static constexpr float kLifetime = kEmitDuration + kMaxLife + 0.2f; ///< エミッター自体の寿命（秒）
 
+  // --- 打ち上げ（EmitParticle.CS の Cone に渡す値。着水の予測にも同じ値を使う）---
+  static constexpr float kLaunchSpeed = 0.13f;     ///< 打ち上げの速さ（m/フレーム。≒ 7.8m/s）
+  static constexpr float kLaunchVariance = 0.035f; ///< 速さのばらつき（±、m/フレーム）
+  static constexpr float kConeAngle = 0.55f;       ///< 打ち上げの広がり（半角、rad。約 31 度）
+  static constexpr float kGravity = 0.40f;         ///< 重力（UpdateParticle.CS の値。≒ 24m/s²）
+  static constexpr float kAssumedFps = 60.0f;      ///< 「1 フレームあたり」の値を秒単位に直すときに仮定するフレームレート
+
+  // --- 着水の波紋 ---
+  static constexpr float kRippleChance = 0.07f;      ///< 放出した金貨のうち波紋を立てる割合（全体で 20 個弱）
+  static constexpr int kMaxRipples = 20;             ///< 波紋の最大数
+  static constexpr float kRippleRadiusMin = 0.010f;  ///< 波紋の半径の最小（UV。0.01 = 1m）
+  static constexpr float kRippleRadiusMax = 0.014f;  ///< 波紋の半径の最大（UV）
+  static constexpr float kRippleStrengthMin = 0.12f; ///< 波紋の強さの最小（m。弾の着水 0.5 より弱く）
+  static constexpr float kRippleStrengthMax = 0.22f; ///< 波紋の強さの最大（m）
+
 protected:
-  /// @brief パーティクルシステムを金貨用の設定（Cone で真上へ・重力で落下・金色）にする
+  /// @brief パーティクルシステムを金貨用の設定（Cone で真上へ・重力で落下・金色）にし、水面の高さを調べる
   void OnCreate() override {
     elapsed_ = 0.0f;
     emitAccum_ = 0.0f;
     burstSent_ = false;
     markedForDestroy_ = false;
+    ripples_.clear();
+    rippleCount_ = 0;
+    FindWater();
 
     GPUParticle* ps = GetParticleSystem();
     if (!ps) return;
@@ -200,23 +230,24 @@ protected:
     // （OnCreate は最初の Update で呼ばれ、その時点でパーティクルシステムは初期化済みのため）
     ps->minScale_ = 0.12f;
     ps->maxScale_ = 0.22f;
-    ps->minLifeTime_ = 0.9f;
+    ps->minLifeTime_ = kMinLife;
     ps->maxLifeTime_ = kMaxLife;
     // 明るい金 → 少し赤みのある金（α は UpdateParticle.CS が寿命に合わせて下げる）
     ps->startColor_ = {1.0f, 0.88f, 0.32f, 1.0f};
     ps->endColor_ = {1.0f, 0.62f, 0.14f, 1.0f};
-    // 真上へ扇状に打ち上げる。0.14m/フレーム ≒ 8.4m/s、重力 0.32 ≒ 19m/s² で頂点は約 1.8m
+    // 真上へ扇状に打ち上げる。≒ 7.8m/s・重力 ≒ 24m/s² で頂点は口から約 1.3m、
+    // 宝箱（y ≒ 1.2）からなら打ち上げて 0.8〜0.9 秒ほどで水面に届く（寿命 1.3〜1.8 秒なのでまだ見えている）
     ps->emitterShape_ = EmitterShape::Cone;
-    ps->baseVelocity_ = {0.0f, 0.14f, 0.0f};
-    ps->velocityVariance_ = 0.04f;
-    ps->coneAngle_ = 0.55f; // 半角 約 31 度
+    ps->baseVelocity_ = {0.0f, kLaunchSpeed, 0.0f};
+    ps->velocityVariance_ = kLaunchVariance;
+    ps->coneAngle_ = kConeAngle;
     // 発生位置の広がり。生成側が "coin_spread_cm" タグ（cm 単位の整数）で箱の横幅に合わせて渡す
     ps->shapeRadius_ = 0.8f;
     if (Entity* self = GetEntity()) {
       const int spreadCm = self->GetTagInt("coin_spread_cm", 0);
       if (spreadCm > 0) ps->shapeRadius_ = static_cast<float>(spreadCm) / 100.0f;
     }
-    ps->gravity_ = 0.32f;
+    ps->gravity_ = kGravity;
     ps->SetEmitCount(0); // 実際の放出数は OnUpdate で毎フレーム決める
   }
 
@@ -238,7 +269,10 @@ protected:
         emitAccum_ -= static_cast<float>(count);
       }
       ps->SetEmitCount(count);
+      ScheduleRipples(count, ps->shapeRadius_);
     }
+
+    FireDueRipples();
 
     // 放出済みの金貨が消えきる頃にエンティティごと破棄する
     if (elapsed_ >= kLifetime) {
@@ -252,6 +286,94 @@ private:
   float emitAccum_ = 0.0f;        ///< 放出数の端数の持ち越し
   bool burstSent_ = false;        ///< 最初のまとめ出しを済ませたか
   bool markedForDestroy_ = false; ///< 破棄を依頼済みか
+
+  /// @brief 予約した 1 つの波紋（着水の時刻と位置）
+  struct PendingRipple {
+    float time = 0.0f;     ///< 立てる時刻（elapsed_ 基準、秒）
+    float x = 0.0f;        ///< 着水位置のワールド X
+    float z = 0.0f;        ///< 着水位置のワールド Z
+    float radius = 0.0f;   ///< 波紋の半径（UV）
+    float strength = 0.0f; ///< 波紋の強さ（m）
+  };
+  std::vector<PendingRipple> ripples_;          ///< まだ立てていない波紋
+  int rippleCount_ = 0;                         ///< これまでに予約した波紋の数
+  bool hasWater_ = false;                       ///< シーンに水面があるか
+  float waterY_ = 0.0f;                         ///< 水面の高さ（m）
+  std::minstd_rand rng_{std::random_device{}()}; ///< 着水予測用の乱数
+
+  /// @brief 0〜1 の一様乱数
+  /// @return 0 以上 1 未満の乱数
+  float Rand01() { return std::uniform_real_distribution<float>(0.0f, 1.0f)(rng_); }
+
+  /// @brief シーンの水面（最初に見つかった WaterComponent の高さ）を調べる
+  void FindWater() {
+    hasWater_ = false;
+    waterY_ = 0.0f;
+    Scene* scene = GetScene();
+    if (!scene) return;
+    for (const auto& e : scene->GetEntities()) {
+      if (!e || !e->GetComponent<WaterComponent>()) continue;
+      hasWater_ = true;
+      if (auto* tr = e->GetComponent<TransformComponent>()) waterY_ = tr->position.y;
+      return;
+    }
+  }
+
+  /// @brief このフレームに放出した金貨のうち一部について、着水の時刻と位置を計算して波紋を予約する
+  /// @param emitted このフレームに放出した金貨の数
+  /// @param shapeRadius Cone の発生位置の広がりに使う半径（パーティクルシステムの shapeRadius_）
+  /// @details EmitParticle.CS の Cone と同じ分布で発生位置・初速を引き、
+  ///          y(t) = y0 + vy·t − ½·g·t² が水面の高さになる t を解く。
+  ///          寿命より後に着水する金貨はもう消えているので波紋を立てない。
+  void ScheduleRipples(uint32_t emitted, float shapeRadius) {
+    if (!hasWater_ || emitted == 0 || rippleCount_ >= kMaxRipples) return;
+    Entity* self = GetEntity();
+    auto* tr = self ? self->GetComponent<TransformComponent>() : nullptr;
+    if (!tr) return;
+    const float height = tr->position.y - waterY_; // 口から水面までの高さ
+    if (height <= 0.0f) return;                    // 口が水面より下なら着水しない
+
+    constexpr float kTwoPi = 6.28318530718f;
+    const float accel = kGravity * kAssumedFps; // m/s²（1 フレームごとに g·dt ずつ減る速度を秒単位に直す）
+    for (uint32_t i = 0; i < emitted && rippleCount_ < kMaxRipples; ++i) {
+      if (Rand01() >= kRippleChance) continue;
+      // 発生位置（Cone）: 中心から tan(半角) × 乱数 × 半径 だけ横へずれる
+      const float posAngle = Rand01() * kTwoPi;
+      const float posR = std::tan(kConeAngle) * Rand01() * shapeRadius;
+      // 初速（Cone）: 真上から乱数 × 半角だけ傾け、速さは基準 ± ばらつき
+      const float velAngle = Rand01() * kTwoPi;
+      const float spread = Rand01() * kConeAngle;
+      const float speed = (kLaunchSpeed + (Rand01() * 2.0f - 1.0f) * kLaunchVariance) * kAssumedFps; // m/s
+      const float vh = std::sin(spread) * speed;
+      const float vy = std::cos(spread) * speed;
+      // 水面に届く時刻（2 次方程式の正の解）
+      const float tLand = (vy + std::sqrt(vy * vy + 2.0f * accel * height)) / accel;
+      const float life = kMinLife + Rand01() * (kMaxLife - kMinLife);
+      if (tLand >= life) continue;
+
+      PendingRipple r;
+      r.time = elapsed_ + tLand;
+      r.x = tr->position.x + std::cos(posAngle) * posR + std::cos(velAngle) * vh * tLand;
+      r.z = tr->position.z + std::sin(posAngle) * posR + std::sin(velAngle) * vh * tLand;
+      r.radius = kRippleRadiusMin + Rand01() * (kRippleRadiusMax - kRippleRadiusMin);
+      r.strength = kRippleStrengthMin + Rand01() * (kRippleStrengthMax - kRippleStrengthMin);
+      ripples_.push_back(r);
+      ++rippleCount_;
+    }
+  }
+
+  /// @brief 時刻が来た波紋を水面に立てる
+  void FireDueRipples() {
+    for (size_t i = 0; i < ripples_.size();) {
+      if (ripples_[i].time <= elapsed_) {
+        RC::AddWaveSourceAtWorld(ripples_[i].x, ripples_[i].z, ripples_[i].radius, ripples_[i].strength);
+        ripples_[i] = ripples_.back(); // 順番は関係ないので末尾と入れ替えて消す
+        ripples_.pop_back();
+      } else {
+        ++i;
+      }
+    }
+  }
 
   /// @brief 自分の GPUParticleComponent のパーティクルシステムを取得する
   /// @return パーティクルシステム（無ければ nullptr）
