@@ -23,6 +23,20 @@
       "note": "出航（選んだステージへ）"
     },
     {
+      "from": "Select",
+      "trigger": "shore",
+      "to": "Shore",
+      "transition": "cut",
+      "note": "浜辺（設定・操作説明）。セレクトが UI を消してカメラを砂浜の上へ滑らせきってから、演出なしで切り替える（Shore は同じ位置から始まる）"
+    },
+    {
+      "from": "Shore",
+      "trigger": "back",
+      "to": "Select",
+      "transition": "cut",
+      "note": "浜辺の「セレクトへ」/ ESC（演出なし。セレクトは砂浜の上から始まり、浜辺を選んだまま波打ち際の上へ滑って戻る）"
+    },
+    {
       "from": "Stage*",
       "trigger": "cleared",
       "to": "Result",

@@ -1,0 +1,337 @@
+{
+  "sceneName": "Shore",
+  "entities": [
+    {
+      "id": "4949fdaa-ccac-4277-a0de-be38ec914c64",
+      "name": "Directional Light",
+      "tag": "",
+      "active": true,
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "type": "DirectionalLightComponent",
+          "data": {
+            "visible": true,
+            "color": [
+              1.0,
+              0.95,
+              0.86,
+              1.0
+            ],
+            "direction": [
+              0.12,
+              -1.0,
+              0.1
+            ],
+            "intensity": 1.1
+          }
+        }
+      ]
+    },
+    {
+      "id": "d07eae92-6633-4f6d-83bb-0ee70409b936",
+      "name": "Main Camera",
+      "tag": "",
+      "active": true,
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": {
+            "position": [
+              -125.0,
+              42.0,
+              0.0
+            ],
+            "rotation": [
+              1.5707963,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "type": "CameraComponent",
+          "data": {
+            "fovY": 0.45,
+            "nearZ": 0.1,
+            "farZ": 300.0,
+            "isMain": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "ac6787b1-fbf3-4f3e-bc61-a56bbc779155",
+      "name": "Skybox",
+      "tag": "",
+      "active": true,
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              100.0,
+              100.0,
+              100.0
+            ]
+          }
+        },
+        {
+          "type": "SkyboxComponent",
+          "data": {
+            "color": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "procedural": true,
+            "skyboxPath": "Resources/SkyBox/skybox.dds",
+            "visible": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "0590db5b-b3b7-41fe-a071-8d6674031c8b",
+      "name": "Water",
+      "tag": "",
+      "active": true,
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "type": "WaterComponent",
+          "data": {
+            "visible": true,
+            "planeWidth": 160.0,
+            "planeHeight": 160.0,
+            "segments": 384,
+            "waveHeight": 0.16,
+            "waveSpeed": 1.2,
+            "waveFreq": 0.9,
+            "waveHeight2": 0.09,
+            "waveSpeed2": 1.0,
+            "waveFreq2": 1.5,
+            "waveSteepness": 0.32,
+            "shallowColor": [
+              0.1,
+              0.66,
+              0.56,
+              0.92
+            ],
+            "deepColor": [
+              0.02,
+              0.26,
+              0.36,
+              0.97
+            ],
+            "fresnelPower": 3.0,
+            "specularPower": 260.0,
+            "normalScrollSpeed": 0.05,
+            "normalStrength": 0.7,
+            "environmentCoeff": 0.35,
+            "crestTint": 0.55,
+            "normalMapPath": "Resources/Water/water_normal.png"
+          }
+        }
+      ]
+    },
+    {
+      "id": "9cd6016b-d6fd-4ec3-b73c-1b489e45de03",
+      "name": "BeachSand",
+      "tag": "",
+      "active": true,
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "type": "NativeScriptComponent",
+          "data": {
+            "scriptTypeNames": [
+              "BeachSandScript"
+            ],
+            "scriptDataList": [
+              {}
+            ],
+            "scriptTypeName": "BeachSandScript"
+          }
+        }
+      ]
+    },
+    {
+      "id": "8a1474fe-14fa-4d10-9897-5c2cd5e1d9c8",
+      "name": "SelectMouseRipple",
+      "tag": "",
+      "active": true,
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "type": "NativeScriptComponent",
+          "data": {
+            "scriptTypeNames": [
+              "TitleMouseRippleScript"
+            ],
+            "scriptDataList": [
+              {
+                "enabled": true,
+                "radius": 0.018,
+                "strength": 0.07,
+                "pushDown": true,
+                "speedRef": 10.0,
+                "minStrengthRatio": 0.3,
+                "spacing": 0.5,
+                "maxPerFrame": 10,
+                "clickEnabled": true,
+                "clickRadius": 0.035,
+                "clickStrength": 0.3,
+                "playingOnly": false
+              }
+            ],
+            "scriptTypeName": "TitleMouseRippleScript"
+          }
+        }
+      ]
+    },
+    {
+      "id": "1cf872c6-4fad-4bcd-ac03-23e05b7b1a15",
+      "name": "ShoreMenu",
+      "tag": "",
+      "active": true,
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "type": "NativeScriptComponent",
+          "data": {
+            "scriptTypeNames": [
+              "PauseMenuScript"
+            ],
+            "scriptDataList": [
+              {
+                "menuMode": "shore",
+                "dimAlpha": 0.25,
+                "shoreOpenDelay": 0.2
+              }
+            ],
+            "scriptTypeName": "PauseMenuScript"
+          }
+        }
+      ]
+    }
+  ]
+}

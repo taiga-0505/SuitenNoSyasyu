@@ -194,6 +194,47 @@
       ]
     },
     {
+      "id": "528e76d8-b9ed-417b-ada0-edc8d1e85e23",
+      "name": "BeachSand",
+      "tag": "",
+      "active": true,
+      "visible": true,
+      "components": [
+        {
+          "type": "TransformComponent",
+          "data": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "type": "NativeScriptComponent",
+          "data": {
+            "scriptTypeNames": [
+              "BeachSandScript"
+            ],
+            "scriptDataList": [
+              {}
+            ],
+            "scriptTypeName": "BeachSandScript"
+          }
+        }
+      ]
+    },
+    {
       "id": "a3d8e1c4-7b25-4f69-9e0d-5c2b8f1a6d37",
       "name": "SelectMouseRipple",
       "tag": "",
@@ -359,7 +400,10 @@
                 "risePitchStart": -0.35,
                 "riseClimbTime": 1.6,
                 "riseSurfaceBlend": 0.5,
-                "riseBubbles": true
+                "riseBubbles": true,
+                "shoreCameraX": -52.0,
+                "shoreSlideTime": 0.9,
+                "shoreSandX": -125.0
               }
             ],
             "scriptTypeName": "StageSelectScript"

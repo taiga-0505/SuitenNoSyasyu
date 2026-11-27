@@ -6,6 +6,7 @@
 #include "Engine/Render/RenderContext.h"
 #include "Framework/App.h"
 #include "Game/Framework/GameInput.h"
+#include "Game/Framework/ShoreVisit.h"
 #include "Game/Framework/StageProgress.h"
 #include "Game/Framework/StateMachine.h"
 #include "Game/Framework/TransitionDemo.h"
@@ -35,9 +36,14 @@
 ///       丸どうしを航路の線で結び、クリア済みの区間は浅葱で塗る。
 ///     - 下段の情報パネル: 選択中の面の名前・欧文・環境（水上／水中・外洋／洞窟）・最高得点・状態。
 ///     - 進行（解放・クリア・最高得点）は StageProgress から読む。未解放の面は錠前を描いて選べない。
+///     - 海図の一番左は「浜辺」（砂浜の断面。パラソルと歯車の丸）。選ぶと情報パネルも砂浜になり、
+///       選んでいる間はカメラを左の波打ち際の上へ滑らせ、決定すると UI を消しながら一面の砂浜の上まで寄せ、
+///       浜辺シーン（Shore）へ "shore" で遷移する（設定・操作説明はそちら）。Shore のカメラは砂浜の上と同じ位置なので継ぎ目なくつながり、
+///       戻ってきたときはカメラを砂浜の上に置いた状態で始まり、浜辺を選んだまま波打ち際の上へ滑って戻る
+///       （ShoreVisit で受け渡す）。
 ///   入力:
 ///     ←→ / A D / 十字キー / 左スティック で面を選ぶ（未解放の面は飛ばさず止まる）、
-///     Space / Enter / A ボタン / クリックで出航、ESC / B ボタンでタイトルへ。
+///     Space / Enter / A ボタン / クリックで出航（浜辺なら浜辺シーンへ）、ESC / B ボタンでタイトルへ。
 ///   遷移:
 ///     Title から Dive 遷移で入ってきたときは深海から浮上してから UI を出す（Result と同じ RiseSequence）。
 ///     出航すると UI を消して水へ飛び込み（DiveSequence）、"dive" 遷移でステージへ。
@@ -53,6 +59,11 @@
 ///     "dimAlpha" / "panelColor" / "accentColor" / "selectedColor"
 ///     "uiFadeTime"      : 出航を決めてから UI が消えきるまで（秒）
 ///     "dive*" / "rise*" / "underwater" : Result と同じキー
+///     "shoreCameraX"   : 浜辺を選んだときにカメラを横へずらす量（m。波打ち際が見える位置。
+///                        砂浜は Select.json の TitleReefScript が作る）
+///     "shoreSandX"     : 浜辺で決定したとき、浜辺シーンへ移る前にカメラを寄せる位置（m。一面が砂になる位置。
+///                        Shore.json のカメラ X をこれと同じにしておくと、浜辺シーンとの行き来が継ぎ目なくつながる）
+///     "shoreSlideTime" : カメラが 海⇔波打ち際、波打ち際⇔砂浜 をそれぞれ移動しきるまで（秒）
 ///
 ///   設計（クラス設計の課題として導入したパターン）:
 ///     - State パターン: 面を選んでいる / 出航・戻るを決めた後の退出演出（UI フェード → 飛び込み）/
@@ -76,6 +87,9 @@ public:
         {"accentColor", v4(accentColor_)},
         {"selectedColor", v4(selectedColor_)},
         {"uiFadeTime", uiFadeTime_},
+        {"shoreCameraX", shoreCameraX_},
+        {"shoreSandX", shoreSandX_},
+        {"shoreSlideTime", shoreSlideTime_},
     };
     j["underwater"] = look_.ToJson();
     diveParams_.WriteJson(j);
@@ -108,6 +122,9 @@ public:
     readVec4("accentColor", accentColor_);
     readVec4("selectedColor", selectedColor_);
     readF("uiFadeTime", uiFadeTime_);
+    readF("shoreCameraX", shoreCameraX_);
+    readF("shoreSandX", shoreSandX_);
+    readF("shoreSlideTime", shoreSlideTime_);
     if (j.contains("underwater")) look_.FromJson(j["underwater"]);
     diveParams_.ReadJson(j);
     riseParams_.ReadJson(j);
@@ -174,6 +191,17 @@ protected:
     demoT_ = 0.0f;
     if ((diveParams_.enabled && diveParams_.bubbles) || (riseParams_.enabled && riseParams_.bubbles)) {
       bubbles_.Spawn(GetScene(), "SelectBubbles");
+    }
+    // 浜辺シーンから戻ってきたときは、カメラを砂浜の上に置いた状態で始める
+    // （Shore のカメラと同じ位置なので、演出なしの "cut" 遷移で継ぎ目なくつながる）。
+    // 浜辺を選んだ状態にするので、ChoosingState がカメラを波打ち際の上まで滑らせて戻す。UI はフェードインさせる
+    if (ShoreVisit::ConsumeReturning()) {
+      selected_ = kShoreIndex;
+      shoreBlend_ = 1.0f;
+      sandBlend_ = 1.0f;
+      UpdateShoreCamera(0.0f, ShoreView::Sand);
+      uiAlpha_ = 0.0f;
+      uiFadeIn_ = 0.0f;
     }
     if (SceneContext *ctx = GetSceneContext()) {
       if (riseParams_.enabled && ctx->isPlaying() && ctx->lastTransition == SceneTransition::Dive) {
@@ -247,6 +275,8 @@ protected:
     DrawHeading();
     DrawChart();
     DrawInfo();
+    // 浜辺のメニュー（PauseMenuScript）を開いている間は、その下に出るメニュー側の操作説明と重なるので出さない
+    const SceneContext *ctx = rc.Ctx();
     DrawHint();
   }
 
@@ -256,6 +286,7 @@ private:
   // ------------------------------------------------------------------
   class ChoosingState; ///< 面を選んでいる
   class LeavingState;  ///< 出航・戻るを決めた後の退出演出（UI フェード → 飛び込み → dive 遷移の要求）
+  class ShoreLeavingState; ///< 浜辺へ行くと決めた後（UI フェード＋カメラを砂浜の上へ寄せきる → "shore" 遷移の要求）
   class DecidedState;  ///< 遷移を要求済み（フェード待ち）
 
   // ------------------------------------------------------------------
@@ -273,6 +304,22 @@ private:
   static constexpr float kAboveY = 234.0f;   ///< 水上の面の丸（水面に浮かぶ位置）
   static constexpr float kBelowY = 350.0f;   ///< 水中の面の丸
   static constexpr float kNodeR = 26.0f;
+  // 浜辺（海図の左端。砂浜は kShoreLineX で水面に入り、そこから kShelfW かけて海底へ下る）
+  static constexpr float kShoreLineX = kChartL + 190.0f; ///< 波打ち際（砂浜が水面と交わる X）
+  static constexpr float kShelfW = 160.0f;               ///< 波打ち際から海底まで砂が続く幅（洞窟の手前まで）
+  static constexpr float kBeachRise = 30.0f;             ///< 海図の左端での砂浜の高さ（水面から）
+  static constexpr float kShoreNodeX = kChartL + 95.0f;  ///< 浜辺の丸の X
+  static constexpr float kShoreNodeY = 220.0f;           ///< 浜辺の丸の Y（砂の上に置く）
+  static constexpr float kFirstStageX = kChartL + 260.0f; ///< 第 1 面の丸の X（浜辺のぶん右へ寄せる）
+  static constexpr float kLastStageX = kChartR - 110.0f;  ///< 最終面の丸の X
+  /// @brief カメラの向かう先
+  enum class ShoreView {
+    Sea,   ///< 元の海の上
+    Shore, ///< 波打ち際（浜辺を選んでいる間）
+    Sand,  ///< 一面の砂浜（浜辺シーンへ移る直前・戻ってきた直後）
+  };
+  static constexpr int kShoreIndex = -1; ///< selected_ がこの値なら浜辺を選んでいる
+  static constexpr int kNoNode = -2;     ///< HitTestNodes がどの丸にも重ならなかったときの値
   // 洞窟の岩（天井と床の帯）。面の名前と重ならないように、名前の外側に置く
   //   天井: kRoofT〜kRoofBase が岩の帯、そこから下へ最大 kToothMax の牙
   //         水上の面の名前は kAboveY - kNodeR - 12 - 22 = 174 から始まるので、牙の先（170）より下
@@ -308,6 +355,18 @@ private:
   static constexpr RC::Vector4 kSea = {0.06f, 0.22f, 0.38f, 0.55f};
   static constexpr RC::Vector4 kRock = {0.16f, 0.14f, 0.13f, 0.95f};
   static constexpr RC::Vector4 kRockEdge = {0.42f, 0.37f, 0.32f, 1.0f};
+  // 浜辺の色
+  static constexpr RC::Vector4 kSand = {0.86f, 0.75f, 0.53f, 1.0f};        ///< 乾いた砂
+  static constexpr RC::Vector4 kSandDeep = {0.68f, 0.56f, 0.37f, 1.0f};    ///< 深い層の砂
+  static constexpr RC::Vector4 kSandWet = {0.62f, 0.52f, 0.36f, 0.85f};    ///< 波に濡れた砂
+  static constexpr RC::Vector4 kSandLight = {1.0f, 0.93f, 0.74f, 1.0f};    ///< 砂の縁・太陽・浜辺の光輪
+  static constexpr RC::Vector4 kSandDeepInk = {0.40f, 0.31f, 0.18f, 1.0f}; ///< 砂の上に置く文字
+  static constexpr RC::Vector4 kShoreFilm = {0.45f, 0.75f, 0.85f, 0.55f};  ///< 砂に寄せる水の膜
+  static constexpr RC::Vector4 kShoreSelected = {0.62f, 0.47f, 0.24f, 0.96f}; ///< 選択中の浜辺の丸の中
+  static constexpr RC::Vector4 kInfoSand = {0.50f, 0.42f, 0.29f, 1.0f}; ///< 情報パネルの砂（文字が読める濃さ）
+  static constexpr RC::Vector4 kInfoSea = {0.16f, 0.40f, 0.50f, 1.0f};  ///< 情報パネル上端の海
+  static constexpr float kDeepDepth = 26.0f; ///< 砂の表面から深い層までの厚み
+  static constexpr float kWetDepth = 5.0f;   ///< 濡れた砂の厚み
 
   /// @brief 1280x720 基準座標を実画面座標へ変換するための倍率とオフセット
   /// @details s: 拡大率 / ox, oy: レターボックスのずれ / fs: フォント描画時の倍率（s ÷ ロード時の倍率）
@@ -338,12 +397,36 @@ private:
 
   /// @brief 面 i の丸の中心（基準座標）を求める
   /// @param i 面の番号（0 始まり）
-  /// @return 丸の中心。X は海図の左右 120px を空けて等間隔、Y は水上なら kAboveY、水中なら kBelowY
+  /// @return 丸の中心。X は kFirstStageX〜kLastStageX を等間隔、Y は水上なら kAboveY、水中なら kBelowY。
+  ///         kShoreIndex なら浜辺の丸の位置
   RC::Vector2 NodePos(int i) const {
-    const float span = (kChartR - kChartL) - 240.0f;
-    const float x = kChartL + 120.0f + span * static_cast<float>(i) / (StageProgress::kStageCount - 1);
+    if (i == kShoreIndex) return {kShoreNodeX, kShoreNodeY};
+    const float span = kLastStageX - kFirstStageX;
+    const float x = kFirstStageX + span * static_cast<float>(i) / (StageProgress::kStageCount - 1);
     const float y = StageProgress::Info(i).underwater ? kBelowY : kAboveY;
     return {x, y};
+  }
+
+  /// @brief 選べる項目か（浜辺は常に選べる。面は解放済みなら選べる）
+  /// @param i 項目の番号（kShoreIndex または面の番号）
+  /// @return 選べるなら true
+  static bool IsSelectable(int i) {
+    if (i == kShoreIndex) return true;
+    return i >= 0 && i < StageProgress::kStageCount && StageProgress::Get().IsUnlocked(i);
+  }
+
+  /// @brief 砂浜の表面の高さ（基準座標の Y）を求める
+  /// @param x 基準座標の X
+  /// @return 砂の表面の Y。海図の左端で水面より kBeachRise 上、波打ち際で水面、そこから海底へ下る
+  float SandY(float x) const {
+    const float l = kChartL + 12.0f, b = kChartB - 12.0f;
+    if (x <= kShoreLineX) {
+      const float u = std::clamp((x - l) / (kShoreLineX - l), 0.0f, 1.0f);
+      // 浜の上はゆるく盛り上がらせる（直線だと坂に見えるので、u の 2 乗寄りにする）
+      return kSurfaceY - kBeachRise * (1.0f - u * u) + 1.5f * std::sin(x * 0.09f);
+    }
+    const float u = std::clamp((x - kShoreLineX) / kShelfW, 0.0f, 1.0f);
+    return kSurfaceY + (b - kSurfaceY) * (u * u * (3.0f - 2.0f * u));
   }
 
   /// @brief 右下に 1px 程度ずらした影付きで文字列を描く
@@ -428,26 +511,31 @@ private:
     const float pad = 12.0f;
     const float l = kChartL + pad, r = kChartR - pad, b = kChartB - pad;
 
-    // 海中（水面より下を薄い藍で塗る）
-    UiBox(P(l, kSurfaceY), P(r, b), kSea);
+    // 海中（波打ち際から右、水面より下を薄い藍で塗る）
+    UiBox(P(kShoreLineX, kSurfaceY), P(r, b), kSea);
+
+    // 浜辺（左端の砂浜の断面と飾り）。海の後に描き、水中へ続く海底の砂は藍の上に出す（地面は水で染めない）
+    DrawShore();
 
     // 洞窟（面 2〜4 を岩の天井・床・左右の口で囲む）
     DrawCave();
 
-    // 水面の線（ゆっくり揺れる波線）
+    // 水面の線（ゆっくり揺れる波線。波打ち際から右）
     {
       const int seg = 64;
       const float th = (std::max)(1.0f, S(2.0f));
+      const float sl = kShoreLineX;
       for (int k = 0; k < seg; ++k) {
-        const float x0 = l + (r - l) * k / seg, x1 = l + (r - l) * (k + 1) / seg;
+        const float x0 = sl + (r - sl) * k / seg, x1 = sl + (r - sl) * (k + 1) / seg;
         const float y0 = kSurfaceY + 2.0f * std::sin(x0 * 0.05f + time_ * 1.6f);
         const float y1 = kSurfaceY + 2.0f * std::sin(x1 * 0.05f + time_ * 1.6f);
         UiLine(P(x0, y0), P(x1, y1), WithAlpha(accentColor_, 0.75f), th);
       }
-      Text(labelFont_, "水面", X(l + 10.0f), Y(kSurfaceY - 26.0f), WithAlpha(kMuted, 0.8f),
+      Text(labelFont_, "水面", X(kShoreLineX + 8.0f), Y(kSurfaceY - 26.0f), WithAlpha(kMuted, 0.8f),
            TextAlign::Left, 0.75f);
-      Text(labelFont_, "海中", X(l + 10.0f), Y(b - 26.0f), WithAlpha(kMuted, 0.6f), TextAlign::Left,
-           0.75f);
+      // 「海中」は水面のすぐ下（左下は砂浜の断面なので、第 1 面の右に置く）
+      Text(labelFont_, "海中", X(kFirstStageX + 40.0f), Y(kSurfaceY + 8.0f), WithAlpha(kMuted, 0.6f),
+           TextAlign::Left, 0.75f);
     }
 
     // 航路（丸どうしを結ぶ）。クリア済みの面から出る区間は浅葱、それ以外は鼠の破線
@@ -510,6 +598,128 @@ private:
       Text(labelFont_, unlocked ? info.title : "???", X(c.x), Y(ny),
            WithAlpha(sel ? kInk : kMuted, unlocked ? 1.0f : 0.6f), TextAlign::Center, 0.85f);
     }
+
+    // 浜辺の丸（設定・操作説明）
+    DrawShoreNode(pulse);
+  }
+
+  /// @brief 海図の左端に浜辺（砂浜の断面・波打ち際の泡・パラソル・貝殻・太陽）を描く
+  void DrawShore() const {
+    const float l = kChartL + 12.0f, b = kChartB - 12.0f;
+    const float xEnd = kShoreLineX + kShelfW;
+
+    // 太陽
+    UiCircle(P(kShoreLineX - 22.0f, kChartT + 44.0f), S(20.0f), WithAlpha(kSandLight, 0.10f));
+    UiCircle(P(kShoreLineX - 22.0f, kChartT + 44.0f), S(11.0f), WithAlpha(kSandLight, 0.75f));
+
+    // 砂の断面：表面の線（SandY）から海図の下端までを細い台形の帯で埋める。
+    // 帯どうしの継ぎ目が線に見えないよう、塗りはアンチエイリアス無し（feather = 0）で隙間なく並べる。
+    // 表面から kDeepDepth より下は一段濃い砂（地層）にする。色は不透明にして重なりの濃淡を出さない
+    const int seg = 48;
+    auto quad = [&](float x0, float t0, float x1, float t1, float bottom, const RC::Vector4 &col) {
+      UiTriangle(P(x0, t0), P(x1, t1), P(x1, bottom), col, kFill, 0.0f);
+      UiTriangle(P(x0, t0), P(x1, bottom), P(x0, bottom), col, kFill, 0.0f);
+    };
+    for (int k = 0; k < seg; ++k) {
+      const float x0 = l + (xEnd - l) * k / seg, x1 = l + (xEnd - l) * (k + 1) / seg;
+      const float y0 = SandY(x0), y1 = SandY(x1);
+      quad(x0, y0, x1, y1, b, kSand);
+      quad(x0, (std::min)(y0 + kDeepDepth, b), x1, (std::min)(y1 + kDeepDepth, b), b, kSandDeep);
+    }
+    // 表面の縁取り（明るい線）
+    const float edge = (std::max)(1.0f, S(1.5f));
+    for (int k = 0; k < seg; ++k) {
+      const float x0 = l + (xEnd - l) * k / seg, x1 = l + (xEnd - l) * (k + 1) / seg;
+      UiLine(P(x0, SandY(x0)), P(x1, SandY(x1)), WithAlpha(kSandLight, 0.8f), edge);
+    }
+
+    // 波打ち際：寄せては返す水の膜と泡の線（wash は 0〜1 で寄せる量）
+    const float wash = 0.5f + 0.5f * std::sin(time_ * 1.3f);
+    const float reach = 14.0f + 22.0f * wash; // 波打ち際からどこまで砂を濡らすか
+    {
+      const int wseg = 8;
+      const float th = (std::max)(1.0f, S(2.0f));
+      for (int k = 0; k < wseg; ++k) {
+        const float x0 = kShoreLineX - reach * (1.0f - static_cast<float>(k) / wseg);
+        const float x1 = kShoreLineX - reach * (1.0f - static_cast<float>(k + 1) / wseg);
+        // 水の膜（砂の表面の上に薄く乗る）と、その下の濡れて濃くなった砂
+        const float y0 = SandY(x0), y1 = SandY(x1);
+        UiTriangle(P(x0, y0), P(x1, y1), P(x1, y1 + kWetDepth), kSandWet);
+        UiTriangle(P(x0, y0), P(x1, y1 + kWetDepth), P(x0, y0 + kWetDepth), kSandWet);
+        UiTriangle(P(x0, y0 - 3.0f), P(x1, y1 - 3.0f), P(x1, y1), kShoreFilm);
+        UiTriangle(P(x0, y0 - 3.0f), P(x1, y1), P(x0, y0), kShoreFilm);
+        UiLine(P(x0, SandY(x0) - 0.5f), P(x1, SandY(x1) - 0.5f), WithAlpha(kInk, 0.55f + 0.3f * wash), th);
+      }
+      // 泡の先端
+      const float fx = kShoreLineX - reach;
+      UiCircle(P(fx, SandY(fx) - 1.0f), S(2.5f), WithAlpha(kInk, 0.85f));
+    }
+
+    // パラソル（支柱と、朱と生成りの縞の傘）
+    {
+      const float px = l + 34.0f, base = SandY(px), top = base - 46.0f;
+      UiLine(P(px, base), P(px, top), WithAlpha(kInk, 0.9f), (std::max)(1.0f, S(2.0f)));
+      const int ribs = 6;
+      const float rw = 30.0f, rh = 14.0f;
+      for (int k = 0; k < ribs; ++k) {
+        const float a0 = 3.14159265f * (1.0f + static_cast<float>(k) / ribs);
+        const float a1 = 3.14159265f * (1.0f + static_cast<float>(k + 1) / ribs);
+        UiTriangle(P(px, top + 4.0f), P(px + rw * std::cos(a0), top + 4.0f + rh * std::sin(a0)),
+                   P(px + rw * std::cos(a1), top + 4.0f + rh * std::sin(a1)), (k % 2 == 0) ? kShu : kInk);
+      }
+      UiCircle(P(px, top - rh + 3.0f), S(2.5f), kInk);
+      // 足もとの影
+      UiBox(P(px - 22.0f, base - 1.0f), P(px + 22.0f, base + 2.0f), {0.0f, 0.0f, 0.0f, 0.15f});
+    }
+
+    // 貝殻と足あと
+    UiCircle(P(l + 128.0f, SandY(l + 128.0f) + 1.0f), S(3.5f), {0.98f, 0.86f, 0.82f, 0.95f});
+    UiCircle(P(kShoreLineX - 50.0f, SandY(kShoreLineX - 50.0f) + 1.0f), S(2.8f), {0.95f, 0.92f, 0.86f, 0.9f});
+    for (int k = 0; k < 4; ++k) {
+      const float fx = l + 70.0f + 22.0f * k;
+      const float fy = SandY(fx) + 4.0f + ((k % 2 == 0) ? 0.0f : 3.0f);
+      UiCircle(P(fx, fy), S(2.0f), WithAlpha(kSandDeep, 0.9f));
+    }
+
+    // 断面の「砂浜」の文字
+    Text(labelFont_, "砂浜", X(l + 10.0f), Y(b - 26.0f), WithAlpha(kSandDeepInk, 0.9f), TextAlign::Left, 0.75f);
+  }
+
+  /// @brief 浜辺の丸（選択中の光輪・歯車の印・名前）を描く
+  /// @param pulse 明滅量（0〜1）
+  void DrawShoreNode(float pulse) const {
+    const RC::Vector2 c = NodePos(kShoreIndex);
+    const bool sel = (selected_ == kShoreIndex);
+    const float rad = kNodeR * (sel ? (1.0f + 0.08f * bump_) : 0.82f);
+    if (sel) {
+      UiCircle(P(c.x, c.y), S(rad + 9.0f + 3.0f * pulse), WithAlpha(kSandLight, 0.25f + 0.2f * pulse));
+    }
+    UiCircle(P(c.x, c.y), S(rad), kInk);
+    const RC::Vector4 fill = sel ? kShoreSelected : RC::Vector4{panelColor_.x, panelColor_.y, panelColor_.z, 1.0f};
+    UiCircle(P(c.x, c.y), S(rad - 3.5f), fill);
+
+    // 歯車（8 本の歯・本体・軸穴）。選択中はゆっくり回す
+    const RC::Vector4 ink = sel ? kInk : kMuted;
+    const float spin = sel ? time_ * 0.8f : 0.0f;
+    // 歯は中心から外へ向いた台形（根元 r0・幅 w0、先 r1・幅 w1）
+    const float r0 = 6.0f, r1 = 12.0f, w0 = 3.2f, w1 = 2.2f;
+    for (int k = 0; k < 8; ++k) {
+      const float a = spin + 6.28318530718f * k / 8.0f;
+      const float ca = std::cos(a), sa = std::sin(a); // 歯の向き
+      const float nx = -sa, ny = ca;                  // 歯の幅の向き
+      const RC::Vector2 p0 = P(c.x + ca * r0 + nx * w0, c.y + sa * r0 + ny * w0);
+      const RC::Vector2 p1 = P(c.x + ca * r1 + nx * w1, c.y + sa * r1 + ny * w1);
+      const RC::Vector2 p2 = P(c.x + ca * r1 - nx * w1, c.y + sa * r1 - ny * w1);
+      const RC::Vector2 p3 = P(c.x + ca * r0 - nx * w0, c.y + sa * r0 - ny * w0);
+      UiTriangle(p0, p1, p2, ink);
+      UiTriangle(p0, p2, p3, ink);
+    }
+    UiCircle(P(c.x, c.y), S(9.0f), ink);
+    UiCircle(P(c.x, c.y), S(3.5f), fill);
+
+    // 名前（丸の上）
+    Text(labelFont_, "浜辺", X(c.x), Y(c.y - kNodeR - 12.0f - kLabelPx), sel ? kInk : kMuted, TextAlign::Center,
+         0.85f);
   }
 
   /// @brief 面 2〜4 を囲む洞窟（岩の天井・床と、左右の口）を描く
@@ -573,6 +783,10 @@ private:
 
   /// @brief 下段の情報パネル（選択中の面の番号・名前・環境・状態・最高得点）を描く
   void DrawInfo() const {
+    if (selected_ == kShoreIndex) {
+      DrawShoreInfo();
+      return;
+    }
     DrawFrame(kInfoL, kInfoT, kInfoR, kInfoB);
     const StageProgress &prog = StageProgress::Get();
     const StageProgress::StageInfo &info = StageProgress::Info(selected_);
@@ -624,9 +838,73 @@ private:
     }
   }
 
+  /// @brief 浜辺を選んでいるときの情報パネル（背景を砂浜にし、設定・操作説明の案内を出す）を描く
+  void DrawShoreInfo() const {
+    DrawFrame(kInfoL, kInfoT, kInfoR, kInfoB);
+    const float inL = kInfoL + 7.0f, inR = kInfoR - 7.0f, inT = kInfoT + 7.0f, inB = kInfoB - 7.0f;
+
+    // 背景：上の細い帯が海、その下が砂浜。境目は寄せては返す波（泡の線）
+    const float wash = 0.5f + 0.5f * std::sin(time_ * 1.3f);
+    const float shoreY = inT + 16.0f + 6.0f * wash;
+    // 砂（全面）→ 海（上から波の線まで）の順に不透明で塗る（帯の継ぎ目に濃淡が出ないように）
+    UiBox(P(inL, inT), P(inR, inB), kInfoSand);
+    {
+      const int seg = 40;
+      const float th = (std::max)(1.0f, S(2.0f));
+      for (int k = 0; k < seg; ++k) {
+        const float x0 = inL + (inR - inL) * k / seg, x1 = inL + (inR - inL) * (k + 1) / seg;
+        const float y0 = shoreY + 3.0f * std::sin(x0 * 0.03f + time_ * 1.1f);
+        const float y1 = shoreY + 3.0f * std::sin(x1 * 0.03f + time_ * 1.1f);
+        UiTriangle(P(x0, inT), P(x1, inT), P(x1, y1), kInfoSea, kFill, 0.0f);
+        UiTriangle(P(x0, inT), P(x1, y1), P(x0, y0), kInfoSea, kFill, 0.0f);
+        // 泡の線
+        UiLine(P(x0, y0), P(x1, y1), WithAlpha(kInk, 0.6f + 0.3f * wash), th);
+      }
+    }
+    // 砂粒（位置は番号から決まる擬似乱数。毎フレーム同じ並び）
+    for (int i = 0; i < 70; ++i) {
+      const float h1 = std::fabs(std::fmod(std::sin(i * 12.9898f) * 43758.5453f, 1.0f));
+      const float h2 = std::fabs(std::fmod(std::sin(i * 78.233f) * 12345.678f, 1.0f));
+      const float gx = inL + 8.0f + (inR - inL - 16.0f) * h1;
+      const float gy = inT + 40.0f + (inB - inT - 48.0f) * h2;
+      UiCircle(P(gx, gy), S(1.0f + 1.2f * h2), WithAlpha((i % 3 == 0) ? kSandLight : kSandDeepInk, 0.35f));
+    }
+
+    const float left = X(kInfoL + 44.0f), right = X(kInfoR - 44.0f);
+    Text(labelFont_, "浜辺", left, Y(kInfoT + 34.0f), kSandLight);
+
+    // 名前 ＋ 欧文
+    const float nameY = Y(kInfoT + 60.0f);
+    const char *name = "設定・操作説明";
+    Text(nameFont_, name, left, nameY, kInk);
+    Text(labelFont_, "SETTINGS & HOW TO PLAY", left + TextW(nameFont_, name) + S(16.0f),
+         nameY + LineH(nameFont_) - LineH(labelFont_) - S(6.0f), WithAlpha(kInk, 0.75f));
+
+    // 中身の札（操作説明 / 設定 / キー設定）
+    {
+      float tx = left;
+      const float ty = Y(kInfoT + 118.0f);
+      auto tag = [&](const std::string &label) {
+        const float w = TextW(labelFont_, label, 0.85f) + S(24.0f);
+        const float h = LineH(labelFont_, 0.85f) + S(8.0f);
+        UiBox({tx, ty}, {tx + w, ty + h}, WithAlpha(kSandDeepInk, 0.45f));
+        UiBox({tx, ty}, {tx + w, ty + h}, WithAlpha(kSandLight, 0.9f), kWire);
+        Text(labelFont_, label, tx + w * 0.5f, ty + S(4.0f), kInk, TextAlign::Center, 0.85f);
+        tx += w + S(12.0f);
+      };
+      tag("操作説明");
+      tag("設定（感度・視野角・音量）");
+      tag("キー設定");
+    }
+
+    // 右側：開き方
+    Text(labelFont_, "決定で浜辺へ", right, Y(kInfoT + 36.0f), kSandLight, TextAlign::Right);
+  }
+
   /// @brief 画面下部に操作説明を描く
   void DrawHint() const {
-    const char *text = "←→ 選択　　SPACE / Enter 出航　　ESC タイトルへ";
+    const char *text = (selected_ == kShoreIndex) ? "←→ 選択　　SPACE / Enter 浜辺へ　　ESC タイトルへ"
+                                                  : "←→ 選択　　SPACE / Enter 出航　　ESC タイトルへ";
     Text(labelFont_, text, X(kDesignW * 0.5f), Y(kInfoB + 30.0f), WithAlpha(kMuted, 0.85f),
          TextAlign::Center, 0.85f);
   }
@@ -655,13 +933,13 @@ private:
     lastMouseY_ = my;
     const int hovered = HitTestNodes(mx, my);
     const StageProgress &prog = StageProgress::Get();
-    if (mouseMoved && hovered >= 0 && hovered != selected_ && prog.IsUnlocked(hovered)) {
+    if (mouseMoved && hovered != kNoNode && hovered != selected_ && IsSelectable(hovered)) {
       SetSelected(hovered);
       move = 0;
     }
-    // クリックは解放済みならその面で出航、未解放なら揺らして知らせる
-    if (in->IsMouseTrigger(0) && hovered >= 0) {
-      if (prog.IsUnlocked(hovered)) {
+    // クリックは解放済みならその面で出航（浜辺ならメニューを開く）、未解放なら揺らして知らせる
+    if (in->IsMouseTrigger(0) && hovered != kNoNode) {
+      if (IsSelectable(hovered)) {
         SetSelected(hovered);
         confirm = true;
       } else {
@@ -670,9 +948,10 @@ private:
     }
 
     if (move != 0) {
-      const int next = std::clamp(selected_ + move, 0, StageProgress::kStageCount - 1);
+      // 左端は浜辺（kShoreIndex = -1）、右端は最終面
+      const int next = std::clamp(selected_ + move, kShoreIndex, StageProgress::kStageCount - 1);
       if (next != selected_) {
-        if (prog.IsUnlocked(next)) SetSelected(next);
+        if (IsSelectable(next)) SetSelected(next);
         else shake_ = 1.0f; // 未解放の面へは進めない
       }
     }
@@ -704,12 +983,18 @@ private:
     }
     // 見せ用デモ：選択中の面で自動出航（未解放なら解放済みの一番奥へ寄せる）
     if (TransitionDemo::kEnabled && demoT_ >= TransitionDemo::kSelectHold) {
-      if (!prog.IsUnlocked(selected_)) SetSelected(prog.HighestUnlocked());
+      if (selected_ == kShoreIndex || !prog.IsUnlocked(selected_)) SetSelected(prog.HighestUnlocked());
       confirm = true;
     }
 
-    // 出航: 未解放なら揺らして止め、解放済みなら選択を記録して遷移する
     if (!confirm) return;
+    // 浜辺：UI を消し、カメラを砂浜の上へ寄せきってから浜辺シーンへ遷移する（ShoreLeavingState）
+    if (selected_ == kShoreIndex) {
+      machine.ChangeState<ShoreLeavingState>();
+      Log::Print("[StageSelectScript] go to shore");
+      return;
+    }
+    // 出航: 未解放なら揺らして止め、解放済みなら選択を記録して遷移する
     if (!prog.IsUnlocked(selected_)) {
       shake_ = 1.0f;
       return;
@@ -740,15 +1025,45 @@ private:
   /// @brief マウス位置がどの面の丸に重なっているかを調べる（判定半径は丸より 10px 大きい）
   /// @param mx マウスの X（実画面座標）
   /// @param my マウスの Y（実画面座標）
-  /// @return 重なっている面の番号（0 始まり）。どれにも重なっていなければ -1
+  /// @return 重なっている面の番号（0 始まり。浜辺なら kShoreIndex）。どれにも重なっていなければ kNoNode
   int HitTestNodes(float mx, float my) const {
-    for (int i = 0; i < StageProgress::kStageCount; ++i) {
+    for (int i = kShoreIndex; i < StageProgress::kStageCount; ++i) {
       const RC::Vector2 c = NodePos(i);
       const float dx = mx - X(c.x), dy = my - Y(c.y);
       const float r = S(kNodeR + 10.0f);
       if (dx * dx + dy * dy <= r * r) return i;
     }
-    return -1;
+    return kNoNode;
+  }
+
+  /// @brief カメラを向かう先（海 / 波打ち際 / 砂浜）へ 1 フレーム分滑らせる
+  /// @param deltaTime 経過時間（秒）
+  /// @param view 向かう先
+  /// @param speedUp 移動の速さの倍率（出航・戻るときに速める）
+  /// @return 元の位置（海の上）にいるなら true
+  /// @note 海⇔波打ち際（shoreBlend_）と 波打ち際⇔砂浜（sandBlend_）を同時に進めるので、
+  ///       海から一気に砂浜へ向かうときも途中で止まらない。
+  ///       浮上・飛び込みの演出がカメラを動かしている間は触らない。
+  ///       元の X は、演出が止まってから最初に呼ばれたときのカメラ位置を覚える
+  bool UpdateShoreCamera(float deltaTime, ShoreView view, float speedUp = 1.0f) {
+    const auto atHome = [this] { return shoreBlend_ <= 0.0f && sandBlend_ <= 0.0f; };
+    if (rise_.IsMoving() || dive_.IsActive()) return atHome();
+    auto cam = WaterCameraFx::FindMainCamera(GetScene());
+    TransformComponent *tr = cam ? cam->GetComponent<TransformComponent>() : nullptr;
+    if (!tr) return true;
+    if (!camHomeValid_) {
+      camHomeX_ = tr->position.x;
+      camHomeValid_ = true;
+    }
+    const float step = deltaTime * speedUp / (std::max)(shoreSlideTime_, 1e-3f);
+    const auto approach = [step](float &v, float target) {
+      v = (v < target) ? (std::min)(v + step, target) : (std::max)(v - step, target);
+    };
+    approach(shoreBlend_, view == ShoreView::Sea ? 0.0f : 1.0f);
+    approach(sandBlend_, view == ShoreView::Sand ? 1.0f : 0.0f);
+    tr->position.x = camHomeX_ + shoreCameraX_ * WaterCameraFx::Smooth01(shoreBlend_) +
+                     (shoreSandX_ - shoreCameraX_) * WaterCameraFx::Smooth01(sandBlend_);
+    return atHome();
   }
 
   /// @brief 選択中の面を変え、変わったときは丸を弾ませる
@@ -826,6 +1141,16 @@ private:
   RC::Vector4 selectedColor_ = {0.12f, 0.27f, 0.50f, 0.96f};
 
   float uiFadeTime_ = 0.35f;
+  float shoreCameraX_ = -52.0f;  ///< 浜辺を選んだときのカメラの横ずれ（m。波打ち際）
+  float shoreSandX_ = -125.0f;   ///< 浜辺シーンへ移る前のカメラの横ずれ（m。一面の砂浜）
+  float shoreSlideTime_ = 0.9f;  ///< 海⇔波打ち際、波打ち際⇔砂浜 それぞれの移動時間（秒）
+
+  // 浜辺へのカメラ移動（状態）
+  static constexpr float kShoreReturnSpeedUp = 2.5f; ///< 出航・戻るときは速めに海へ戻す倍率
+  float shoreBlend_ = 0.0f;   ///< 0 = 海（元の位置）〜 1 = 波打ち際の上
+  float sandBlend_ = 0.0f;    ///< 0 = 波打ち際 〜 1 = 一面の砂浜の上
+  float camHomeX_ = 0.0f;     ///< カメラの元の X（浮上が終わった位置を最初に覚える）
+  bool camHomeValid_ = false; ///< camHomeX_ を覚えたか
   WaterCameraFx::DiveParams diveParams_; ///< 出航・戻るときの飛び込み（JSON の "dive*"）
   WaterCameraFx::RiseParams riseParams_; ///< Dive 遷移で入ってきたときの浮上（JSON の "rise*"）
   UnderwaterLook::Params look_;          ///< 水中の見た目（JSON の "underwater"）
@@ -851,6 +1176,7 @@ private:
 
   static constexpr const char *kTriggerBack = "back";   ///< 遷移表のきっかけ名（ESC）
   static constexpr const char *kTriggerStage = "stage"; ///< 遷移表のきっかけ名（出航）
+  static constexpr const char *kTriggerShore = "shore"; ///< 遷移表のきっかけ名（浜辺シーンへ）
   float uiAlpha_ = 1.0f;
   float uiFadeIn_ = -1.0f;
   WaterCameraFx::DiveSequence dive_;
@@ -870,6 +1196,8 @@ public:
     // 見せ用デモ：UI が出てからの時間を測る（kSelectHold 秒で選択中の面へ自動出航）
     if (TransitionDemo::kEnabled && owner.uiFadeIn_ < 0.0f) owner.demoT_ += deltaTime;
     owner.HandleInput(machine);
+    // 浜辺を選んでいる間はカメラを波打ち際の上へ滑らせ、面を選び直したら海へ戻す
+    owner.UpdateShoreCamera(deltaTime, owner.selected_ == kShoreIndex ? ShoreView::Shore : ShoreView::Sea);
   }
   /// @brief 状態名
   /// @return "Choosing"
@@ -894,6 +1222,35 @@ private:
   std::string target_;     ///< 飛び込み後に遷移するシーン
   float time_ = 0.0f;      ///< 退出を始めてからの経過時間（秒）
   bool requested_ = false; ///< dive 遷移の要求が通ったか
+};
+
+/// @brief 浜辺へ行くと決めた後の状態。UI を消しながらカメラを砂浜の上へ寄せきり、"shore" 遷移を要求する
+/// @details 浜辺を選んですぐ決定するとカメラが滑っている途中なので、寄せきるまで待ってから遷移する
+///          （Shore シーンのカメラは寄せきった位置に置いてあるので、"cut" 遷移で景色はそのままつながる）。
+class StageSelectScript::ShoreLeavingState : public IState<StageSelectScript> {
+public:
+  /// @brief UI を消し、カメラを砂浜へ寄せ、どちらも終わったら遷移を要求する
+  /// @note 遷移が通らなければ選択画面へ戻す
+  void OnUpdate(StageSelectScript &owner, StateMachine<StageSelectScript> &machine, float deltaTime) override {
+    time_ += deltaTime;
+    owner.uiAlpha_ = 1.0f - WaterCameraFx::Smooth01(time_ / (std::max)(owner.uiFadeTime_, 1e-3f));
+    owner.uiAlpha_ = (std::max)(owner.uiAlpha_, 0.0f);
+    owner.UpdateShoreCamera(deltaTime, ShoreView::Sand);
+    if (owner.uiAlpha_ > 0.0f || owner.shoreBlend_ < 1.0f || owner.sandBlend_ < 1.0f) return;
+    if (!owner.RequestTransition(kTriggerShore)) {
+      Log::Print("[StageSelectScript] scene flow refused 'shore'");
+      owner.CancelLeave(machine);
+      return;
+    }
+    ShoreVisit::MarkLeaving();
+    owner.MarkDecided(machine);
+  }
+  /// @brief 状態名
+  /// @return "ShoreLeaving"
+  const char *Name() const override { return "ShoreLeaving"; }
+
+private:
+  float time_ = 0.0f; ///< 決めてからの経過時間（秒）
 };
 
 /// @brief 遷移を要求済みの状態。フェードを待つだけで入力は受け付けない（二重に遷移させない）
@@ -943,10 +1300,15 @@ void StageSelectScript::CancelLeave(StateMachine<StageSelectScript> &machine) {
 void StageSelectScript::LeavingState::OnUpdate(StageSelectScript &owner, StateMachine<StageSelectScript> &machine,
                                                float deltaTime) {
   time_ += deltaTime;
-  // UI が消えきるまで待ってから飛び込みを始める
+  // UI が消えきり、浜辺へ寄っていたカメラが元の位置へ戻りきるまで待ってから飛び込みを始める
+  // （浜辺の上で飛び込むと砂を突き抜けるため）
   if (!owner.dive_.IsActive()) {
     owner.uiAlpha_ = 1.0f - WaterCameraFx::Smooth01(time_ / (std::max)(owner.uiFadeTime_, 1e-3f));
-    if (owner.uiAlpha_ > 0.0f) return;
+    const bool camHome = owner.UpdateShoreCamera(deltaTime, ShoreView::Sea, kShoreReturnSpeedUp);
+    if (owner.uiAlpha_ > 0.0f || !camHome) {
+      owner.uiAlpha_ = (std::max)(owner.uiAlpha_, 0.0f);
+      return;
+    }
     owner.uiAlpha_ = 0.0f;
     Scene *scene = owner.GetScene();
     if (!owner.dive_.Begin(WaterCameraFx::FindMainCamera(scene), WaterCameraFx::FindWaterY(scene),

@@ -50,6 +50,7 @@
 ///   "floorY"       : 砂地の高さ（m。水面は 0）
 ///   "floorSize"    : 砂地の一辺（m）
 ///   "sandColor"    : 砂の色 RGBA
+///   "sandShininess": 砂地・砂の盛り上がりの鏡面反射の鋭さ（0 以下で鏡面反射なし。水上に出す砂浜は真上の光で白飛びするので 0 にする）
 ///   "mounds"       : [[x, z, radius, height], ...] 砂の盛り上がり（浅瀬の明るい帯になる）
 ///   "clusters"     : [[x, z, radius, count], ...] サンゴの群生地
 ///   "scaleMin" / "scaleMax" : サンゴ 1 株の大きさの倍率
@@ -75,6 +76,7 @@ public:
         {"floorY", floorY},
         {"floorSize", floorSize},
         {"sandColor", v4(sandColor)},
+        {"sandShininess", sandShininess},
         {"mounds", list(mounds)},
         {"clusters", list(clusters)},
         {"scaleMin", scaleMin},
@@ -118,6 +120,7 @@ public:
     readF("floorY", floorY);
     readF("floorSize", floorSize);
     readV4("sandColor", sandColor);
+    readF("sandShininess", sandShininess);
     readList("mounds", mounds);
     readList("clusters", clusters);
     readF("scaleMin", scaleMin);
@@ -181,6 +184,7 @@ private:
   float floorY = -6.0f;
   float floorSize = 110.0f;
   RC::Vector4 sandColor = {0.95f, 0.88f, 0.70f, 1.0f};
+  float sandShininess = 4.0f; ///< 砂の鏡面反射の鋭さ（0 以下で鏡面反射なし）
   std::vector<RC::Vector4> mounds = {
       {-11.0f, -1.0f, 8.0f, 2.2f},
       {12.0f, 3.0f, 7.0f, 1.8f},
@@ -370,14 +374,14 @@ private:
 
     // 砂地（Plane は 10x10 で生成されるので scale で広げる）
     AddPart(scene, "ReefFloor", PrimitiveType::Plane, sandColor, {0.0f, floorY, 0.0f}, {0.0f, 0.0f, 0.0f},
-            {floorSize / 10.0f, 1.0f, floorSize / 10.0f}, 4.0f);
+            {floorSize / 10.0f, 1.0f, floorSize / 10.0f}, sandShininess);
 
     // 砂の盛り上がり：大きく潰した球を砂地に半分埋める
     for (size_t i = 0; i < mounds.size(); ++i) {
       const RC::Vector4 &m = mounds[i];
       AddPart(scene, "ReefMound_" + std::to_string(i), PrimitiveType::Sphere, Shade(sandColor, 0.97f),
               {m.x, floorY, m.y}, {0.0f, Rand(0.0f, kTwoPi), 0.0f}, {m.z, (std::max)(m.w, 0.1f), m.z * Rand(0.7f, 1.0f)},
-              4.0f);
+              sandShininess);
     }
 
     // サンゴの群生地

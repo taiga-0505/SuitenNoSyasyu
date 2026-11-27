@@ -64,6 +64,11 @@
 ///   JSON（scriptDataList）で設定できる項目:
 ///     "fontPath"   : 使うフォント（既定は Result と同じ KiwiMaru-Medium）
 ///     "titleLabel" : 4 番目の項目の文字（既定 "タイトルへ"。ステージでは "セレクトへ"）
+///     "menuMode"   : "pause"（既定。ESC / START で開くポーズメニュー）/
+///                    "shore"（浜辺シーン Shore.json の設定・操作説明。シーンが始まって "shoreOpenDelay" 秒で
+///                    ひとりでに開き、ポーズは掛けない（波は動いたまま）。項目は 操作説明 / 設定 / キー設定 / セレクトへ。
+///                    「セレクトへ」と ESC は遷移表のきっかけ "back" を出す）
+///     "shoreOpenDelay" : 浜辺モードで、シーンが始まってからメニューを開くまで（秒。UI のない砂浜を少し見せてから開く）
 ///
 ///   遷移は遷移表（Resources/SceneFlow.json）で決まる:
 ///     きっかけ "pause_retry" : 「はじめから」（遷移先を $current にするといまのシーンをやり直す）
@@ -82,6 +87,8 @@ public:
         {"panelColor", {panelColor_.x, panelColor_.y, panelColor_.z, panelColor_.w}},
         {"accentColor", {accentColor_.x, accentColor_.y, accentColor_.z, accentColor_.w}},
         {"dimAlpha", dimAlpha_},
+        {"menuMode", shoreMode_ ? "shore" : "pause"},
+        {"shoreOpenDelay", shoreOpenDelay_},
     };
   }
 
@@ -104,6 +111,12 @@ public:
     readC("panelColor", panelColor_);
     readC("accentColor", accentColor_);
     if (j.contains("dimAlpha")) dimAlpha_ = j["dimAlpha"].get<float>();
+    std::string mode = shoreMode_ ? "shore" : "pause";
+    readS("menuMode", mode);
+    shoreMode_ = (mode == "shore");
+    if (j.contains("shoreOpenDelay") && j["shoreOpenDelay"].is_number()) {
+      shoreOpenDelay_ = j["shoreOpenDelay"].get<float>();
+    }
   }
 
   /// @brief インスペクタにメニューの状態・開閉ボタン・見た目と GameSettings の編集 UI を表示する
@@ -153,7 +166,8 @@ private:
   class MainPageState;     ///< メインページ
   class SettingsPageState; ///< 設定ページ
   class KeyConfigPageState; ///< キー設定ページ
-  class SinkingState;      ///< 深海色へ沈めてから Dive 遷移する幕
+  class HowToPlayPageState; ///< 操作説明ページ（浜辺モードのみ）
+  class SinkingState;     ///< 深海色へ沈めてから Dive 遷移する幕
   class DecidedState;      ///< 遷移を要求済み（フェード待ち）
 
   // ------------------------------------------------------------------
@@ -163,6 +177,7 @@ private:
   class ResumeCommand;       ///< つづける
   class OpenSettingsCommand; ///< 設定
   class OpenKeyConfigCommand; ///< キー設定
+  class OpenHowToPlayCommand; ///< 操作説明（浜辺モードのみ）
   class TransitionCommand;   ///< 遷移表のきっかけを引く項目の共通部分
   class RetryCommand;        ///< はじめから
   class ExitCommand;         ///< タイトルへ / セレクトへ
@@ -179,6 +194,7 @@ private:
   class BackRow;        ///< もどる
   class KeyBindRow;     ///< キー設定：操作 1 つの割り当て
   class ResetBindingsRow; ///< キー設定：初期設定に戻す
+  class InfoRow;        ///< 操作説明：操作 1 つの説明（選んでも何も起きない）
 
   /// @brief 1 フレーム分のメニュー操作（HandleInput がまとめ、ページへ渡す）
   /// @details 不変条件の無い受け渡し用のデータなので struct のまま。
@@ -194,6 +210,7 @@ private:
   static constexpr int kMainSettingsIndex = 1;  ///< メインページで「設定」が並ぶ行（設定から戻ったときの選択位置）
   static constexpr int kMainKeyConfigIndex = 2; ///< メインページで「キー設定」が並ぶ行
   static constexpr int kSettingsFirstIndex = 0; ///< 設定ページを開いたときの選択行
+  static constexpr int kMainHowToPlayIndex = 0; ///< 浜辺モードのメインページで「操作説明」が並ぶ行
 
   // ------------------------------------------------------------------
   // レイアウト（1280x720 基準）
@@ -353,6 +370,8 @@ private:
   /// @return 開く操作があれば true
   bool WantOpen(Input *in) const {
     (void)in;
+    // 浜辺モードは操作では開かない（ClosedState がシーン開始から shoreOpenDelay_ 秒で開く）
+    if (shoreMode_) return false;
     if (!GameInput::Triggered(GameInput::kPause)) return false;
 #if RC_ENABLE_IMGUI
     // インスペクタのテキスト入力中のキー（ESC など）はエディタのもの。パッドで押したときだけ開く
@@ -424,6 +443,7 @@ private:
 
   static constexpr const char *kTriggerRetry = "pause_retry"; ///< 遷移表のきっかけ名（はじめから）
   static constexpr const char *kTriggerExit = "pause_exit";   ///< 遷移表のきっかけ名（タイトル／セレクトへ）
+  static constexpr const char *kTriggerShoreBack = "back";  ///< 遷移表のきっかけ名（浜辺シーンからセレクトへ）
 
   /// @brief 遷移表に従って遷移を要求する（演出が dive なら沈む幕へ、それ以外は遷移待ちへ）
   /// @param trigger 遷移表のきっかけ名（kTriggerRetry / kTriggerExit）
@@ -613,6 +633,9 @@ private:
   RC::Vector4 panelColor_ = {0.06f, 0.08f, 0.11f, 0.92f}; ///< 墨
   RC::Vector4 accentColor_ = {0.88f, 0.74f, 0.38f, 1.0f}; ///< 金（選択中）
   float dimAlpha_ = 0.55f;                                ///< 背後の画面を沈める濃さ
+  bool shoreMode_ = false; ///< 浜辺シーンの設定・操作説明として使うか（JSON の "menuMode"）
+  float shoreOpenDelay_ = 0.2f;  ///< 浜辺モードで、シーン開始からメニューを開くまで（秒）
+  float shoreWait_ = 0.0f;       ///< 浜辺モードで、シーン開始からの経過時間（秒）
 
   // ------------------------------------------------------------------
   // 状態
@@ -728,12 +751,12 @@ public:
 class PauseMenuScript::ResumeCommand : public PauseMenuScript::MainCommand {
 public:
   /// @brief 表示文字列
-  /// @return "つづける"
+  /// @param owner ポーズメニュー本体
+  /// @return "つづける"（浜辺モードでは "セレクトへ"）
   std::string Label(const PauseMenuScript &owner) const override {
-    (void)owner;
-    return "つづける";
+    return owner.shoreMode_ ? "セレクトへ" : "つづける";
   }
-  /// @brief メニューを閉じる
+  /// @brief メニューを閉じる（浜辺モードではセレクトへ戻る遷移を出す）
   void Execute(PauseMenuScript &owner, StateMachine<PauseMenuScript> &machine) override;
 };
 
@@ -760,6 +783,19 @@ public:
     return "キー設定";
   }
   /// @brief キー設定ページへ切り替える
+  void Execute(PauseMenuScript &owner, StateMachine<PauseMenuScript> &machine) override;
+};
+
+/// @brief 「操作説明」: 操作説明ページを開く（浜辺モードのみ）
+class PauseMenuScript::OpenHowToPlayCommand : public PauseMenuScript::MainCommand {
+public:
+  /// @brief 表示文字列
+  /// @return "操作説明"
+  std::string Label(const PauseMenuScript &owner) const override {
+    (void)owner;
+    return "操作説明";
+  }
+  /// @brief 操作説明ページへ切り替える
   void Execute(PauseMenuScript &owner, StateMachine<PauseMenuScript> &machine) override;
 };
 
@@ -1096,6 +1132,63 @@ protected:
   }
 };
 
+/// @brief 操作説明の 1 行（左に操作名、中にキーボード・マウス、右にパッド）。選んでも何も起きない
+/// @details 割り当てはキー設定で変えられるので、文字列は固定せず描くたびに GameInput から引く。
+///          アクションを持たない行（照準など）は固定の文字列を出す。
+class PauseMenuScript::InfoRow : public PauseMenuScript::SettingRow {
+public:
+  /// @brief アクションの割り当てを出す行
+  /// @param label 画面に出す操作名
+  /// @param action 1 つ目のアクション名
+  /// @param action2 2 つ目のアクション名（"前の武器 / 次の武器" のように並べるとき。無ければ nullptr）
+  InfoRow(const char *label, const char *action, const char *action2 = nullptr)
+      : SettingRow(label), action_(action), action2_(action2) {}
+  /// @brief 固定の文字列を出す行
+  /// @param label 画面に出す操作名
+  /// @param keyboardText キーボード・マウス側の文字列
+  /// @param padText パッド側の文字列
+  /// @param fixed 固定文字列の行であることを示す目印（値は使わない）
+  InfoRow(const char *label, const char *keyboardText, const char *padText, bool fixed)
+      : SettingRow(label), keyboardText_(keyboardText), padText_(padText) {
+    (void)fixed;
+  }
+
+  /// @brief 何もしない（説明を読むだけの行）
+  bool Handle(PauseMenuScript &owner, StateMachine<PauseMenuScript> &machine, const MenuInput &input) override {
+    (void)owner;
+    (void)machine;
+    (void)input;
+    return false;
+  }
+
+protected:
+  /// @brief 操作名と、キーボード・マウス／パッドの操作を描く
+  void DrawContents(const PauseMenuScript &owner, const DrawContext &c) const override {
+    DrawLabelLeft(owner, c);
+    const float lh = owner.LineH(owner.labelFont_);
+    const float y = owner.Y((c.t + c.b) * 0.5f) - lh * 0.5f;
+    owner.Text(owner.labelFont_, BindText(true), owner.X(c.l + kKeyColumnX), y, c.ink, TextAlign::Left);
+    owner.Text(owner.labelFont_, BindText(false), owner.X(c.r - 18.0f), y, WithAlpha(kMuted, c.a), TextAlign::Right);
+  }
+
+private:
+  /// @brief キーボード・マウス側（またはパッド側）に出す文字列を作る
+  /// @param keyboardMouse true ならキーボード・マウス側
+  /// @return 表示する文字列
+  std::string BindText(bool keyboardMouse) const {
+    if (!action_) return keyboardMouse ? keyboardText_ : padText_;
+    std::string s = GameInput::BindingsText(action_, keyboardMouse);
+    if (action2_) s += "  /  " + GameInput::BindingsText(action2_, keyboardMouse);
+    return s;
+  }
+
+  static constexpr float kKeyColumnX = 250.0f; ///< キーボード・マウスの操作を書き始める位置（行の左端から）
+  const char *action_ = nullptr;               ///< 割り当てを引くアクション（固定文字列の行は nullptr）
+  const char *action2_ = nullptr;              ///< 並べて出す 2 つ目のアクション
+  const char *keyboardText_ = "";              ///< 固定文字列の行：キーボード・マウス側
+  const char *padText_ = "";                   ///< 固定文字列の行：パッド側
+};
+
 // ======================================================================
 // ページ（State パターン。メイン / 設定の共通の親）
 // ======================================================================
@@ -1170,10 +1263,12 @@ protected:
 };
 
 /// @brief メインページ（つづける / 設定 / キー設定 / はじめから / タイトルへ）
+/// @details 浜辺モードでは 操作説明 / 設定 / キー設定 / セレクトへ
 class PauseMenuScript::MainPageState : public PauseMenuScript::PageState {
 public:
   /// @brief 項目のコマンドを並べる（並び順 = 表示順）
-  MainPageState();
+  /// @param shore 浜辺モードの並びにするか
+  explicit MainPageState(bool shore = false);
 
   int RowCount() const override { return static_cast<int>(commands_.size()); }
   float PanelW() const override { return kMainPanelW; }
@@ -1189,14 +1284,17 @@ public:
   const char *Name() const override { return "Main"; }
 
 protected:
-  const char *Heading() const override { return "一時停止"; }
-  const char *SubHeading() const override { return "PAUSE"; }
-  const char *Hint() const override { return "↑↓ 選択　　Enter / Space 決定　　ESC 再開"; }
+  const char *Heading() const override { return shore_ ? "浜辺" : "一時停止"; }
+  const char *SubHeading() const override { return shore_ ? "BEACH" : "PAUSE"; }
+  const char *Hint() const override {
+    return shore_ ? "↑↓ 選択　　Enter / Space 決定　　ESC セレクトへ" : "↑↓ 選択　　Enter / Space 決定　　ESC 再開";
+  }
   /// @brief 各項目のラベルを行の中央に描く
   void DrawRows(const PauseMenuScript &owner, float a) const override;
 
 private:
   std::vector<std::unique_ptr<MainCommand>> commands_; ///< 項目（Command）
+  bool shore_ = false;                                 ///< 浜辺モードの並びか
 };
 
 /// @brief 設定ページ（感度・反転・視野角・音量・もどる）
@@ -1273,6 +1371,38 @@ private:
   std::vector<std::unique_ptr<SettingRow>> rows_; ///< 行（KeyBindRow ×操作数 / ResetBindingsRow / BackRow）
 };
 
+/// @brief 操作説明ページ（照準・射撃・武器・ポーズ・決定と戻る / もどる）。浜辺モードから開く
+class PauseMenuScript::HowToPlayPageState : public PauseMenuScript::PageState {
+public:
+  /// @brief 行を並べる（並び順 = 表示順）
+  HowToPlayPageState();
+
+  int RowCount() const override { return static_cast<int>(rows_.size()); }
+  float PanelW() const override { return kSettingsPanelW; }
+  float RowH() const override { return kSettingsRowH; }
+  float RowGap() const override { return kSettingsRowGap; }
+
+  /// @brief 戻るでメインへ、それ以外は選択中の行に処理させる（説明の行は何もしない）
+  void HandlePageInput(PauseMenuScript &owner, StateMachine<PauseMenuScript> &machine,
+                       const MenuInput &input) override;
+
+  /// @brief 状態名
+  /// @return "HowToPlay"
+  const char *Name() const override { return "HowToPlay"; }
+
+protected:
+  const char *Heading() const override { return "操作説明"; }
+  const char *SubHeading() const override { return "HOW TO PLAY　　キーボード・マウス ／ パッド"; }
+  const char *Hint() const override { return "割り当てはキー設定で変えられます　　ESC もどる"; }
+  /// @brief 各行に自分を描かせる
+  void DrawRows(const PauseMenuScript &owner, float a) const override {
+    for (int i = 0; i < RowCount(); ++i) rows_[static_cast<size_t>(i)]->Draw(owner, i, a);
+  }
+
+private:
+  std::vector<std::unique_ptr<SettingRow>> rows_; ///< 行（InfoRow ×操作数 / BackRow）
+};
+
 // ======================================================================
 // 定義（状態・コマンド・行がすべて完全型になってから書く）
 // ======================================================================
@@ -1330,6 +1460,7 @@ void PauseMenuScript::OnCreate() {
   GameSettings::Get().EnsureLoaded();
   if (SceneContext *ctx = GetSceneContext()) ctx->gamePaused = false;
   settingsDirty_ = false;
+  shoreWait_ = 0.0f;
   // 閉じた状態から始める
   fsm_.ChangeState<ClosedState>();
   fsm_.ApplyPending(*this);
@@ -1376,7 +1507,10 @@ float PauseMenuScript::RowH() const { return CurrentPage().RowH(); }
 float PauseMenuScript::RowGap() const { return CurrentPage().RowGap(); }
 
 void PauseMenuScript::OpenMenu(StateMachine<PauseMenuScript> &machine) {
-  if (SceneContext *ctx = GetSceneContext()) ctx->gamePaused = true;
+  // 浜辺モードはシーンそのものがメニューなので、ポーズを掛けずに波や波紋を動かしたままにする
+  if (!shoreMode_) {
+    if (SceneContext *ctx = GetSceneContext()) ctx->gamePaused = true;
+  }
   selected_ = 0;
   anim_ = 0.0f;
   pulse_ = 0.0f;
@@ -1384,7 +1518,7 @@ void PauseMenuScript::OpenMenu(StateMachine<PauseMenuScript> &machine) {
   holdDir_ = 0;
   holdTime_ = 0.0f;
   if (Input *in = Input::GetInstance()) in->GetGameMousePosition(lastMouseX_, lastMouseY_);
-  machine.ChangeState<MainPageState>();
+  machine.ChangeState<MainPageState>(shoreMode_);
   Log::Print("[PauseMenuScript] pause");
 }
 
@@ -1402,7 +1536,7 @@ void PauseMenuScript::BackToMain(StateMachine<PauseMenuScript> &machine, int ind
   waitReleaseAction_ = nullptr;
   selected_ = index;
   bump_ = 1.0f;
-  machine.ChangeState<MainPageState>();
+  machine.ChangeState<MainPageState>(shoreMode_);
 }
 
 void PauseMenuScript::HandleInput(Input *in, PageState &page, StateMachine<PauseMenuScript> &machine) {
@@ -1496,7 +1630,12 @@ void PauseMenuScript::RequestChange(const char *trigger, StateMachine<PauseMenuS
 
 void PauseMenuScript::ClosedState::OnUpdate(PauseMenuScript &owner, StateMachine<PauseMenuScript> &machine,
                                             float deltaTime) {
-  (void)deltaTime;
+  // 浜辺モード：シーンが始まって shoreOpenDelay_ 秒たったら、ひとりでに開く
+  if (owner.shoreMode_) {
+    owner.shoreWait_ += (std::max)(deltaTime, 0.0f);
+    if (owner.shoreWait_ >= owner.shoreOpenDelay_) owner.OpenMenu(machine);
+    return;
+  }
   Input *in = owner.CurrentInput();
   if (in && owner.WantOpen(in) && owner.CanOpen()) owner.OpenMenu(machine);
 }
@@ -1514,14 +1653,22 @@ void PauseMenuScript::SinkingState::OnUpdate(PauseMenuScript &owner, StateMachin
     if (!requested_) {
       // 諦めてメニューへ戻す（画面が沈んだまま操作できなくなるのを避ける）
       owner.anim_ = 1.0f;
-      machine.ChangeState<MainPageState>();
+      machine.ChangeState<MainPageState>(owner.shoreMode_);
     }
   }
 }
 
 // ---- メインページ ----
 
-PauseMenuScript::MainPageState::MainPageState() {
+PauseMenuScript::MainPageState::MainPageState(bool shore) : shore_(shore) {
+  if (shore_) {
+    // 浜辺：シーンを抜ける項目は「セレクトへ」だけ
+    commands_.push_back(std::make_unique<OpenHowToPlayCommand>()); // kMainHowToPlayIndex
+    commands_.push_back(std::make_unique<OpenSettingsCommand>());  // kMainSettingsIndex
+    commands_.push_back(std::make_unique<OpenKeyConfigCommand>()); // kMainKeyConfigIndex
+    commands_.push_back(std::make_unique<ResumeCommand>());        // "セレクトへ"
+    return;
+  }
   commands_.push_back(std::make_unique<ResumeCommand>());
   commands_.push_back(std::make_unique<OpenSettingsCommand>()); // kMainSettingsIndex
   commands_.push_back(std::make_unique<OpenKeyConfigCommand>()); // kMainKeyConfigIndex
@@ -1533,7 +1680,13 @@ void PauseMenuScript::MainPageState::HandlePageInput(PauseMenuScript &owner,
                                                      StateMachine<PauseMenuScript> &machine,
                                                      const MenuInput &input) {
   if (input.back) {
-    owner.CloseMenu(machine);
+    // 浜辺モードには閉じた状態が無いので、ESC はセレクトへ戻る
+    if (owner.shoreMode_) {
+      owner.SaveSettingsIfDirty(false);
+      owner.RequestChange(kTriggerShoreBack, machine);
+    } else {
+      owner.CloseMenu(machine);
+    }
     return;
   }
   if (!(input.confirm || input.mouseClick)) return;
@@ -1649,9 +1802,46 @@ void PauseMenuScript::KeyConfigPageState::HandlePageInput(PauseMenuScript &owner
   rows_[static_cast<size_t>(i)]->Handle(owner, machine, input);
 }
 
+// ---- 操作説明ページ ----
+
+PauseMenuScript::HowToPlayPageState::HowToPlayPageState() {
+  rows_.push_back(std::make_unique<InfoRow>("照準", "マウス", "右スティック", true));
+  rows_.push_back(std::make_unique<InfoRow>("射撃", GameInput::kFire));
+  rows_.push_back(std::make_unique<InfoRow>("武器の切り替え", GameInput::kWeaponPrev, GameInput::kWeaponNext));
+  rows_.push_back(std::make_unique<InfoRow>("ポーズ", GameInput::kPause));
+  rows_.push_back(std::make_unique<InfoRow>("決定", GameInput::kConfirm));
+  rows_.push_back(std::make_unique<InfoRow>("戻る", GameInput::kBack));
+  rows_.push_back(std::make_unique<BackRow>(kMainHowToPlayIndex));
+}
+
+void PauseMenuScript::HowToPlayPageState::HandlePageInput(PauseMenuScript &owner,
+                                                          StateMachine<PauseMenuScript> &machine,
+                                                          const MenuInput &input) {
+  if (input.back) {
+    owner.BackToMain(machine, kMainHowToPlayIndex);
+    return;
+  }
+  const int i = owner.selected_;
+  if (i < 0 || i >= RowCount()) return;
+  rows_[static_cast<size_t>(i)]->Handle(owner, machine, input);
+}
+
 // ---- コマンド ----
 
+void PauseMenuScript::OpenHowToPlayCommand::Execute(PauseMenuScript &owner,
+                                                    StateMachine<PauseMenuScript> &machine) {
+  // 説明の行は選んでも何も起きないので、決定ですぐ戻れるよう「もどる」を選んだ状態で開く
+  owner.selected_ = HowToPlayPageState().RowCount() - 1;
+  owner.bump_ = 1.0f;
+  machine.ChangeState<HowToPlayPageState>();
+}
+
 void PauseMenuScript::ResumeCommand::Execute(PauseMenuScript &owner, StateMachine<PauseMenuScript> &machine) {
+  if (owner.shoreMode_) {
+    owner.SaveSettingsIfDirty(false);
+    owner.RequestChange(kTriggerShoreBack, machine);
+    return;
+  }
   owner.CloseMenu(machine);
 }
 
