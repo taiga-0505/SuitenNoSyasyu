@@ -465,6 +465,9 @@
     <ClCompile Include="..\Engine\Render\Systems\RenderInteractiveWater.cpp">
       <Filter>Render\Systems</Filter>
     </ClCompile>
+    <ClCompile Include="..\Engine\Render\Systems\RenderFFTOcean.cpp">
+      <Filter>Render\Systems</Filter>
+    </ClCompile>
     <ClCompile Include="..\Engine\Render\Skydome\SkydomeManager.cpp">
       <Filter>Render\Skydome</Filter>
     </ClCompile>
@@ -771,6 +774,9 @@
       <Filter>Render</Filter>
     </ClInclude>
     <ClInclude Include="..\Engine\Render\Systems\RenderInteractiveWater.h">
+      <Filter>Render\Systems</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Engine\Render\Systems\RenderFFTOcean.h">
       <Filter>Render\Systems</Filter>
     </ClInclude>
     <ClInclude Include="..\Engine\Render\RenderContext.h">

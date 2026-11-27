@@ -81,6 +81,10 @@ cbuffer WaterParams : register(b6)
     float4 gRefractParams; ///< x: 屈折が有効（1/0）, y: 歪みの強さ（画面 UV）, z: 交差部のフェード幅（m）
     float4 gWaveWindow;    ///< 波紋ハイトマップの範囲。xy: 中心のワールド XZ, z: 一辺（m）
     float4 gInkColor;      ///< 水面の墨の色（rgb）と強さ（a。0 で描かない）
+    float4 gFFTParams;     ///< FFT オーシャン。x: 高さスケール（0 で無効）, y: 1/タイルサイズ, z: 尖り, w: タイルサイズ（m）
+    float4 gFFTParams2;    ///< x: 波の高さのおおよその振幅（m）, y: 1 テクセルのワールド幅（m）
+    float4 gWindParams;    ///< 風向きの回転（主波・詳細波の向きをまとめて回す）。x: cos, y: sin, z: 角度（rad）
+    float4 gHazeParams;    ///< 水平線の霞み。x: 霞みの距離（m。0 で無効）, y: 最大の濃さ（0〜1）, z: 霞み始める距離（m）
 };
 
 #include "OceanWaves.hlsli"
@@ -99,6 +103,10 @@ Texture2D<float> gDepthTexture : register(t5);
 
 // t6: 水を描く直前の画面のコピー（屈折用。gRefractParams.x が 1 のときだけ有効）
 Texture2D<float4> gSceneColor : register(t6);
+
+// t8 / t9: FFT オーシャン（RenderFFTOcean。高さスケール 1・尖り 1 の生の値。gFFTParams.x > 0 のときだけ読む）
+Texture2D<float4> gFFTDisplacement : register(t8); ///< x: Dx, y: 高さ, z: Dz, w: ∂Dx/∂z
+Texture2D<float4> gFFTDerivatives  : register(t9); ///< x: ∂h/∂x, y: ∂h/∂z, z: ∂Dx/∂x, w: ∂Dz/∂z
 
 SamplerState gSampler : register(s0);
 SamplerState gSamplerClamp : register(s2);
@@ -282,7 +290,7 @@ DetailSurface EvaluateDetailSurface(float2 xz, float time, float footprint)
     [unroll]
     for (int i = 0; i < kDetailWaveCount; ++i)
     {
-        DetailWave w = GetDetailWave(i, gWaveFreq, gWaveSpeed, gWaveHeight, detail, gOceanParams.y);
+        DetailWave w = GetDetailWave(i, gWaveFreq, gWaveSpeed, gWaveHeight, detail, gOceanParams.y, gWindParams.z);
         float lambda = kTwoPi / w.k;
         float aa = smoothstep(footprint * 2.0, footprint * 6.0, lambda);
         float ph = DetailPhase(w, xz, time);
@@ -354,10 +362,11 @@ static const float kWaterF0 = 0.02;
 // 最終色は次の 4 段で作る。各段は互いの結果に手を入れず、必要な値は引数で受け取る。
 //
 //   1. 波     EvaluateWaveSurface  : 法線（形）だけを決める。色は持たない。
-//                                    主波・詳細波・波紋・跳ね返り波は「高さ場の傾き ∇h」として足す
+//                                    主波・詳細波・FFT・波紋・跳ね返り波は「高さ場の傾き ∇h」として足す
 //   2. 水中光 EvaluateWaterBody    : 水の中から出てくる光（水の色・屈折・コースティクス・墨・SSS）
 //   3. 反射   EvaluateReflection   : 水面で跳ね返る光（空の映り込み・太陽のギラつき）
 //   4. 泡     EvaluateFoam         : 水面に浮いて上を覆う白（白波・引き波・波頭・波打ち際）
+//   5. 霞み   EvaluateHorizonHaze  : 遠くの水面を水平線の空の色へ寄せる（合成した結果の上に掛ける）
 //
 // 合成は加算：
 //   最終色 = 水中光 × (1 - 反射率) × 泡の透過率
@@ -375,6 +384,7 @@ struct WaterPixel
     float  pixelDepth; ///< 水面のリニア深度
     float  depthDiff;  ///< 水面 → 奥の不透明物までの距離（岸からの距離の目安）
     float  distT;      ///< 遠景フェード（0: 近景, 1: 遠景）
+    float  camDist;    ///< カメラからの距離（m）
 };
 
 /// @brief 波打ち際の跳ね返り波（波の傾きと泡の両方が同じ位相を使う）
@@ -392,7 +402,7 @@ struct WaveSurface
     float3 N;               ///< 最終の法線（法線マップ・凪のムラ込み）
     float2 rippleSlope;     ///< 波紋の傾き（光の計算用に強めたもの。-∇h）
     float  rippleLaplacian; ///< 波紋の曲率（コースティクス用）
-    float3 detailJacobian;  ///< 詳細波の水平変位の偏微分（白波用）
+    float3 detailJacobian;  ///< 詳細波＋FFT の水平変位の偏微分（白波用。主波のぶんは VS の mainJacobian）
     float  roughMask;       ///< さざ波のムラ（1: ざわつく所, 小: 凪）
     float  wakeFoam;        ///< 引き波の泡（波紋テクスチャ g）
     float  crestFoam;       ///< 波頭の泡（波紋テクスチャ b）
@@ -469,8 +479,8 @@ WaterPixel GetWaterPixel(VertexShaderOutput input)
         discard;
     }
 
-    float camDist = distance(gCamera.worldPosition, input.worldPosition);
-    px.distT = (gOceanParams2.y > 0.0) ? saturate(camDist / gOceanParams2.y) : 0.0;
+    px.camDist = distance(gCamera.worldPosition, input.worldPosition);
+    px.distT = (gOceanParams2.y > 0.0) ? saturate(px.camDist / gOceanParams2.y) : 0.0;
     return px;
 }
 
@@ -530,6 +540,33 @@ float2 ShoreBounceGradient(VertexShaderOutput input, float depthDiff, ShoreWave 
     return -depthGradient.xz * returnSlope;
 }
 
+/// @brief FFT オーシャンの ∇h と水平変位の偏微分
+/// @param restXZ    変位前のワールド XZ
+/// @param footprint 1 ピクセルが覆うワールド幅（遠景で傾きを弱める）
+/// @param outJacobian 水平変位の偏微分（∂Dx/∂x, ∂Dz/∂z, ∂Dx/∂z。高さスケール・尖りを掛け済み）
+/// @return ∇h（無効なら 0）
+/// @details テクスチャは変位前の格子で ∂h/∂x を持つ。水平変位で格子が縮んだ所（波の山）ほど
+///          実際の斜面は急なので、1 + ∂D/∂x で割って補正する。
+///          ミップを持たないので、1 ピクセルに何テクセルも入る遠景では傾きを弱めてチラつきを抑える。
+float2 FFTGradient(float2 restXZ, float footprint, out float3 outJacobian)
+{
+    outJacobian = float3(0, 0, 0);
+    float s = gFFTParams.x;
+    if (s <= 0.0) {
+        return float2(0, 0);
+    }
+    float2 uv = restXZ * gFFTParams.y;
+    float4 disp  = gFFTDisplacement.Sample(gSampler, uv);
+    float4 deriv = gFFTDerivatives.Sample(gSampler, uv);
+
+    float lambda = s * gFFTParams.z;
+    outJacobian = float3(lambda * deriv.z, lambda * deriv.w, lambda * disp.w);
+
+    float texelWorld = gFFTParams2.y;
+    float aa = lerp(1.0, 0.25, smoothstep(texelWorld, texelWorld * 6.0, footprint));
+    return s * deriv.xy / max(1.0 + outJacobian.xy, 0.2) * aa;
+}
+
 /// @brief 波の計算（法線・波紋・泡や墨の入力）
 /// @param input VS からの補間値
 /// @param px 画素の共通情報
@@ -563,14 +600,18 @@ WaveSurface EvaluateWaveSurface(VertexShaderOutput input, WaterPixel px, ShoreWa
     float2 fw = fwidth(input.restXZ);
     float footprint = max(max(fw.x, fw.y), 1e-4);
     DetailSurface detail = EvaluateDetailSurface(input.restXZ, gTime, footprint);
-    w.detailJacobian = detail.jacobian;
+
+    // ---- FFT オーシャン ----
+    float3 fftJacobian;
+    float2 gradFFT = FFTGradient(input.restXZ, footprint, fftJacobian);
+    w.detailJacobian = detail.jacobian + fftJacobian;
 
     // ---- 波源ごとの ∇h を足す ----
     float2 gradMain   = MainWaveGradient(input.normal);
     float2 gradDetail = detail.slope;
     float2 gradRipple = -w.rippleSlope; // rippleSlope は -∇h
     float2 gradBounce = ShoreBounceGradient(input, px.depthDiff, shore);
-    float2 grad = gradMain + gradDetail + gradRipple + gradBounce;
+    float2 grad = gradMain + gradDetail + gradRipple + gradBounce + gradFFT;
     w.geoNormal = normalize(float3(-grad.x, 1.0, -grad.y));
 
     // ---- 法線マップ（細かいさざ波）----
@@ -683,7 +724,8 @@ WaterBody EvaluateWaterBody(VertexShaderOutput input, WaterPixel px, WaveSurface
     if (crestTint > 0.0)
     {
         float amplitude = max(gWaveHeight + gWaveHeight2 + gWaveHeight * 0.25
-                              + DetailAmplitudeSum(gWaveFreq, gWaveHeight, gOceanParams.x), 0.001);
+                              + DetailAmplitudeSum(gWaveFreq, gWaveHeight, gOceanParams.x)
+                              + gFFTParams2.x, 0.001);
         body.crestT = smoothstep(0.0, 1.0, saturate(input.waveHeight / amplitude * 0.5 + 0.5)); // 0: 谷, 1: 山
         float3 troughColor = lerp(waterColor.rgb, gWaterDeepColor.rgb, crestTint * 0.85);
         float3 crestColor  = waterColor.rgb * (1.0 + crestTint * 0.35);
@@ -808,7 +850,8 @@ WaterBody EvaluateWaterBody(VertexShaderOutput input, WaterPixel px, WaveSurface
     if (gSssColor.a > 0.0)
     {
         float ampAll = max(gWaveHeight * 1.25 + gWaveHeight2
-                           + DetailAmplitudeSum(gWaveFreq, gWaveHeight, gOceanParams.x), 0.001);
+                           + DetailAmplitudeSum(gWaveFreq, gWaveHeight, gOceanParams.x)
+                           + gFFTParams2.x, 0.001);
         float crest = saturate(input.waveHeight / ampAll * 0.5 + 0.5);
         float2 vh = -V.xz;
         float2 lh = lit.L.xz;
@@ -972,6 +1015,43 @@ FoamLayer EvaluateFoam(VertexShaderOutput input, WaterPixel px, ShoreWave shore,
     return f;
 }
 
+// -----------------------------------------------------------------------------
+// 5. 水平線の霞み（大気遠近）
+// -----------------------------------------------------------------------------
+
+static const float kHazeGrazingStart = 0.1; ///< 霞みが弱まり始める視線の傾き（V.y。約 6 度）
+static const float kHazeGrazingEnd   = 0.4; ///< 霞みが消える視線の傾き（V.y。約 24 度）
+
+/// @brief 遠くの水面を、視線の先の水平線の空の色へ寄せる量と色を求める
+/// @param px 画素の共通情報
+/// @param outSky 寄せる先の色（環境マップの、視線の方向の水平線あたり）
+/// @return 寄せる量（0〜gHazeParams.y。無効なら 0）
+/// @details 本物の海は遠くほど大気の散乱で霞み、水平線で空と溶け合う。これが無いと水面の端が
+///          空との境目にくっきり線になり、水面の板の大きさも見えてしまう。
+///          濃さは 1 - exp(-距離 / 霞みの距離)（Beer-Lambert と同じ形）。霞み始める距離までは 0。
+float EvaluateHorizonHaze(WaterPixel px, out float3 outSky)
+{
+    outSky = float3(0, 0, 0);
+    if (gHazeParams.x <= 0.0) {
+        return 0.0;
+    }
+    float d = max(px.camDist - gHazeParams.z, 0.0);
+    float haze = (1.0 - exp(-d / gHazeParams.x)) * saturate(gHazeParams.y);
+
+    // 寄せる先は「水平線の空」なので、水平線に近い（視線が浅い）所だけに効かせる。
+    // 上から見下ろすと視線の水平方向が画面中心から放射状に変わり、空の模様が放射状の筋になって
+    // 水面が白く褪せる（タイトルのような真上視点で起きた）。V.y = sin(見下ろす角度)
+    //   約 6 度（V.y = 0.1）より浅い: そのまま / 約 24 度（V.y = 0.4）より深い: 霞まない
+    haze *= 1.0 - smoothstep(kHazeGrazingStart, kHazeGrazingEnd, saturate(px.V.y));
+
+    // 視線（カメラ → 水面）を水平にし、水平線のわずか上の空を引く。真下を見ているときは向きが決まらないので上を引く
+    float2 h = -px.V.xz;
+    float hl = length(h);
+    float3 dir = (hl > 1e-4) ? normalize(float3(h.x / hl, 0.03, h.y / hl)) : float3(0, 1, 0);
+    outSky = gEnvironmentTexture.SampleLevel(gSampler, dir, 0).rgb;
+    return haze;
+}
+
 // =============================================================================
 // エントリポイント
 // =============================================================================
@@ -1000,7 +1080,15 @@ PixelShaderOutput main(VertexShaderOutput input)
     float3 finalColor  = bodyTerm + reflectTerm + foamTerm;
 
     // 泡・墨は水面に浮いた不透明な膜なので、濃い所は透かさない（波打ち際の泡は従来どおり α に含めない）
+    float alpha = lerp(body.alpha, 1.0, max(foam.alphaMask, body.inkT * 0.85));
+
+    // 5. 水平線の霞み（合成した結果の上に掛ける。霞んだ所は奥を透かさない）
+    float3 hazeSky;
+    float haze = EvaluateHorizonHaze(px, hazeSky);
+    finalColor = lerp(finalColor, hazeSky, haze);
+    alpha = lerp(alpha, 1.0, haze);
+
     PixelShaderOutput output;
-    output.color = float4(finalColor, lerp(body.alpha, 1.0, max(foam.alphaMask, body.inkT * 0.85)));
+    output.color = float4(finalColor, alpha);
     return output;
 }

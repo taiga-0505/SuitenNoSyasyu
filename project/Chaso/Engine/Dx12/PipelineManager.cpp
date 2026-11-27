@@ -1772,6 +1772,12 @@ void PipelineManager::RegisterDefaultPipelines() {
   // コンピュートパイプライン
   // ============================================================
   CreateCompute("wave_simulation", L"Resources/Shader/Water/WaveSimulation.CS.hlsl", RootSignatureType::WaveSimulationCS);
+
+  // FFT オーシャン（RenderFFTOcean.cpp）。4 パスとも同じルートシグネチャで PSO だけ替える
+  CreateCompute("fft_ocean_init", L"Resources/Shader/Water/FFTOceanInit.CS.hlsl", RootSignatureType::FFTOceanCS);
+  CreateCompute("fft_ocean_spectrum", L"Resources/Shader/Water/FFTOceanSpectrum.CS.hlsl", RootSignatureType::FFTOceanCS);
+  CreateCompute("fft_ocean_row", L"Resources/Shader/Water/FFTOceanRow.CS.hlsl", RootSignatureType::FFTOceanCS);
+  CreateCompute("fft_ocean_column", L"Resources/Shader/Water/FFTOceanColumn.CS.hlsl", RootSignatureType::FFTOceanCS);
 }
 
 // ============================================================================
@@ -1803,7 +1809,7 @@ void PipelineManager::CreateCompute(const std::string &key,
 
   // --- ルートシグネチャ構築 ---
   D3D12_ROOT_PARAMETER params[5] = {};
-  D3D12_DESCRIPTOR_RANGE ranges[3] = {};
+  D3D12_DESCRIPTOR_RANGE ranges[4] = {};
   UINT paramCount = 0;
 
   if (rootType == RootSignatureType::InitParticleCS ||
@@ -1909,6 +1915,26 @@ void PipelineManager::CreateCompute(const std::string &key,
     params[3].DescriptorTable.pDescriptorRanges = &ranges[2];
 
     paramCount = 4;
+  } else if (rootType == RootSignatureType::FFTOceanCS) {
+    // FFTOceanCS の構成: CBV b0, UAV u0〜u3（それぞれ 1 つずつのテーブル）
+    // 中間テクスチャは読み書きとも UAV で扱う（SRV への遷移を挟まずにパスをつなぐため）
+    params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    params[0].Descriptor.ShaderRegister = 0;
+
+    for (int i = 0; i < 4; ++i) {
+      ranges[i].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+      ranges[i].BaseShaderRegister = static_cast<UINT>(i);
+      ranges[i].NumDescriptors = 1;
+      ranges[i].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+      params[1 + i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+      params[1 + i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+      params[1 + i].DescriptorTable.NumDescriptorRanges = 1;
+      params[1 + i].DescriptorTable.pDescriptorRanges = &ranges[i];
+    }
+
+    paramCount = 5;
   }
 
   D3D12_ROOT_SIGNATURE_DESC rsDesc{};

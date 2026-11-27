@@ -148,6 +148,11 @@ bool App::Init() {
 #if RC_ENABLE_IMGUI
     // エディタは停止状態で起動するので、スクリプトが動くよう再生状態にしておく
     editorManager_.SetPlayState(PlayState::Playing);
+    // シーン側は「停止中」から始め、最初のフレームで Play ボタンを押したときと同じ切り替え
+    // （シーンのバックアップ・時間のリセット・デバッグカメラ → ゲームカメラ）を通す。
+    // sceneCtx_.playState の初期値は Playing なので、そのままだと切り替えが起きず、
+    // デバッグカメラの視点のまま撮影されていた。
+    sceneCtx_.playState = PlayState::Stopped;
 #endif
   }
 

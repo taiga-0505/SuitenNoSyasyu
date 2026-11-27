@@ -6081,6 +6081,9 @@
         },
         {
           "data": {
+            "hazeMax": 0.95,
+            "hazeStartDistance": 20.0,
+            "hazeDistance": 180.0,
             "crestTint": 0.0,
             "deepColor": [
               0.02,
@@ -6088,8 +6091,8 @@
               0.36,
               0.949999988079071
             ],
-            "environmentCoeff": 0.6000000238418579,
-            "fresnelPower": 3.0,
+            "environmentCoeff": 1.0,
+            "fresnelPower": 5.0,
             "normalMapPath": "",
             "normalScrollSpeed": 0.07000000029802322,
             "normalStrength": 0.44999998807907104,

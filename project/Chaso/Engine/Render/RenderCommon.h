@@ -1231,6 +1231,19 @@ void SetWaterRefraction(bool enable, float strength, float edgeFade);
 ///          真っ黒にすると暗い水面に溶けて見えないので、少し紫や紺に寄せた暗色にするとよい。
 void SetWaterInkColor(const Vector4 &color);
 
+/// @brief 風向きの回転を設定する（主波・詳細波の向きをまとめて回す）
+/// @param rotationRad 回転角（rad）。0 で従来の向き。WaterComponent::WindRotation() を渡す
+/// @details CPU 側の水面（RC::WaterSurface）と波形を一致させるため、
+///          WaterWaveParams::windRotation と同じ値を渡すこと。FFT オーシャンの風向きは SetFFTOcean で渡す。
+void SetWaterWindRotation(float rotationRad);
+
+/// @brief 水平線の霞み（遠くの水面を空の色へ寄せる）を設定する
+/// @param distance      霞みの距離（m）。startDistance からこの距離だけ離れると約 63% 霞む。0 で無効
+/// @param maxAmount     霞みの最大の濃さ（0〜1）
+/// @param startDistance 霞み始める距離（m）
+/// @details 寄せる先の色は環境マップの、視線の方向の水平線あたりの色。霞んだ所は不透明になる。
+void SetWaterHaze(float distance, float maxAmount, float startDistance);
+
 /// @brief 水面用のフレーム時間を設定する
 /// @param timeSec 累積時間（秒）
 void SetWaterTime(float timeSec);

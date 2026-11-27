@@ -4,9 +4,11 @@
 #include "Mesh/MeshGenerator.h"
 #include "function/function.h"
 #include "RenderInteractiveWater.h"
+#include "RenderFFTOcean.h"
 #include "Common/SceneContext.h"
 #include "../Dx12/Dx12Core.h"
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace RC {
@@ -69,6 +71,16 @@ struct WaterParamsCB {
   Vector4 waveWindow = {0.0f, 0.0f, kInteractiveWaterWorldSize, 0.0f};
   // 水面に落ちた墨（波紋テクスチャの A）の色。rgb: 墨の色、a: 強さ（0 で墨を描かない）
   Vector4 inkColor = {0.03f, 0.028f, 0.042f, 1.0f};
+  // FFT オーシャン（RenderFFTOcean）。描く直前に RenderFFTOcean の設定から写す
+  // x: 高さスケール（0 で FFT を足さない）、y: 1 / タイルサイズ（1/m）、z: 尖り（水平変位の倍率）、w: タイルサイズ（m）
+  Vector4 fftParams = {0.0f, 1.0f / 128.0f, 1.0f, 128.0f};
+  // x: 波の高さのおおよその振幅（m。山・谷の色付けの正規化用）、y: 1 テクセルのワールド幅（m）、zw: 未使用
+  Vector4 fftParams2 = {0.0f, 0.5f, 0.0f, 0.0f};
+  // 風向きの回転（主波・詳細波の向きをまとめて回す。RC::WaterWaveParams::windRotation と同じ値）
+  // x: cos, y: sin, z: 角度（rad）、w: 未使用
+  Vector4 windParams = {1.0f, 0.0f, 0.0f, 0.0f};
+  // 水平線の霞み。x: 霞みの距離（m。0 で無効）、y: 最大の濃さ（0〜1）、z: 霞み始める距離（m）、w: 未使用
+  Vector4 hazeParams = {0.0f, 1.0f, 0.0f, 0.0f};
 };
 static_assert(sizeof(WaterParamsCB) % 16 == 0, "WaterParamsCB は 16 バイト境界に揃えること（HLSL cbuffer と一致させる）");
 
@@ -330,7 +342,25 @@ void DrawWater(int meshHandle, int normalMapHandle) {
         float wx = 0.0f, wz = 0.0f, wsize = kInteractiveWaterWorldSize;
         GetInteractiveWaterWindow(wx, wz, wsize);
         s_waterCBMapped->waveWindow = {wx, wz, wsize, 0.0f};
+
+        // FFT オーシャン。今フレーム計算していなければ高さスケール 0（シェーダーは t8 / t9 を読まない）
+        const FFTOceanSettings &fft = GetFFTOceanSettings();
+        const float tile = (std::max)(fft.tileSize, 1.0f);
+        s_waterCBMapped->fftParams = {IsFFTOceanActive() ? fft.heightScale : 0.0f, 1.0f / tile, fft.choppiness, tile};
+        s_waterCBMapped->fftParams2 = {GetFFTOceanAmplitude(), tile / static_cast<float>(kFFTOceanSize), 0.0f, 0.0f};
         cl->SetGraphicsRootConstantBufferView(11, s_waterCB.Address());
+      }
+
+      // t8 / t9: FFT オーシャンの変位・傾き（RootParameter 17 / 18）。
+      // テクスチャは起動時に作られるので常に載せる（無効なときはシェーダーが読まない）。
+      // 作れなかったときは空にしないよう波紋ハイトマップを仮に載せる
+      {
+        D3D12_GPU_DESCRIPTOR_HANDLE disp = GetFFTOceanDisplacementMap();
+        D3D12_GPU_DESCRIPTOR_HANDLE deriv = GetFFTOceanDerivativeMap();
+        if (disp.ptr == 0) disp = interactiveSrv;
+        if (deriv.ptr == 0) deriv = interactiveSrv;
+        if (disp.ptr != 0) cl->SetGraphicsRootDescriptorTable(17, disp);
+        if (deriv.ptr != 0) cl->SetGraphicsRootDescriptorTable(18, deriv);
       }
 
       ctx.PrimitiveMeshes().ApplyTexture(meshHandle, normalMapHandle);
@@ -432,6 +462,19 @@ void SetWaterInkColor(const Vector4 &color) {
   EnsureWaterCB();
   if (!s_waterCBMapped) return;
   s_waterCBMapped->inkColor = {color.x, color.y, color.z, (std::max)(color.w, 0.0f)};
+}
+
+void SetWaterWindRotation(float rotationRad) {
+  EnsureWaterCB();
+  if (!s_waterCBMapped) return;
+  s_waterCBMapped->windParams = {std::cos(rotationRad), std::sin(rotationRad), rotationRad, 0.0f};
+}
+
+void SetWaterHaze(float distance, float maxAmount, float startDistance) {
+  EnsureWaterCB();
+  if (!s_waterCBMapped) return;
+  s_waterCBMapped->hazeParams = {(std::max)(distance, 0.0f), std::clamp(maxAmount, 0.0f, 1.0f),
+                                 (std::max)(startDistance, 0.0f), 0.0f};
 }
 
 void SetWaterTime(float timeSec) {

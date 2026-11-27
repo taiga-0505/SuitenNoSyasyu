@@ -40,6 +40,9 @@ struct WaterWaveParams {
   float detail        = 1.0f;  ///< 詳細波の強さ（0 で無効。シェーダの gOceanParams.x）
   float choppiness    = 0.6f;  ///< 詳細波の尖り 0..1（gOceanParams.y）
   float minWavelength = 0.0f;  ///< 頂点で変位させる最短波長 m（gOceanParams.w）。WaterComponent::MinDisplacedWavelength()
+
+  // --- 風向き ---
+  float windRotation  = 0.0f;  ///< 主波・詳細波の向きをまとめて回す角度（rad。gWindParams.z）。0 で従来の向き
 };
 
 /// @brief 水面に波の反射を起こす障害物（円柱近似）
@@ -63,7 +66,7 @@ public:
 
   // --- 詳細波の表（OceanWaves.hlsli と完全に同じ値にすること）---
   static constexpr int   kDetailWaveCount = 8;             ///< 詳細波の本数
-  static constexpr float kWindAngle       = 0.620249486f; ///< 風向き（ラジアン）。atan2(0.5, 0.7)
+  static constexpr float kWindAngle       = 0.620249486f; ///< 回転 0 のときの風向き（ラジアン）。atan2(0.5, 0.7)。実際は windRotation だけ回す
   static constexpr float kDetailAngle[kDetailWaveCount] = { -0.62f, 0.47f, -0.21f, 0.83f, 0.12f, -0.97f, 0.58f, -0.41f }; ///< 風向きからのずれ（ラジアン）
   static constexpr float kDetailRatio[kDetailWaveCount] = {  1.37f, 1.79f,  2.23f, 2.71f, 3.29f,  3.97f, 4.81f,  5.83f }; ///< 主波の周波数に対する倍率
   static constexpr float kDetailPhase[kDetailWaveCount] = {  0.0f,  1.7f,   4.1f,  2.3f,  5.5f,   0.9f,  3.3f,   6.0f  }; ///< 初期位相（ラジアン）
@@ -178,6 +181,15 @@ private:
       w.steepness = p.waveSteepness * 0.3f;
       w.amp = p.waveHeight * 0.25f;
     }
+    // 風向きの回転（Water.VS.hlsl の GetWaveDef と同じ回し方）
+    if (p.windRotation != 0.0f) {
+      const float c = std::cos(p.windRotation);
+      const float s = std::sin(p.windRotation);
+      const float x = w.dirX;
+      const float z = w.dirZ;
+      w.dirX = x * c - z * s;
+      w.dirZ = x * s + z * c;
+    }
     return w;
   }
 
@@ -215,7 +227,7 @@ private:
   static void AccumulateDetail(Accum& r, const WaterWaveParams& p, int i, float time,
                                float sx, float sz) {
     const float detail = p.detail;
-    const float ang = kWindAngle + kDetailAngle[i];
+    const float ang = kWindAngle + p.windRotation + kDetailAngle[i];
     const float dirX = std::cos(ang);
     const float dirZ = std::sin(ang);
     const float k = (std::max)(p.waveFreq, 1e-3f) * kDetailRatio[i];

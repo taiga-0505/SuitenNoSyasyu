@@ -3413,6 +3413,9 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                ImGui::DragFloat("Wave Speed 2##W2", &water->waveSpeed2, 0.05f, 0.0f, 10.0f);
                ImGui::DragFloat("Wave Freq 2##W2", &water->waveFreq2, 0.05f, 0.0f, 5.0f);
                ImGui::DragFloat("Steepness", &water->waveSteepness, 0.01f, 0.0f, 1.0f);
+               ImGui::DragFloat("Wind Dir deg (風向き・全ての波)##Water", &water->windDirection, 1.0f, -180.0f, 360.0f);
+               ImGui::SameLine();
+               if (ImGui::SmallButton("Reset##WaterWind")) water->windDirection = RC::WaterSurface::kWindAngle * 57.29577951f;
                ImGui::Separator();
                ImGui::Text("Water Color (水の色)");
                ImGui::ColorEdit4("Shallow (浅瀬)##Water", &water->shallowColor.x);
@@ -3440,6 +3443,27 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                ImGui::Checkbox("Refraction (屈折)##Water", &water->refraction);
                ImGui::DragFloat("Refraction Strength (歪み)##Water", &water->refractionStrength, 0.001f, 0.0f, 0.2f);
                ImGui::DragFloat("Edge Fade m (交差部のぼかし)##Water", &water->edgeFade, 0.01f, 0.0f, 5.0f);
+               ImGui::Separator();
+               ImGui::Text("Horizon Haze (水平線の霞み)");
+               ImGui::DragFloat("Haze Distance m (霞みの距離, 0=無効)##Water", &water->hazeDistance, 1.0f, 0.0f, 5000.0f);
+               ImGui::DragFloat("Haze Max (最大の濃さ)##Water", &water->hazeMax, 0.01f, 0.0f, 1.0f);
+               ImGui::DragFloat("Haze Start m (霞み始める距離)##Water", &water->hazeStartDistance, 1.0f, 0.0f, 5000.0f);
+               ImGui::Separator();
+               ImGui::Text("FFT Ocean (FFT オーシャン)");
+               ImGui::Checkbox("Enabled (FFT を足す)##WaterFFT", &water->fftEnabled);
+               ImGui::DragFloat("Wind Speed m/s (風速)##WaterFFT", &water->fftWindSpeed, 0.1f, 0.5f, 30.0f);
+               ImGui::DragFloat("Tile Size m (タイル)##WaterFFT", &water->fftTileSize, 1.0f, 8.0f, 1024.0f);
+               ImGui::DragFloat("Height Scale (高さ倍率)##WaterFFT", &water->fftHeightScale, 0.01f, 0.0f, 5.0f);
+               ImGui::DragFloat("Choppiness (尖り)##WaterFFT", &water->fftChoppiness, 0.01f, 0.0f, 3.0f);
+               ImGui::DragFloat("Small Wave Cutoff m (短波の打ち切り)##WaterFFT", &water->fftSmallWaveCutoff, 0.005f, 0.0f, 2.0f);
+               {
+                 int seed = static_cast<int>(water->fftSeed);
+                 if (ImGui::DragInt("Seed (乱数の種)##WaterFFT", &seed, 1.0f, 0, 100000)) {
+                   water->fftSeed = static_cast<uint32_t>((std::max)(seed, 0));
+                 }
+               }
+               ImGui::Text("Hs (有義波高の目安): %.2f m", 0.18f * water->fftWindSpeed * water->fftWindSpeed / 9.81f * water->fftHeightScale);
+               ImGui::TextDisabled("浮力（CPU 側の水面）には FFT は入らない");
                ImGui::Separator();
                ImGui::Text("Mesh Handle: %d", water->meshHandle);
                ImGui::Unindent(8.0f);

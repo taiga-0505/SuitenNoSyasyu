@@ -404,6 +404,9 @@ public:
                         water->detailFadeDistance, water->normalTileSize);
                     RC::SetWaterRefraction(water->refraction, water->refractionStrength,
                                            water->edgeFade);
+                    RC::SetFFTOcean(water->ToFFTSettings()); // 毎フレーム渡す（渡さないフレームは FFT を計算しない）
+                    RC::SetWaterWindRotation(water->WindRotation()); // 主波・詳細波の向き（CPU の ToWaveParams と同じ値）
+                    RC::SetWaterHaze(water->hazeDistance, water->hazeMax, water->hazeStartDistance);
                     RC::SetWaterParams(
                         water->waveHeight, water->waveSpeed, water->waveFreq,
                         water->waveHeight2, water->waveSpeed2, water->waveFreq2,

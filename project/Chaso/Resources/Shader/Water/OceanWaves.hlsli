@@ -23,7 +23,7 @@
 #define OCEAN_WAVES_HLSLI
 
 static const int   kDetailWaveCount = 8;           ///< 詳細波の本数
-static const float kWindAngle       = 0.620249486; ///< 風向き（rad）。atan2(0.5, 0.7) = 主波 0 の向き
+static const float kWindAngle       = 0.620249486; ///< 回転 0 のときの風向き（rad）。atan2(0.5, 0.7) = 主波 0 の向き。実際は gWindParams.z だけ回す
 static const float kDetailAngle[kDetailWaveCount] = { -0.62, 0.47, -0.21, 0.83, 0.12, -0.97, 0.58, -0.41 }; ///< 風向きからの角度のずれ（rad）
 static const float kDetailRatio[kDetailWaveCount] = {  1.37, 1.79,  2.23, 2.71, 3.29,  3.97, 4.81,  5.83 }; ///< 主波に対する波数の比（非整数）
 static const float kDetailPhase[kDetailWaveCount] = {  0.0,  1.7,   4.1,  2.3,  5.5,   0.9,  3.3,   6.0  }; ///< 初期位相（rad）
@@ -50,12 +50,13 @@ struct DetailWave
 /// @param baseHeight 主波 0 の高さ（gWaveHeight）
 /// @param detail     詳細波の強さ（0 で無効）
 /// @param choppy     尖り具合（0〜1）
+/// @param windRotation 風向きの回転（rad。gWindParams.z。0 で kWindAngle の向き）
 /// @return 詳細波 1 本分のパラメータ
 DetailWave GetDetailWave(int i, float baseFreq, float baseSpeed, float baseHeight,
-                         float detail, float choppy)
+                         float detail, float choppy, float windRotation)
 {
     DetailWave w;
-    float ang = kWindAngle + kDetailAngle[i];
+    float ang = kWindAngle + windRotation + kDetailAngle[i];
     w.dir    = float2(cos(ang), sin(ang));
     w.k      = max(baseFreq, 1e-3) * kDetailRatio[i];
     w.omega  = baseSpeed * sqrt(kDetailRatio[i]);

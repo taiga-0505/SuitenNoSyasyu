@@ -35,6 +35,7 @@ enum class RootSignatureType {
   EmitParticleCS,     ///< GPU パーティクル射出 CS 用
   Water,              ///< 水面シェーダー用（Object3D + WaterParams b6）
   WaveSimulationCS,   ///< 波のシミュレーション CS 用
+  FFTOceanCS,         ///< FFT オーシャン CS 用（CBV b0 + UAV u0〜u3）
 };
 
 /// @brief Object3D 系ルートシグネチャのパラメータ番号

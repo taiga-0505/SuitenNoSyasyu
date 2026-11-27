@@ -242,8 +242,8 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
   // 既存ルートシグネチャ解放
   root_.Reset();
 
-  D3D12_ROOT_PARAMETER params[18] = {}; // 最大は Water の 17 個
-  D3D12_DESCRIPTOR_RANGE ranges[8] = {}; // t0(Tex), t1(EnvMap), t1(Depth), t1(SkinMat)等
+  D3D12_ROOT_PARAMETER params[19] = {}; // 最大は Water の 19 個
+  D3D12_DESCRIPTOR_RANGE ranges[10] = {}; // t0(Tex), t1(EnvMap), t1(Depth), t1(SkinMat)等
   UINT paramCount = 0;
 
   switch (type) {
@@ -861,7 +861,29 @@ void GraphicsPipeline::buildRootSignature_(RootSignatureType type) {
     params[16].DescriptorTable.NumDescriptorRanges = 1;
     params[16].DescriptorTable.pDescriptorRanges = &ranges[7];
 
-    paramCount = 17;
+    // 17: SRV table t8 (VS, PS) FFT オーシャンの変位（RenderFFTOcean。x: Dx, y: 高さ, z: Dz, w: ∂Dx/∂z）
+    ranges[8].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    ranges[8].BaseShaderRegister = 8; // t8
+    ranges[8].NumDescriptors = 1;
+    ranges[8].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+    params[17].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    params[17].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    params[17].DescriptorTable.NumDescriptorRanges = 1;
+    params[17].DescriptorTable.pDescriptorRanges = &ranges[8];
+
+    // 18: SRV table t9 (PS) FFT オーシャンの傾き（x: ∂h/∂x, y: ∂h/∂z, z: ∂Dx/∂x, w: ∂Dz/∂z）
+    ranges[9].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    ranges[9].BaseShaderRegister = 9; // t9
+    ranges[9].NumDescriptors = 1;
+    ranges[9].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+    params[18].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    params[18].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    params[18].DescriptorTable.NumDescriptorRanges = 1;
+    params[18].DescriptorTable.pDescriptorRanges = &ranges[9];
+
+    paramCount = 19;
     break;
 
   default:

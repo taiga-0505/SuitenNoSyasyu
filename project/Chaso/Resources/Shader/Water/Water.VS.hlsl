@@ -55,12 +55,44 @@ cbuffer WaterParams : register(b6)
     float4 gRefractParams; ///< x: 屈折が有効（1/0）, y: 歪みの強さ（画面 UV）, z: 交差部のフェード幅（m）
     float4 gWaveWindow;    ///< 波紋ハイトマップの範囲。xy: 中心のワールド XZ, z: 一辺（m）
     float4 gInkColor;      ///< 水面の墨の色（rgb）と強さ（a。PS だけが使う）
+    float4 gFFTParams;     ///< FFT オーシャン。x: 高さスケール（0 で無効）, y: 1/タイルサイズ, z: 尖り, w: タイルサイズ（m）
+    float4 gFFTParams2;    ///< x: 波の高さのおおよその振幅（m）, y: 1 テクセルのワールド幅（m）
+    float4 gWindParams;    ///< 風向きの回転（主波・詳細波の向きをまとめて回す）。x: cos, y: sin, z: 角度（rad）
+    float4 gHazeParams;    ///< 水平線の霞み。x: 霞みの距離（m。0 で無効）, y: 最大の濃さ（0〜1）, z: 霞み始める距離（m）
 };
 
 #include "OceanWaves.hlsli"
 
 Texture2D<float4> gInteractiveWave : register(t4); // r: 高さ, g: 引き波の泡, b: 波頭の白波, a: 墨（VS では高さだけ使う）
 SamplerState gSamplerClamp : register(s2);
+
+// t8: FFT オーシャンの変位（RenderFFTOcean。x: Dx, y: 高さ, z: Dz, w: ∂Dx/∂z。高さスケール 1・尖り 1 の生の値）
+Texture2D<float4> gFFTDisplacement : register(t8);
+static const int kFFTTexSize = 256; ///< FFT テクスチャの一辺（RC::kFFTOceanSize と揃える）
+
+/// @brief FFT オーシャンの変位をタイルを繰り返して読む（双線形・ラップ）
+/// @param xz 変位前のワールド XZ
+/// @return 変位（xyz。高さスケールと尖りを掛け済み）。無効なら 0
+/// @details VS から使えるラップのサンプラが無い（s0 は PS 専用）ので、Load 4 回で補間する。
+///          クランプのサンプラで frac(uv) を読むとタイルの継ぎ目に 1 テクセルの段差が出るため。
+float3 SampleFFTDisplacement(float2 xz)
+{
+    if (gFFTParams.x <= 0.0f) {
+        return float3(0, 0, 0);
+    }
+    float2 t = xz * gFFTParams.y * kFFTTexSize - 0.5f;
+    float2 f = frac(t);
+    int2 i0 = int2(floor(t)) & (kFFTTexSize - 1);
+    int2 i1 = (i0 + 1) & (kFFTTexSize - 1);
+    float4 d00 = gFFTDisplacement.Load(int3(i0.x, i0.y, 0));
+    float4 d10 = gFFTDisplacement.Load(int3(i1.x, i0.y, 0));
+    float4 d01 = gFFTDisplacement.Load(int3(i0.x, i1.y, 0));
+    float4 d11 = gFFTDisplacement.Load(int3(i1.x, i1.y, 0));
+    float4 d = lerp(lerp(d00, d10, f.x), lerp(d01, d11, f.x), f.y);
+    float s = gFFTParams.x;
+    float lambda = gFFTParams.z;
+    return s * float3(lambda * d.x, d.y, lambda * d.z);
+}
 
 struct VertexShaderInput
 {
@@ -109,6 +141,7 @@ static const int kMaxObstacles = 4; ///< CB が保持できる障害物の最大
 WaveDef GetWaveDef(int index, float time)
 {
     WaveDef w;
+    // 下の向きは「風向きの回転 0」のときのもの。最後に gWindParams の角度だけまとめて回す
     if (index == 0) {
         // 主波（X 方向寄り）
         w.dir       = normalize(float2(0.7, 0.5));
@@ -131,6 +164,9 @@ WaveDef GetWaveDef(int index, float time)
         w.steepness = gWaveSteepness * 0.3;
         w.amp       = gWaveHeight * 0.25;
     }
+    // 風向きの回転（RC::WaterSurface::GetWave と同じ回し方）
+    w.dir = float2(w.dir.x * gWindParams.x - w.dir.y * gWindParams.y,
+                   w.dir.x * gWindParams.y + w.dir.y * gWindParams.x);
     return w;
 }
 
@@ -181,7 +217,7 @@ float3 ComputeDetailOffset(float2 xz, float time)
     [unroll]
     for (int i = 0; i < kDetailWaveCount; ++i)
     {
-        DetailWave w = GetDetailWave(i, gWaveFreq, gWaveSpeed, gWaveHeight, detail, gOceanParams.y);
+        DetailWave w = GetDetailWave(i, gWaveFreq, gWaveSpeed, gWaveHeight, detail, gOceanParams.y, gWindParams.z);
         float lambda = kTwoPi / w.k;
         float fade = smoothstep(minLambda, minLambda * 1.5, lambda);
         float ph = DetailPhase(w, xz, time);
@@ -259,11 +295,11 @@ void AccumulateReflection(inout GerstnerResult result, WaveDef w, float2 posXZ,
     }
 }
 
-/// @brief 主波 3 本・反射波・詳細波をすべて合わせた変位と接線・従法線を求める
+/// @brief 主波 3 本・反射波・詳細波・FFT オーシャンをすべて合わせた変位と接線・従法線を求める
 /// @details 障害物の内側では変位を 0 に寄せ、メッシュが岩を突き抜けないようにする。
 /// @param pos  変位前のワールド位置
 /// @param time 経過時間（秒）
-/// @return 変位と接線・従法線（接線・従法線には詳細波を含めない）
+/// @return 変位と接線・従法線（接線・従法線には詳細波・FFT を含めない）
 GerstnerResult ComputeGerstnerWave(float3 pos, float time)
 {
     GerstnerResult result;
@@ -290,6 +326,9 @@ GerstnerResult ComputeGerstnerWave(float3 pos, float time)
 
     // 詳細波（変位のみ。法線は PS）
     result.offset += ComputeDetailOffset(pos.xz, time);
+
+    // FFT オーシャン（変位のみ。法線と白波のヤコビアンは PS がテクスチャから読む）
+    result.offset += SampleFFTDisplacement(pos.xz);
 
     // 障害物の内側では水面を平らに寄せ、メッシュが岩を突き抜けないようにする
     float insideMask = 1.0f;

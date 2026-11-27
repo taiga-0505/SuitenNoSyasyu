@@ -3,6 +3,7 @@
 #include "IComponent.h"
 #include "Math/MathTypes.h"
 #include "Common/Water/WaterSurface.h"
+#include "Render/Systems/RenderFFTOcean.h"
 #include <string>
 #include <nlohmann/json.hpp>
 
@@ -24,6 +25,13 @@ public:
   float waveSpeed2  = 1.0f;  ///< 第 2 波の速さ
   float waveFreq2   = 1.2f;  ///< 第 2 波の周波数
   float waveSteepness = 0.4f; ///< Gerstner 波の尖り（0〜1）
+  /// @brief 風向き（度。+X から +Z へ回る向き）。主波・詳細波・FFT の波の向きをまとめて決める
+  /// @details 既定値は従来の固定の向き（主波 0 の向き = atan2(0.5, 0.7) ≒ 35.5 度）。この値なら見た目は以前と同じ
+  float windDirection = RC::WaterSurface::kWindAngle * 57.29577951f;
+
+  /// @brief 主波・詳細波を従来の向きから回す角度
+  /// @return windDirection と従来の風向き（kWindAngle）の差（rad）
+  float WindRotation() const { return windDirection * 0.01745329252f - RC::WaterSurface::kWindAngle; }
 
   // --- 水の色 ---
   RC::Vector4 shallowColor = {0.1f, 0.5f, 0.6f, 0.85f}; ///< 浅瀬の色（RGBA）
@@ -48,10 +56,41 @@ public:
   float detailFadeDistance = 150.0f; ///< この距離に向けて細かい法線を弱め、太陽の照り返しを広げる（0 で無効）
   float normalTileSize   = 0.0f;   ///< 法線マップ 1 枚のワールドサイズ m（0 で従来どおり平面の UV に貼る）
 
+  // --- 水平線の霞み ---
+  float hazeDistance      = 0.0f; ///< 霞みの距離 m（霞み始めてからこの距離で約 63% 霞む。0 で無効）
+  float hazeMax           = 1.0f; ///< 霞みの最大の濃さ（0〜1）
+  float hazeStartDistance = 0.0f; ///< 霞み始める距離 m
+
   // --- 屈折（スクリーンテクスチャ）---
   bool  refraction         = true;  ///< 水を描く前の画面を法線で歪めて透かす（false で従来の αブレンド）
   float refractionStrength = 0.04f; ///< 歪みの強さ（画面 UV）
   float edgeFade           = 0.5f;  ///< 物体との交差部をぼかす幅 m
+
+  // --- FFT オーシャン（RenderFFTOcean。主波・詳細波に足す）---
+  // ※ CPU 側の水面（ToWaveParams / 浮力）にはまだ入らない。見た目だけ
+  // ※ 風向きは主波・詳細波と共通の windDirection を使う
+  bool  fftEnabled     = false; ///< FFT オーシャンを足すか
+  float fftTileSize    = 128.0f; ///< タイル 1 枚のワールドサイズ m（これより長い波は表せない）
+  float fftWindSpeed   = 8.0f;  ///< 風速 m/s（有義波高はおよそ 0.18 × 風速² / 9.8）
+  float fftHeightScale = 1.0f;  ///< 高さの倍率
+  float fftChoppiness  = 1.0f;  ///< 尖り（水平変位の倍率）
+  float fftSmallWaveCutoff = 0.05f; ///< これより短い波を弱める長さ m
+  uint32_t fftSeed     = 1;     ///< 乱数の種
+
+  /// @brief FFT オーシャンの設定を組み立てる
+  /// @return RenderFFTOcean に渡す設定
+  RC::FFTOceanSettings ToFFTSettings() const {
+    RC::FFTOceanSettings s;
+    s.enabled = fftEnabled && visible;
+    s.tileSize = fftTileSize;
+    s.windSpeed = fftWindSpeed;
+    s.windDirectionDeg = windDirection; // 主波・詳細波と同じ風向き
+    s.smallWaveCutoff = fftSmallWaveCutoff;
+    s.seed = fftSeed;
+    s.heightScale = fftHeightScale;
+    s.choppiness = fftChoppiness;
+    return s;
+  }
 
   /// @brief 頂点で表現できる最短波長（頂点 4 つぶん）。これより短い詳細波は変位させず、法線だけで描く
   /// @return 平面の長辺を segments で割った間隔の 4 倍（ワールド単位）
@@ -77,6 +116,7 @@ public:
     p.detail        = detailStrength;
     p.choppiness    = choppiness;
     p.minWavelength = MinDisplacedWavelength();
+    p.windRotation  = WindRotation();
     return p;
   }
 
@@ -107,6 +147,7 @@ public:
       {"waveSpeed2", waveSpeed2},
       {"waveFreq2", waveFreq2},
       {"waveSteepness", waveSteepness},
+      {"windDirection", windDirection},
       {"shallowColor", {shallowColor.x, shallowColor.y, shallowColor.z, shallowColor.w}},
       {"deepColor", {deepColor.x, deepColor.y, deepColor.z, deepColor.w}},
       {"fresnelPower", fresnelPower},
@@ -126,6 +167,16 @@ public:
       {"refraction", refraction},
       {"refractionStrength", refractionStrength},
       {"edgeFade", edgeFade},
+      {"hazeDistance", hazeDistance},
+      {"hazeMax", hazeMax},
+      {"hazeStartDistance", hazeStartDistance},
+      {"fftEnabled", fftEnabled},
+      {"fftTileSize", fftTileSize},
+      {"fftWindSpeed", fftWindSpeed},
+      {"fftHeightScale", fftHeightScale},
+      {"fftChoppiness", fftChoppiness},
+      {"fftSmallWaveCutoff", fftSmallWaveCutoff},
+      {"fftSeed", fftSeed},
       {"planeWidth", planeWidth},
       {"planeHeight", planeHeight},
       {"segments", segments},
@@ -144,6 +195,7 @@ public:
     if (j.contains("waveSpeed2")) waveSpeed2 = j["waveSpeed2"].get<float>();
     if (j.contains("waveFreq2")) waveFreq2 = j["waveFreq2"].get<float>();
     if (j.contains("waveSteepness")) waveSteepness = j["waveSteepness"].get<float>();
+    if (j.contains("windDirection")) windDirection = j["windDirection"].get<float>();
     if (j.contains("shallowColor")) {
       auto& c = j["shallowColor"];
       shallowColor = {c[0].get<float>(), c[1].get<float>(), c[2].get<float>(), c[3].get<float>()};
@@ -172,6 +224,16 @@ public:
     if (j.contains("refraction")) refraction = j["refraction"].get<bool>();
     if (j.contains("refractionStrength")) refractionStrength = j["refractionStrength"].get<float>();
     if (j.contains("edgeFade")) edgeFade = j["edgeFade"].get<float>();
+    if (j.contains("hazeDistance")) hazeDistance = j["hazeDistance"].get<float>();
+    if (j.contains("hazeMax")) hazeMax = j["hazeMax"].get<float>();
+    if (j.contains("hazeStartDistance")) hazeStartDistance = j["hazeStartDistance"].get<float>();
+    if (j.contains("fftEnabled")) fftEnabled = j["fftEnabled"].get<bool>();
+    if (j.contains("fftTileSize")) fftTileSize = j["fftTileSize"].get<float>();
+    if (j.contains("fftWindSpeed")) fftWindSpeed = j["fftWindSpeed"].get<float>();
+    if (j.contains("fftHeightScale")) fftHeightScale = j["fftHeightScale"].get<float>();
+    if (j.contains("fftChoppiness")) fftChoppiness = j["fftChoppiness"].get<float>();
+    if (j.contains("fftSmallWaveCutoff")) fftSmallWaveCutoff = j["fftSmallWaveCutoff"].get<float>();
+    if (j.contains("fftSeed")) fftSeed = j["fftSeed"].get<uint32_t>();
     if (j.contains("planeWidth")) planeWidth = j["planeWidth"].get<float>();
     if (j.contains("planeHeight")) planeHeight = j["planeHeight"].get<float>();
     if (j.contains("segments")) segments = j["segments"].get<uint32_t>();

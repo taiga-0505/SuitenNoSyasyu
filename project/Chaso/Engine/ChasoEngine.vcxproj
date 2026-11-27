@@ -199,6 +199,7 @@
     <ClCompile Include="..\Engine\Render\Systems\RenderPrimitiveMesh.cpp" />
     <ClCompile Include="..\Engine\Render\Systems\RenderWater.cpp" />
     <ClCompile Include="..\Engine\Render\Systems\RenderInteractiveWater.cpp" />
+    <ClCompile Include="..\Engine\Render\Systems\RenderFFTOcean.cpp" />
     <ClCompile Include="..\Engine\Render\Systems\RenderSprite.cpp" />
     <ClCompile Include="..\Engine\Render\Systems\RenderFont.cpp" />
     <ClCompile Include="..\Engine\Render\Skydome\SkydomeManager.cpp" />
@@ -303,6 +304,7 @@
     <ClInclude Include="..\Engine\Render\Effect\EffectParticleSystem.h" />
     <ClInclude Include="..\Engine\Render\RenderCommon.h" />
     <ClInclude Include="..\Engine\Render\Systems\RenderInteractiveWater.h" />
+    <ClInclude Include="..\Engine\Render\Systems\RenderFFTOcean.h" />
     <ClInclude Include="..\Engine\Render\RenderContext.h" />
     <ClInclude Include="..\Engine\Render\SortKey.h" />
     <ClInclude Include="..\Engine\Render\FrameResource.h" />
