@@ -7,7 +7,8 @@
 //   - GGX スペキュラ、SSS（波頭を透ける光）、白波、平行光源の影
 //   - 屈折（水を描く直前の画面のコピーをずらして引く）
 //   - 波打ち際の泡と跳ね返り波
-// を重ねて最終色を出す。頂点側は Water.VS.hlsl。
+// を、波（法線）/ 水中から出てくる光 / 反射 / 泡 の成分ごとに別の関数で求め、
+// 最後に足し合わせて最終色を出す（合成の式は下の「水面の成分ごとの計算」を参照）。頂点側は Water.VS.hlsl。
 // =============================================================================
 
 #include "Water.hlsli"
@@ -344,62 +345,201 @@ float LinearizeDepth(float depth, float nearZ, float farZ)
     return (nearZ * farZ) / (farZ - depth * (farZ - nearZ));
 }
 
-/// @brief エントリポイント。水面の最終色と不透明度を求める
-/// @param input VS からの補間値
-/// @return 出力色
-PixelShaderOutput main(VertexShaderOutput input)
+/// @brief 水の垂直入射時の反射率（屈折率 1.33 から）
+static const float kWaterF0 = 0.02;
+
+// =============================================================================
+// 水面の成分ごとの計算
+// =============================================================================
+// 最終色は次の 4 段で作る。各段は互いの結果に手を入れず、必要な値は引数で受け取る。
+//
+//   1. 波     EvaluateWaveSurface  : 法線（形）だけを決める。色は持たない。
+//                                    主波・詳細波・波紋・跳ね返り波は「高さ場の傾き ∇h」として足す
+//   2. 水中光 EvaluateWaterBody    : 水の中から出てくる光（水の色・屈折・コースティクス・墨・SSS）
+//   3. 反射   EvaluateReflection   : 水面で跳ね返る光（空の映り込み・太陽のギラつき）
+//   4. 泡     EvaluateFoam         : 水面に浮いて上を覆う白（白波・引き波・波頭・波打ち際）
+//
+// 合成は加算：
+//   最終色 = 水中光 × (1 - 反射率) × 泡の透過率
+//          + 反射   ×              泡の透過率
+//          + 泡（不透明度を掛け済みの色）
+// 各項に重みが掛かっているのはエネルギーを保つため（重み無しで足すと反射や泡の所が白飛びする）。
+// 以前の「lerp を順に重ねる」書き方を展開したものと同じ値になる。
+
+/// @brief 画面・深度から求める、この画素の共通情報
+struct WaterPixel
 {
-    PixelShaderOutput output;
+    float3 V;          ///< 表面 → カメラ（正規化済み）
+    float2 screenUV;   ///< 画面 UV
+    float  sceneDepth; ///< 水の奥にある不透明物までのリニア深度
+    float  pixelDepth; ///< 水面のリニア深度
+    float  depthDiff;  ///< 水面 → 奥の不透明物までの距離（岸からの距離の目安）
+    float  distT;      ///< 遠景フェード（0: 近景, 1: 遠景）
+};
 
-    float3 V = normalize(gCamera.worldPosition - input.worldPosition);
+/// @brief 波打ち際の跳ね返り波（波の傾きと泡の両方が同じ位相を使う）
+struct ShoreWave
+{
+    float phase;     ///< 跳ね返り波の位相
+    float fade;      ///< 0: 岸際 〜 1: foamDepth 以上離れた
+    float intensity; ///< 岸に近いほど 1 に近い強さ
+};
 
-    // =========================
-    // 深度計算（Z テスト代用＆岸からの距離）
-    // =========================
-    float2 screenUV = input.position.xy * gInvScreenSize.xy;
-    float sceneDepthNonLinear = gDepthTexture.SampleLevel(gSamplerClamp, screenUV, 0).r;
-    float sceneDepth = LinearizeDepth(sceneDepthNonLinear, gCameraNearFar.x, gCameraNearFar.y);
-    float pixelDepth = LinearizeDepth(input.position.z, gCameraNearFar.x, gCameraNearFar.y);
-    float depthDiff = sceneDepth - pixelDepth;
+/// @brief 波の計算結果（形だけ。色は持たない）
+struct WaveSurface
+{
+    float3 geoNormal;       ///< うねりの法線（主波＋詳細波＋波紋＋跳ね返り波。法線マップは含まない）
+    float3 N;               ///< 最終の法線（法線マップ・凪のムラ込み）
+    float2 rippleSlope;     ///< 波紋の傾き（光の計算用に強めたもの。-∇h）
+    float  rippleLaplacian; ///< 波紋の曲率（コースティクス用）
+    float3 detailJacobian;  ///< 詳細波の水平変位の偏微分（白波用）
+    float  roughMask;       ///< さざ波のムラ（1: ざわつく所, 小: 凪）
+    float  wakeFoam;        ///< 引き波の泡（波紋テクスチャ g）
+    float  crestFoam;       ///< 波頭の泡（波紋テクスチャ b）
+    float  inkAmount;       ///< 墨の濃さ（波紋テクスチャ a）
+};
 
-    if (depthDiff < 0.0f) {
+/// @brief 各成分が共通で使う光の情報
+struct WaterLighting
+{
+    float3 L;          ///< 表面 → 光源
+    float3 lightColor; ///< 光の色 × 強さ
+    float  NdotL;      ///< N・L
+    float  diffuse;    ///< ハーフランバートの 2 乗
+    float  NdotV;      ///< N・V
+    float  fresnel;    ///< フレネル反射率
+    float3 shadowTint; ///< 日光で照らされる成分に掛ける影の色
+    float  sunVisible; ///< 直射光（ギラつき・SSS）が届く率
+};
+
+/// @brief 水中から出てくる光
+struct WaterBody
+{
+    float3 color;   ///< 水の色（拡散・屈折・墨込み）。反射率ぶん減らして足す
+    float3 scatter; ///< 波頭を透ける光（SSS）。(1 - フレネル) を掛けて足す
+    float  alpha;   ///< 水の不透明度（泡・墨を除く）
+    float  crestT;  ///< 0: 谷 〜 1: 山（crestTint が有効なときだけ）
+    float  inkT;    ///< 墨の覆い具合（泡を薄くするのと α に使う）
+};
+
+/// @brief 水面で跳ね返る光
+struct WaterReflection
+{
+    float3 env;      ///< 空の映り込みの色
+    float  weight;   ///< 映り込みの割合（フレネル × 環境マップ係数）
+    float3 specular; ///< 太陽のギラつき（そのまま足す）
+};
+
+/// @brief 泡（上に被さる層）。color は不透明度を掛け済み、transmit は下の層が透けて見える率
+struct FoamLayer
+{
+    float3 color;     ///< 泡の色（不透明度を掛け済み）
+    float  transmit;  ///< 下（水中光・反射）が見える率
+    float  alphaMask; ///< 水の α を不透明へ寄せる量
+};
+
+/// @brief 泡の層に 1 枚重ねる（lerp(下, c, a) と同じ結果になる形で積む）
+/// @param f 泡の層
+/// @param c 重ねる泡の色
+/// @param a 重ねる泡の不透明度
+void FoamOver(inout FoamLayer f, float3 c, float a)
+{
+    f.color = f.color * (1.0 - a) + c * a;
+    f.transmit *= 1.0 - a;
+}
+
+// -----------------------------------------------------------------------------
+// 0. 画素の共通情報
+// -----------------------------------------------------------------------------
+
+/// @brief 画面・深度の情報を集める（奥に物が無く水面が手前に出ない画素は discard）
+/// @param input VS からの補間値
+/// @return 画素の共通情報
+WaterPixel GetWaterPixel(VertexShaderOutput input)
+{
+    WaterPixel px;
+    px.V = normalize(gCamera.worldPosition - input.worldPosition);
+    px.screenUV = input.position.xy * gInvScreenSize.xy;
+    float sceneDepthNonLinear = gDepthTexture.SampleLevel(gSamplerClamp, px.screenUV, 0).r;
+    px.sceneDepth = LinearizeDepth(sceneDepthNonLinear, gCameraNearFar.x, gCameraNearFar.y);
+    px.pixelDepth = LinearizeDepth(input.position.z, gCameraNearFar.x, gCameraNearFar.y);
+    px.depthDiff = px.sceneDepth - px.pixelDepth;
+
+    if (px.depthDiff < 0.0f) {
         discard;
     }
 
-    // 法線計算（ジオメトリ法線）
-    float3 geoNormal = normalize(input.normal);
+    float camDist = distance(gCamera.worldPosition, input.worldPosition);
+    px.distT = (gOceanParams2.y > 0.0) ? saturate(camDist / gOceanParams2.y) : 0.0;
+    return px;
+}
 
-    // =========================
-    // 跳ね返り波（法線のうねり）の計算
-    // =========================
-    // ddx, ddy を用いてスクリーン空間での水深の変化量とワールド座標の変化量を取得
+/// @brief 岸からの跳ね返り波の位相と強さ
+/// @param depthDiff 水面 → 奥の不透明物までの距離
+/// @return 跳ね返り波の情報
+ShoreWave GetShoreWave(float depthDiff)
+{
+    // depthDiff（水深）を使って等深線に沿った波紋を作る。
+    // gTime を足すことで、浅いところ（0）から深いところ（> 0）へ向かって波紋が動く（跳ね返るように見える）。
+    const float returnWaveFreq = 4.0f;
+    const float returnWaveSpeed = 3.5f;
+
+    ShoreWave s;
+    s.phase = depthDiff * returnWaveFreq + gTime * returnWaveSpeed;
+    float foamDepthThreshold = max(gFoamParams.x, 0.001f);
+    s.fade = saturate(depthDiff / foamDepthThreshold);
+    s.intensity = pow(1.0f - s.fade, 1.5f);
+    return s;
+}
+
+// -----------------------------------------------------------------------------
+// 1. 波（法線）
+// -----------------------------------------------------------------------------
+// 高さ場 y = h(x,z) の法線は (-hx, 1, -hz)。波源ごとに ∇h を求めて足すと、
+// 高さを足し合わせた水面の法線になる（波源を足し引きしても互いに影響しない）。
+
+/// @brief 主波（VS の Gerstner ＋ 障害物の反射波）の ∇h
+/// @param vertexNormal VS が求めた法線
+/// @return ∇h
+float2 MainWaveGradient(float3 vertexNormal)
+{
+    float3 n = normalize(vertexNormal);
+    float ny = max(n.y, 0.2); // 折り返し寸前で傾きが発散しないように
+    return n.xz / -ny;
+}
+
+/// @brief 岸からの跳ね返り波の ∇h
+/// @param input VS からの補間値（ワールド位置の画面微分に使う）
+/// @param depthDiff 水面 → 奥の不透明物までの距離
+/// @param shore 跳ね返り波の情報
+/// @return ∇h
+float2 ShoreBounceGradient(VertexShaderOutput input, float depthDiff, ShoreWave shore)
+{
+    // ddx, ddy を用いてスクリーン空間での水深の変化量とワールド座標の変化量を取得し、
+    // 水深が深くなる方向（岩から離れる方向＝沖）を求める
     float dDepthX = ddx(depthDiff);
     float dDepthY = ddy(depthDiff);
     float3 dPosW_X = ddx(input.worldPosition);
     float3 dPosW_Y = ddy(input.worldPosition);
-
-    // 水深が深くなる方向（岩から離れる方向＝沖）のワールド空間ベクトルを計算
     float3 depthGradient = normalize(dDepthX * dPosW_X + dDepthY * dPosW_Y + float3(0, 0.0001f, 0));
     depthGradient.y = 0.0f; // 水平方向のみにする
     depthGradient = normalize(depthGradient + float3(0, 0.0001f, 0));
 
-    // 岸からの跳ね返り波の位相（泡の計算と同じ）
-    float returnWaveFreq = 4.0f;
-    float returnWaveSpeed = 3.5f;
-    float returnWavePhase = depthDiff * returnWaveFreq + gTime * returnWaveSpeed;
+    // cos 波でうねりを表し、岸辺に近いほど強くする。法線を沖方向へ傾ける = 沖へ下る斜面
+    float returnSlope = cos(shore.phase) * 0.5f * shore.intensity;
+    return -depthGradient.xz * returnSlope;
+}
 
-    // 岸辺に近いほど波を強くする
-    float foamDepthThreshold = max(gFoamParams.x, 0.001f);
-    float foamFade = saturate(depthDiff / foamDepthThreshold);
-    float foamBaseIntensity = pow(1.0f - foamFade, 1.5f);
+/// @brief 波の計算（法線・波紋・泡や墨の入力）
+/// @param input VS からの補間値
+/// @param px 画素の共通情報
+/// @param shore 跳ね返り波の情報
+/// @return 波の計算結果
+WaveSurface EvaluateWaveSurface(VertexShaderOutput input, WaterPixel px, ShoreWave shore)
+{
+    WaveSurface w;
 
-    // 跳ね返り波による法線の傾き（cos 波でうねりを表現）
-    float returnSlope = cos(returnWavePhase) * 0.5f * foamBaseIntensity;
-
-    // 跳ね返り方向（沖方向）に法線を傾ける
-    float3 bounceNormal = depthGradient * returnSlope;
-
-    // 波紋ハイトマップの法線計算（ハイトマップはカメラに合わせて動く窓 gWaveWindow を覆う）
+    // ---- 波紋ハイトマップ（ハイトマップはカメラに合わせて動く窓 gWaveWindow を覆う）----
     float2 waveUV = WaveWindowUV(input.worldPosition.xz, gWaveWindow);
     float texelSize = 1.0f / 256.0f;
     float hL = gInteractiveWave.Sample(gSamplerClamp, waveUV + float2(-texelSize, 0)).r;
@@ -410,77 +550,116 @@ PixelShaderOutput main(VertexShaderOutput input)
     // 範囲外（UV が 0〜1 の外）はクランプで端の値になるので 0 に落とし、窓の縁ではぼかして切れ目を消す
     float4 waveCenter = gInteractiveWave.Sample(gSamplerClamp, waveUV);
     float inWaveArea = WaveWindowEdgeFade(waveUV);
-    float2 foamSample = waveCenter.gb * inWaveArea;
-    float wakeFoam  = foamSample.x;
-    float crestFoam = foamSample.y;
-    float inkAmount = waveCenter.a * inWaveArea;
+    w.wakeFoam  = waveCenter.g * inWaveArea;
+    w.crestFoam = waveCenter.b * inWaveArea;
+    w.inkAmount = waveCenter.a * inWaveArea;
 
-    // 波紋の法線（光の計算用に傾きを強める。ShapeRippleSlope 参照）と、集光に使う曲率（ラプラシアン）
+    // 波紋の傾き（光の計算用に強める。ShapeRippleSlope 参照）と、集光に使う曲率（ラプラシアン）
     float texelWorld = gWaveWindow.z * texelSize;
-    float2 rippleSlope = float2(hL - hR, hD - hU) / (2.0f * texelWorld) * inWaveArea;
-    rippleSlope = ShapeRippleSlope(rippleSlope);
-    float3 interactiveNormal = normalize(float3(rippleSlope.x, 1.0f, rippleSlope.y));
-    float rippleLaplacian = (hL + hR + hU + hD - 4.0f * waveCenter.r) / (texelWorld * texelWorld) * inWaveArea;
+    w.rippleSlope = ShapeRippleSlope(float2(hL - hR, hD - hU) / (2.0f * texelWorld) * inWaveArea);
+    w.rippleLaplacian = (hL + hR + hU + hD - 4.0f * waveCenter.r) / (texelWorld * texelWorld) * inWaveArea;
 
-    // ジオメトリ法線 + 波紋法線 + 跳ね返り法線
-    geoNormal = normalize(geoNormal + (interactiveNormal - float3(0, 1, 0)) + bounceNormal);
-
-    // =========================
-    // 詳細波（ピクセルごとの解析法線）
-    // =========================
-    // 高さ場 y = h(x,z) の法線は (-hx, 1, -hz)。主波の法線を傾きに戻し、詳細波の傾きを足す。
-    float camDist = distance(gCamera.worldPosition, input.worldPosition);
-    float distT = (gOceanParams2.y > 0.0) ? saturate(camDist / gOceanParams2.y) : 0.0; // 0: 近景, 1: 遠景
+    // ---- 詳細波（ピクセルごとの解析法線）----
     float2 fw = fwidth(input.restXZ);
     float footprint = max(max(fw.x, fw.y), 1e-4);
-    DetailSurface detailSurf = EvaluateDetailSurface(input.restXZ, gTime, footprint);
-    {
-        float ny = max(geoNormal.y, 0.2);
-        float2 slope = geoNormal.xz / -ny + detailSurf.slope;
-        geoNormal = normalize(float3(-slope.x, 1.0, -slope.y));
-    }
+    DetailSurface detail = EvaluateDetailSurface(input.restXZ, gTime, footprint);
+    w.detailJacobian = detail.jacobian;
 
-    // ノイズテクスチャのスクロール法線と合成
+    // ---- 波源ごとの ∇h を足す ----
+    float2 gradMain   = MainWaveGradient(input.normal);
+    float2 gradDetail = detail.slope;
+    float2 gradRipple = -w.rippleSlope; // rippleSlope は -∇h
+    float2 gradBounce = ShoreBounceGradient(input, px.depthDiff, shore);
+    float2 grad = gradMain + gradDetail + gradRipple + gradBounce;
+    w.geoNormal = normalize(float3(-grad.x, 1.0, -grad.y));
+
+    // ---- 法線マップ（細かいさざ波）----
     // gOceanParams2.z > 0 ならワールド座標で敷き詰める（平面の大きさに関係なく同じ細かさになる）
     float2 normalUV = (gOceanParams2.z > 0.0)
         ? input.worldPosition.xz / (gOceanParams2.z * 4.0)
         : input.texcoord;
     // 遠景では細かい法線を弱める（タイルの繰り返しとギラギラしたチラつきを抑える）
-    float normalStrength = gNormalStrength * lerp(1.0, 0.35, distT);
-    float3 N = GetScrolledNormal(normalUV, gTime, geoNormal, normalStrength);
+    float normalStrength = gNormalStrength * lerp(1.0, 0.35, px.distT);
+    w.N = GetScrolledNormal(normalUV, gTime, w.geoNormal, normalStrength);
 
-    // =========================
-    // さざ波のムラ（真上視点のシーンだけ。crestTint > 0 のとき）
-    // =========================
+    // ---- さざ波のムラ（真上視点のシーンだけ。crestTint > 0 のとき）----
     // 法線マップは uv*4 / uv*6 で敷き詰めているので、真上から見ると細かい白い照り返しが
     // 画面全体に同じ密度で並び、模様が均一すぎて不自然に見える。
     // 同じ法線マップをずっと粗いスケールで引いて「風が当たってざわつく所 / 凪いで鏡のような所」の
     // マスクを作り、凪の所では細かい法線を弱める。照り返し・映り込みもそれに合わせて疎密が出る。
-    float roughMask = 1.0;
+    w.roughMask = 1.0;
     if (gFoamParams.z > 0.0)
     {
         float2 m1 = input.texcoord * 1.3 + float2(gTime * 0.004, gTime * 0.003);
         float2 m2 = input.texcoord * 2.1 + float2(-gTime * 0.003, gTime * 0.005);
         float n = gTexture.Sample(gSampler, m1).x * 0.6 + gTexture.Sample(gSampler, m2).y * 0.4;
-        roughMask = lerp(0.12, 1.0, smoothstep(0.42, 0.62, n));
-        N = normalize(lerp(geoNormal, N, roughMask));
+        w.roughMask = lerp(0.12, 1.0, smoothstep(0.42, 0.62, n));
+        w.N = normalize(lerp(w.geoNormal, w.N, w.roughMask));
     }
+    return w;
+}
 
-    // =========================
-    // フレネル効果
-    // =========================
-    float NdotV = saturate(dot(N, V));
-    // Schlick 近似: F = F0 + (1 - F0) * (1 - cosTheta)^5
-    // （ここでは指数 5 の代わりに gFresnelPower を使い、見た目で調整できるようにしている）
-    float F0 = 0.02; // 水の屈折率から算出される反射率
-    float fresnel = F0 + (1.0 - F0) * pow(1.0 - NdotV, gFresnelPower);
+// -----------------------------------------------------------------------------
+// 光の共通情報
+// -----------------------------------------------------------------------------
+
+/// @brief 各成分が共通で使う光・影・フレネルを求める
+/// @param input VS からの補間値
+/// @param px 画素の共通情報
+/// @param N 最終の法線
+/// @return 光の情報
+WaterLighting EvaluateLighting(VertexShaderOutput input, WaterPixel px, float3 N)
+{
+    WaterLighting lit;
+    lit.L = normalize(-gDirectionalLight.direction);
+    lit.lightColor = gDirectionalLight.color.rgb * gDirectionalLight.intensity;
+    lit.NdotL = saturate(dot(N, lit.L));
+
+    // ハーフランバート（さらに 2 乗して暗部を締める）
+    lit.diffuse = saturate(lit.NdotL * 0.5 + 0.5);
+    lit.diffuse *= lit.diffuse;
+
+    // Schlick 近似: F = F0 + (1 - F0) * (1 - cosTheta)^n
+    // （指数 5 の代わりに gFresnelPower を使い、見た目で調整できるようにしている）
+    lit.NdotV = saturate(dot(N, px.V));
+    lit.fresnel = kWaterF0 + (1.0 - kWaterF0) * pow(1.0 - lit.NdotV, gFresnelPower);
+
+    // 影の中の水面は「直射日光が届かない」だけで、空の映り込み（環境マップ）はそのまま残る。
+    //   shadowTint : 日光で照らされる成分（水の色・泡）を Object3d と同じ色・濃さで暗くする
+    //   sunVisible : 太陽のギラつきと波頭を透ける光（SSS）。影の中ではほぼ消える
+    float shadowAmt = 1.0 - SampleWaterShadow(input.worldPosition, N);
+    lit.shadowTint = lerp(float3(1.0, 1.0, 1.0), gShadowParams.color.rgb, shadowAmt * gShadowParams.color.a);
+    lit.sunVisible = 1.0 - shadowAmt * saturate(gShadowParams.color.a * kWaterSunBlock);
+    return lit;
+}
+
+// -----------------------------------------------------------------------------
+// 2. 水中から出てくる光
+// -----------------------------------------------------------------------------
+
+/// @brief 水の色・屈折・コースティクス・墨・SSS を求める
+/// @param input VS からの補間値
+/// @param px 画素の共通情報
+/// @param w 波の計算結果
+/// @param lit 光の情報
+/// @return 水中から出てくる光
+WaterBody EvaluateWaterBody(VertexShaderOutput input, WaterPixel px, WaveSurface w, WaterLighting lit)
+{
+    WaterBody body;
+    body.crestT = 0.0;
+    body.inkT = 0.0;
+    body.scatter = float3(0, 0, 0);
+
+    float3 N = w.N;
+    float3 V = px.V;
+    float depthDiff = px.depthDiff;
 
     // =========================
     // 水の色（深度ベース）
     // =========================
     // 視線と法線の角度（1 - NdotV）を深さの指標として使い、
     // 正面が浅瀬色、掠める角度が深海色にブレンド
-    float4 waterColor = lerp(gWaterShallowColor, gWaterDeepColor, 1.0 - NdotV);
+    float4 waterColor = lerp(gWaterShallowColor, gWaterDeepColor, 1.0 - lit.NdotV);
     waterColor *= gMaterial.color; // マテリアル色を乗算
 
     // 透明度（gOceanParams2.x, m）：水面の奥にある物体が近いほど浅瀬色に寄せ、透かす。
@@ -501,15 +680,14 @@ PixelShaderOutput main(VertexShaderOutput input)
     // NdotV がほぼ 1 で固定され、うねりが色にまったく出ない（一枚のベタ塗りになる）。
     // 真上視点のシーン（タイトル）では頂点の変位で谷を深海色へ、山を明るく振る。
     float crestTint = gFoamParams.z;
-    float crestT = 0.0;
     if (crestTint > 0.0)
     {
         float amplitude = max(gWaveHeight + gWaveHeight2 + gWaveHeight * 0.25
                               + DetailAmplitudeSum(gWaveFreq, gWaveHeight, gOceanParams.x), 0.001);
-        crestT = smoothstep(0.0, 1.0, saturate(input.waveHeight / amplitude * 0.5 + 0.5)); // 0: 谷, 1: 山
+        body.crestT = smoothstep(0.0, 1.0, saturate(input.waveHeight / amplitude * 0.5 + 0.5)); // 0: 谷, 1: 山
         float3 troughColor = lerp(waterColor.rgb, gWaterDeepColor.rgb, crestTint * 0.85);
         float3 crestColor  = waterColor.rgb * (1.0 + crestTint * 0.35);
-        waterColor.rgb = lerp(troughColor, crestColor, crestT);
+        waterColor.rgb = lerp(troughColor, crestColor, body.crestT);
 
         // 浅瀬（真上視点のシーンだけ）：水底が近いほど明るく・透き通らせる。
         // depthDiff は「水面 → その画素の奥にある不透明物」までの距離（真上視点ならほぼ水深）。
@@ -522,82 +700,18 @@ PixelShaderOutput main(VertexShaderOutput input)
     }
 
     // =========================
-    // 環境マップ反射
-    // =========================
-    float3 reflectedDir = reflect(-V, N);
-    // 波の裏側で反射ベクトルが下を向くと、スカイボックスの地面側（暗い色）を拾って黒い斑点になる。
-    // 実際には別の波面に当たって空を映すので、水平より上に折り返しておく。
-    reflectedDir.y = max(reflectedDir.y, 0.02);
-    reflectedDir = normalize(reflectedDir);
-    float4 envColor = gEnvironmentTexture.Sample(gSampler, reflectedDir);
-
-    // =========================
-    // ライティング（簡易）
-    // =========================
-    float3 L = normalize(-gDirectionalLight.direction);
-    float NdotL = saturate(dot(N, L));
-
-    // ハーフランバート（さらに 2 乗して暗部を締める）
-    float diffuse = saturate(NdotL * 0.5 + 0.5);
-    diffuse *= diffuse;
-
-    float3 lightColor = gDirectionalLight.color.rgb * gDirectionalLight.intensity;
-
-    // =========================
-    // 平行光源の影
-    // =========================
-    // 影の中の水面は「直射日光が届かない」だけで、空の映り込み（環境マップ）はそのまま残る。
-    //   shadowTint : 日光で照らされる成分（水の色・泡）を Object3d と同じ色・濃さで暗くする
-    //   sunVisible : 太陽のギラつきと波頭を透ける光（SSS）。影の中ではほぼ消える
-    float shadowLit  = SampleWaterShadow(input.worldPosition, N);
-    float shadowAmt  = 1.0 - shadowLit;
-    float3 shadowTint = lerp(float3(1.0, 1.0, 1.0), gShadowParams.color.rgb, shadowAmt * gShadowParams.color.a);
-    float sunVisible = 1.0 - shadowAmt * saturate(gShadowParams.color.a * kWaterSunBlock);
-
-    // スペキュラ（GGX）
-    // Specular Power（Blinn-Phong の指数）を GGX の粗さへ換算して互換を保つ: alpha = √(2/(n+2))
-    // 遠景では 1 ピクセルに多数の波面が入るので粗さを上げる → 水平線に向かって太陽の光の道が伸びる
-    float alpha = sqrt(2.0 / (max(gSpecularPower, 1.0) + 2.0));
-    alpha = lerp(alpha, max(alpha, 0.22), distT);
-    alpha = clamp(alpha, 0.02, 1.0);
-    float specular = min(SpecularGGX(N, V, L, alpha, F0), 16.0) * sunVisible;
-
-    // =========================
-    // サブサーフェススキャタリング（波頭を透ける光）
-    // =========================
-    // 太陽の方を向いて波を見ると、薄くなった波頭を光が通り抜けて明るい青緑に光る。
-    //   crest   : 波の高い所ほど薄く透けやすい
-    //   facing  : 視線が太陽の方向（水平成分）を向いているほど強い
-    //   grazing : 波面を斜めから見ているほど強い（真上視点でもわずかに残す）
-    float sss = 0.0;
-    if (gSssColor.a > 0.0)
-    {
-        float ampAll = max(gWaveHeight * 1.25 + gWaveHeight2
-                           + DetailAmplitudeSum(gWaveFreq, gWaveHeight, gOceanParams.x), 0.001);
-        float crest = saturate(input.waveHeight / ampAll * 0.5 + 0.5);
-        float2 vh = -V.xz;
-        float2 lh = L.xz;
-        float facing = (dot(vh, vh) > 1e-6 && dot(lh, lh) > 1e-6)
-            ? saturate(dot(normalize(vh), normalize(lh))) : 0.0;
-        float sunLow = saturate(1.0 - L.y * 0.7); // 太陽が低いほど横から抜ける
-        float grazing = lerp(0.3, 1.0, 1.0 - NdotV);
-        sss = gSssColor.a * crest * crest * (0.2 + 1.6 * pow(facing, 4.0) * sunLow) * grazing;
-        sss *= sunVisible; // 影の中では波頭を抜けてくる日光が無い
-    }
-
-    // =========================
-    // 最終合成
+    // 拡散（波紋の陰影込み）
     // =========================
     // 波紋の陰影：法線の水平成分がライトの水平方向を向いている斜面ほど明るい。
     // 真上からの光では N・L の変化は傾きの 2 乗でしか効かないため、1 次の項として別に足す。
-    float2 sunHorizontal = L.xz;
+    float3 interactiveNormal = normalize(float3(w.rippleSlope.x, 1.0f, w.rippleSlope.y));
+    float2 sunHorizontal = lit.L.xz;
     float  sunHorizontalLen = length(sunHorizontal);
     float2 sunDirXZ = (sunHorizontalLen > 1e-4) ? sunHorizontal / sunHorizontalLen : float2(0, 0);
     float  rippleShade = clamp(1.0 + dot(interactiveNormal.xz, sunDirXZ) * kRippleSunShade,
                                kRippleShadeMin, kRippleShadeMax);
 
-    // 水面色（ディフューズ）+ 環境マップ反射 + SSS + スペキュラ
-    float3 finalColor = waterColor.rgb * lightColor * diffuse * rippleShade * shadowTint;
+    float3 color = waterColor.rgb * lit.lightColor * lit.diffuse * rippleShade * lit.shadowTint;
 
     // =========================
     // 屈折（スクリーンテクスチャ方式）
@@ -611,23 +725,23 @@ PixelShaderOutput main(VertexShaderOutput input)
     {
         float2 refrOffset = N.xz * gRefractParams.y;
         refrOffset *= saturate(depthDiff);                    // 交差部はずらさない（物体の縁がちぎれないように）
-        refrOffset /= max(1.0, pixelDepth * 0.05);            // 遠くほど画面上のずれを小さく
-        float2 refrUV = saturate(screenUV + refrOffset);
+        refrOffset /= max(1.0, px.pixelDepth * 0.05);         // 遠くほど画面上のずれを小さく
+        float2 refrUV = saturate(px.screenUV + refrOffset);
 
         // ずらした先が水面より手前の物体なら、それを水中に映り込ませないよう元の位置へ戻す
         float refrDepth = LinearizeDepth(gDepthTexture.SampleLevel(gSamplerClamp, refrUV, 0).r,
                                          gCameraNearFar.x, gCameraNearFar.y);
-        if (refrDepth < pixelDepth) {
-            refrUV = screenUV;
-            refrDepth = sceneDepth;
+        if (refrDepth < px.pixelDepth) {
+            refrUV = px.screenUV;
+            refrDepth = px.sceneDepth;
         }
-        float thickness = max(refrDepth - pixelDepth, 0.0);
+        float thickness = max(refrDepth - px.pixelDepth, 0.0);
         float3 sceneCol = gSceneColor.SampleLevel(gSamplerClamp, refrUV, 0).rgb;
 
         // 水底のコースティクス：水面を高さ場 h とみると、深さ d の水底に届く光の密度は
         //   1 / (1 + (1 - 1/η) * d * ∇²h)
         // 山（∇²h < 0）の下で集まって明るく、谷（∇²h > 0）の下で散って暗くなる。
-        float causticJ = 1.0 + kCausticFocus * thickness * rippleLaplacian;
+        float causticJ = 1.0 + kCausticFocus * thickness * w.rippleLaplacian;
         float caustic  = clamp(1.0 / max(causticJ, 1e-3), kCausticMin, kCausticMax);
         sceneCol *= caustic;
 
@@ -642,22 +756,20 @@ PixelShaderOutput main(VertexShaderOutput input)
                     / max(max(gWaterShallowColor.r, gWaterShallowColor.g), max(gWaterShallowColor.b, 1e-3));
         float3 transmit = pow(max(tint, 1e-3), min(d, 16.0));
 
-        finalColor = sceneCol * transmit * T + finalColor * (1.0 - T);
+        color = sceneCol * transmit * T + color * (1.0 - T);
     }
 
     // =========================
     // 墨（波紋テクスチャの A チャンネル）
     // =========================
     // 水面に落ちた墨は表面に浮いて広がるので、水の色（拡散・屈折で透けた水中）だけを変え、
-    // このあと足す空の映り込み・スペキュラは残す（墨の膜も光を照り返す）。
+    // 反射（空の映り込み・スペキュラ）は残す（墨の膜も光を照り返す）。
     //
-    // 以前は「濃さ × 低周波ノイズ」を 1 段のしきい値で紫色に塗っていたため、なめらかな紫の影に見えて
-    // 墨に見えなかった。墨流しのように
+    // 墨流しのように
     //   - 芯 : 濃い所。青みのある黒（墨色）でほぼ塗りつぶす
     //   - 筋 : 薄く滲んだ所。水の色を暗くするだけ（灰色の濃淡）。ドメインワープで渦を巻いた筋にする
     // の 2 段に分ける。ノイズは法線マップの成分を借用し（泡の lace と同じ）、ゆっくり流して渦を動かす。
-    float inkT = 0.0;
-    if (inkAmount > 0.001 && gInkColor.a > 0.0)
+    if (w.inkAmount > 0.001 && gInkColor.a > 0.0)
     {
         float2 ip = input.worldPosition.xz;
         // ドメインワープ：座標を低周波ノイズでずらしてから細かいノイズを引くと、筋が渦を巻いて流れる
@@ -669,9 +781,9 @@ PixelShaderOutput main(VertexShaderOutput input)
         float marble = saturate(((m1 * 0.6 + m2 * 0.4) - 0.5) * 3.0 + 0.5); // 0〜1 に引き伸ばす
 
         // 筋（墨流しの縞）：濃さの等高線をノイズでゆがめた細い帯。薄い所ほど縞が目立つ
-        float bands = 1.0 - abs(frac(inkAmount * 2.5 + marble * 1.3) * 2.0 - 1.0); // 0〜1 の三角波
+        float bands = 1.0 - abs(frac(w.inkAmount * 2.5 + marble * 1.3) * 2.0 - 1.0); // 0〜1 の三角波
 
-        float d = inkAmount * lerp(0.35, 1.65, marble);
+        float d = w.inkAmount * lerp(0.35, 1.65, marble);
         float coreT = smoothstep(0.45, 0.95, d);                                  // 芯
         float wispT = smoothstep(0.03, 0.4, d) * lerp(0.35, 1.0, bands);         // 滲んだ筋
         float strength = saturate(gInkColor.a);
@@ -679,30 +791,107 @@ PixelShaderOutput main(VertexShaderOutput input)
         wispT *= strength;
 
         // 筋：水の色を暗く沈める（色を置き換えないので、灰色がかった滲みになる）
-        finalColor *= lerp(1.0, 0.4, wispT);
+        color *= lerp(1.0, 0.4, wispT);
         // 芯：墨色（光は受ける。日陰では暗く）
-        float3 inkLit = gInkColor.rgb * lightColor * lerp(0.6, 1.0, diffuse) * shadowTint;
-        finalColor = lerp(finalColor, inkLit, coreT);
-        inkT = max(coreT, wispT * 0.6);
-
-        // 墨の上では泡を薄くする（白い泡が墨を突き抜けて見えないように）
-        wakeFoam  *= 1.0 - inkT * 0.8;
-        crestFoam *= 1.0 - inkT * 0.5;
+        float3 inkLit = gInkColor.rgb * lit.lightColor * lerp(0.6, 1.0, lit.diffuse) * lit.shadowTint;
+        color = lerp(color, inkLit, coreT);
+        body.inkT = max(coreT, wispT * 0.6);
     }
 
-    finalColor = lerp(finalColor, envColor.rgb, fresnel * gMaterial.environmentCoefficient);
-    finalColor += gSssColor.rgb * lightColor * sss * (1.0 - fresnel);
-    finalColor += lightColor * specular;
+    // =========================
+    // サブサーフェススキャタリング（波頭を透ける光）
+    // =========================
+    // 太陽の方を向いて波を見ると、薄くなった波頭を光が通り抜けて明るい青緑に光る。
+    //   crest   : 波の高い所ほど薄く透けやすい
+    //   facing  : 視線が太陽の方向（水平成分）を向いているほど強い
+    //   grazing : 波面を斜めから見ているほど強い（真上視点でもわずかに残す）
+    if (gSssColor.a > 0.0)
+    {
+        float ampAll = max(gWaveHeight * 1.25 + gWaveHeight2
+                           + DetailAmplitudeSum(gWaveFreq, gWaveHeight, gOceanParams.x), 0.001);
+        float crest = saturate(input.waveHeight / ampAll * 0.5 + 0.5);
+        float2 vh = -V.xz;
+        float2 lh = lit.L.xz;
+        float facing = (dot(vh, vh) > 1e-6 && dot(lh, lh) > 1e-6)
+            ? saturate(dot(normalize(vh), normalize(lh))) : 0.0;
+        float sunLow = saturate(1.0 - lit.L.y * 0.7); // 太陽が低いほど横から抜ける
+        float grazing = lerp(0.3, 1.0, 1.0 - lit.NdotV);
+        float sss = gSssColor.a * crest * crest * (0.2 + 1.6 * pow(facing, 4.0) * sunLow) * grazing;
+        sss *= lit.sunVisible; // 影の中では波頭を抜けてくる日光が無い
+        body.scatter = gSssColor.rgb * lit.lightColor * sss;
+    }
+
+    body.color = color;
+    // 屈折ありのときは自前で水中を合成済みなので不透明。物体との交差部だけ α でぼかしてクリッピングの線を消す
+    body.alpha = refractionOn ? saturate(depthDiff / max(gRefractParams.z, 0.001)) : waterColor.a;
+    return body;
+}
+
+// -----------------------------------------------------------------------------
+// 3. 反射
+// -----------------------------------------------------------------------------
+
+/// @brief 空の映り込みと太陽のギラつきを求める
+/// @param px 画素の共通情報
+/// @param w 波の計算結果
+/// @param lit 光の情報
+/// @return 水面で跳ね返る光
+WaterReflection EvaluateReflection(WaterPixel px, WaveSurface w, WaterLighting lit)
+{
+    WaterReflection r;
+
+    // 環境マップ反射
+    float3 reflectedDir = reflect(-px.V, w.N);
+    // 波の裏側で反射ベクトルが下を向くと、スカイボックスの地面側（暗い色）を拾って黒い斑点になる。
+    // 実際には別の波面に当たって空を映すので、水平より上に折り返しておく。
+    reflectedDir.y = max(reflectedDir.y, 0.02);
+    reflectedDir = normalize(reflectedDir);
+    r.env = gEnvironmentTexture.Sample(gSampler, reflectedDir).rgb;
+    r.weight = lit.fresnel * gMaterial.environmentCoefficient;
+
+    // スペキュラ（GGX）
+    // Specular Power（Blinn-Phong の指数）を GGX の粗さへ換算して互換を保つ: alpha = √(2/(n+2))
+    // 遠景では 1 ピクセルに多数の波面が入るので粗さを上げる → 水平線に向かって太陽の光の道が伸びる
+    float alpha = sqrt(2.0 / (max(gSpecularPower, 1.0) + 2.0));
+    alpha = lerp(alpha, max(alpha, 0.22), px.distT);
+    alpha = clamp(alpha, 0.02, 1.0);
+    float specular = min(SpecularGGX(w.N, px.V, lit.L, alpha, kWaterF0), 16.0) * lit.sunVisible;
+    r.specular = lit.lightColor * specular;
+    return r;
+}
+
+// -----------------------------------------------------------------------------
+// 4. 泡
+// -----------------------------------------------------------------------------
+
+/// @brief 白波・引き波・波頭・波打ち際の泡を 1 枚の層にまとめる
+/// @param input VS からの補間値
+/// @param px 画素の共通情報
+/// @param shore 跳ね返り波の情報
+/// @param w 波の計算結果
+/// @param lit 光の情報
+/// @param body 水中光の計算結果（山の位置・墨の覆い具合を使う）
+/// @return 泡の層
+FoamLayer EvaluateFoam(VertexShaderOutput input, WaterPixel px, ShoreWave shore,
+                       WaveSurface w, WaterLighting lit, WaterBody body)
+{
+    FoamLayer f;
+    f.color = float3(0, 0, 0);
+    f.transmit = 1.0;
+    f.alphaMask = 0.0;
+
+    // 墨の上では泡を薄くする（白い泡が墨を突き抜けて見えないように）
+    float wakeFoam  = w.wakeFoam  * (1.0 - body.inkT * 0.8);
+    float crestFoam = w.crestFoam * (1.0 - body.inkT * 0.5);
 
     // =========================
     // 白波（波の山が押しつぶされて砕ける所）
     // =========================
     // Gerstner 波は山で頂点が寄り集まる。水平変位のヤコビアン J が 1 より小さい所ほど
     // 水面が圧縮されている（0 で折り返す＝砕ける）ので、そこに泡を乗せる。
-    float whitecap = 0.0;
     if (gOceanParams.z > 0.0)
     {
-        float3 jm = input.mainJacobian + detailSurf.jacobian;
+        float3 jm = input.mainJacobian + w.detailJacobian;
         float J = (1.0 + jm.x) * (1.0 + jm.y) - jm.z * jm.z;
         float threshold = lerp(0.55, 0.95, saturate(gOceanParams2.w)); // 白波の量
         float foldFoam = saturate((threshold - J) / 0.25);
@@ -713,17 +902,18 @@ PixelShaderOutput main(VertexShaderOutput input)
                    + gTexture.Sample(gSampler, wp * 0.53 + float2(-gTime * 0.03, gTime * 0.021)).g * 0.4;
         foldFoam *= smoothstep(0.35, 0.65, lace + foldFoam * 0.3);
 
-        whitecap = saturate(foldFoam * gOceanParams.z) * lerp(1.0, 0.6, distT);
-        float3 capLit = gFoamColor.rgb * min(lightColor * lerp(0.7, 0.95, NdotL), 0.95) * shadowTint;
-        finalColor = lerp(finalColor, capLit, whitecap);
+        float whitecap = saturate(foldFoam * gOceanParams.z) * lerp(1.0, 0.6, px.distT);
+        float3 capLit = gFoamColor.rgb * min(lit.lightColor * lerp(0.7, 0.95, lit.NdotL), 0.95) * lit.shadowTint;
+        FoamOver(f, capLit, whitecap);
+        f.alphaMask = max(f.alphaMask, whitecap);
     }
 
-    // 山のいちばん高いところだけ薄く白を乗せる（白波）。crestTint が 0 なら何もしない
-    if (crestTint > 0.0)
+    // 山のいちばん高いところだけ薄く白を乗せる（真上視点の白波）。crestTint が 0 なら何もしない
+    if (gFoamParams.z > 0.0)
     {
         // 白波も凪の所では立てない（ムラのマスクで疎密を付ける）
-        float whitecap = pow(crestT, 8.0) * crestTint * 0.35 * roughMask;
-        finalColor = lerp(finalColor, gFoamColor.rgb * shadowTint, whitecap);
+        float crestCap = pow(body.crestT, 8.0) * gFoamParams.z * 0.35 * w.roughMask;
+        FoamOver(f, gFoamColor.rgb * lit.shadowTint, crestCap);
     }
 
     // =========================
@@ -735,8 +925,6 @@ PixelShaderOutput main(VertexShaderOutput input)
     //   波頭（b）  … 船首の砕け波と V の腕。細い白い線。スクリプトが毎フレーム置き直し、すぐ消える
     // 白はライトの強さで白飛び（＋ブルーム）しないよう明るさに上限を設ける。
     // 0.39m / テクセルのボケを隠すためにノイズで崩すが、細かすぎるとザラついた砂嵐に見えるので低周波だけ使う。
-    float foamMask = 0.0;
-    float milkyT = 0.0;
     if (wakeFoam > 0.001 || crestFoam > 0.001)
     {
         float2 fp = input.worldPosition.xz;
@@ -746,11 +934,11 @@ PixelShaderOutput main(VertexShaderOutput input)
         float lace = saturate(((n1 * 0.6 + n2 * 0.4) - 0.5) * 2.0 + 0.5);
 
         // 泡の白（日向で少し明るく。白飛びしないよう上限 0.9）
-        float3 foamLit = gFoamColor.rgb * min(lightColor * lerp(0.75, 0.92, NdotL), 0.9) * shadowTint;
+        float3 foamLit = gFoamColor.rgb * min(lit.lightColor * lerp(0.75, 0.92, lit.NdotL), 0.9) * lit.shadowTint;
 
         // ---- 引き波：白濁 ＋ まばらな白い筋 ----
-        milkyT = smoothstep(0.03, 1.2, wakeFoam);
-        finalColor = lerp(finalColor, lerp(finalColor, foamLit, 0.35), milkyT);
+        float milkyT = smoothstep(0.03, 1.2, wakeFoam);
+        FoamOver(f, foamLit, milkyT * 0.35);
 
         float thr = 1.0 - saturate(wakeFoam * 0.8);
         float streak = smoothstep(thr - 0.12, thr + 0.12, lace) * smoothstep(0.08, 0.35, wakeFoam);
@@ -759,43 +947,60 @@ PixelShaderOutput main(VertexShaderOutput input)
         // ---- 波頭：細い白線（ノイズで少しだけ途切れさせる）----
         float crestMask = smoothstep(0.25, 0.8, crestFoam * lerp(0.7, 1.3, lace)) * 0.9;
 
-        foamMask = max(trailMask, crestMask);
-        finalColor = lerp(finalColor, foamLit, foamMask);
+        float foamMask = max(trailMask, crestMask);
+        FoamOver(f, foamLit, foamMask);
+        f.alphaMask = max(f.alphaMask, max(foamMask, milkyT * 0.4));
     }
 
     // =========================
-    // 波打ち際（フォーム）の計算
+    // 波打ち際（岸の白線と跳ね返り波の泡）
     // =========================
+    float returnWave = sin(shore.phase) * 0.5f + 0.5f; // 0〜1
 
-
-    // =========================
-    // 跳ね返り波（逆向きに広がる波紋）の計算
-    // =========================
-    // depthDiff（水深）を使って等深線に沿った波紋を作る。
-    // gTime を足すことで、浅いところ（0）から深いところ（> 0）へ向かって波紋が動く（跳ね返るように見える）。
-    float returnWave = sin(returnWavePhase) * 0.5f + 0.5f; // 0〜1
-
-    // ノイズを使って泡の形を不規則にする
-    // 少しゆっくり動くノイズ UV
+    // ノイズを使って泡の形を不規則にする（gTexture の r チャンネルを借用、少しゆっくり動かす）
     float2 noiseUV = input.worldPosition.xz * 0.15f + float2(gTime * 0.05f, -gTime * 0.05f);
-    // gTexture の r チャンネルをノイズとして借用
     float foamNoise = gTexture.Sample(gSampler, noiseUV).r;
 
     // 波打ち際全体の泡強度を合成（基本強度 × 跳ね返り波 × ノイズ）
-    // さらに、岸スレスレ（foamFade が 0 に近い部分）は常に白く残るようにする
-    float dynamicFoam = foamBaseIntensity * returnWave * (foamNoise * 2.0f);
-    float staticFoam = pow(1.0f - foamFade, 4.0f); // 岸の根本の強い白線
-    float foamIntensity = saturate(dynamicFoam + staticFoam);
+    // さらに、岸スレスレ（fade が 0 に近い部分）は常に白く残るようにする
+    float dynamicFoam = shore.intensity * returnWave * (foamNoise * 2.0f);
+    float staticFoam = pow(1.0f - shore.fade, 4.0f); // 岸の根本の強い白線
+    float shoreFoam = saturate(dynamicFoam + staticFoam);
 
-    // フォームの色を最終カラーへ線形補間で重ねる（強さは gFoamColor.a）
-    float3 foamColor = gFoamColor.rgb * gFoamParams.y * shadowTint; // スケール適用（影の中は暗く）
-    finalColor = lerp(finalColor, foamColor, foamIntensity * gFoamColor.a);
+    float3 shoreColor = gFoamColor.rgb * gFoamParams.y * lit.shadowTint; // スケール適用（影の中は暗く）
+    FoamOver(f, shoreColor, shoreFoam * gFoamColor.a);
+    return f;
+}
 
-    // 泡は不透明（浅瀬で透けている所でも白く乗る）
-    // 屈折ありのときは自前で水中を合成済みなので不透明。物体との交差部だけ α でぼかしてクリッピングの線を消す
-    float baseAlpha = refractionOn ? saturate(depthDiff / max(gRefractParams.z, 0.001)) : waterColor.a;
-    // 墨も水面に浮いた不透明な膜なので、濃い所は透かさない
-    output.color = float4(finalColor, lerp(baseAlpha, 1.0, max(max(max(foamMask, milkyT * 0.4), whitecap), inkT * 0.85)));
+// =============================================================================
+// エントリポイント
+// =============================================================================
 
+/// @brief エントリポイント。水面の各成分を個別に求め、足し合わせて最終色と不透明度を出す
+/// @param input VS からの補間値
+/// @return 出力色
+PixelShaderOutput main(VertexShaderOutput input)
+{
+    WaterPixel px = GetWaterPixel(input);
+    ShoreWave shore = GetShoreWave(px.depthDiff);
+
+    // 1. 波（形）
+    WaveSurface wave = EvaluateWaveSurface(input, px, shore);
+    WaterLighting lit = EvaluateLighting(input, px, wave.N);
+
+    // 2〜4. 各成分（互いの色には手を入れない）
+    WaterBody       body = EvaluateWaterBody(input, px, wave, lit);
+    WaterReflection refl = EvaluateReflection(px, wave, lit);
+    FoamLayer       foam = EvaluateFoam(input, px, shore, wave, lit, body);
+
+    // 合成（加算）
+    float3 bodyTerm    = (body.color * (1.0 - refl.weight) + body.scatter * (1.0 - lit.fresnel)) * foam.transmit;
+    float3 reflectTerm = (refl.env * refl.weight + refl.specular) * foam.transmit;
+    float3 foamTerm    = foam.color;
+    float3 finalColor  = bodyTerm + reflectTerm + foamTerm;
+
+    // 泡・墨は水面に浮いた不透明な膜なので、濃い所は透かさない（波打ち際の泡は従来どおり α に含めない）
+    PixelShaderOutput output;
+    output.color = float4(finalColor, lerp(body.alpha, 1.0, max(foam.alphaMask, body.inkT * 0.85)));
     return output;
 }
