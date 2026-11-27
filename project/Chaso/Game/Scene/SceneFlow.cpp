@@ -182,7 +182,8 @@ std::string SceneFlow::Describe(const std::string &fromScene, const std::string 
 const std::vector<std::string> &SceneFlow::TransitionNames() {
   static const std::vector<std::string> names = {SceneTransitions::kDissolve,
                                                  SceneTransitions::kDive,
-                                                 SceneTransitions::kAscend};
+                                                 SceneTransitions::kAscend,
+                                                 SceneTransitions::kCut};
   return names;
 }
 

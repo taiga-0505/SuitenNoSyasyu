@@ -66,6 +66,7 @@ const char *TransitionLogName(SceneTransition transition) {
   switch (transition) {
   case SceneTransition::Dive: return "dive";
   case SceneTransition::Ascend: return "ascend";
+  case SceneTransition::Cut: return "cut";
   case SceneTransition::Dissolve: return "dissolve";
   default: return "none";
   }
@@ -229,6 +230,16 @@ void NormalState::Update(Scene::SceneManager &sm, SceneContext &ctx) {
   // 常にシーンの Update は呼ぶ（カメラ更新等を止めない）
   if (sm.current_) {
     sm.current_->Update(sm, ctx);
+  }
+
+  if (!sm.requested_.empty() && sm.transition_ == SceneTransition::Cut) {
+    // 演出なし：幕を挟まずこの場で切り替え、新しいシーンを 1 回だけ更新して配置を決める
+    // （次の Render で新しいシーンが描かれるので、旧シーンの最後の絵からそのままつながる）
+    Log::Print("[SceneState] NormalState: cut -> " + sm.requested_);
+    sm.ChangeImmediately(sm.requested_, ctx);
+    sm.transition_ = SceneTransition::None;
+    if (sm.current_) sm.current_->Update(sm, ctx);
+    return;
   }
 
   if (!sm.requested_.empty()) {

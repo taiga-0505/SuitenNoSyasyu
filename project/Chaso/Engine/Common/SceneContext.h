@@ -38,6 +38,8 @@ enum class SceneTransition {
             ///< すぐにシーンを動かす（Game 側の「深海から浮上」がそのまま続く）
   Ascend,   ///< 空へ抜ける遷移。白へ短く抜け、切り替え後は演出を挟まずすぐにシーンを動かす
             ///< （ステージクリア：ClearAscendScript が白く飛ばしてから要求し、Result は白から開ける）
+  Cut,      ///< 演出なしで即座に切り替える。前後のシーンが同じ絵から始まるとき（カメラ位置を揃えた
+            ///< 別シーンへ移るなど）に、幕を挟まず継ぎ目なくつなぐ
 };
 
 /// @brief スクリプトから文字列で遷移演出を指定するときの名前
@@ -48,6 +50,7 @@ namespace SceneTransitions {
 inline constexpr const char *kDissolve = "dissolve"; ///< SceneTransition::Dissolve
 inline constexpr const char *kDive = "dive";         ///< SceneTransition::Dive
 inline constexpr const char *kAscend = "ascend";     ///< SceneTransition::Ascend
+inline constexpr const char *kCut = "cut";           ///< SceneTransition::Cut
 } // namespace SceneTransitions
 
 /// @brief 遷移演出の名前を SceneTransition へ変換する
@@ -56,6 +59,7 @@ inline constexpr const char *kAscend = "ascend";     ///< SceneTransition::Ascen
 inline SceneTransition ParseSceneTransition(const std::string &name) {
   if (name == SceneTransitions::kDive) return SceneTransition::Dive;
   if (name == SceneTransitions::kAscend) return SceneTransition::Ascend;
+  if (name == SceneTransitions::kCut) return SceneTransition::Cut;
   return SceneTransition::Dissolve;
 }
 

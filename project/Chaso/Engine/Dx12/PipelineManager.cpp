@@ -1236,6 +1236,22 @@ void PipelineManager::RegisterDefaultPipelines() {
                     InputLayoutType::Object3D, opt);
   }
 
+  // ============================================================
+  // 砂の地形 (Sand) パイプライン（RenderInteractiveSand::DrawSand）
+  // 水面のルートシグネチャを流用する（b6 に SandParams、t4 に跡のハイトマップ）
+  // ============================================================
+  {
+    GPipelineOptions opt{};
+    opt.rootType = RootSignatureType::Water;
+    opt.enableDepth = true;
+    opt.enableDepthWrite = true;
+    opt.enableAlphaBlend = false;
+    opt.blendMode = kBlendModeNormal;
+    opt.cull = D3D12_CULL_MODE_NONE;
+    CreateFromFiles(MakeKey("sand", kBlendModeNormal), L"Resources/Shader/Sand/Sand.VS.hlsl",
+                    L"Resources/Shader/Sand/Sand.PS.hlsl", InputLayoutType::Object3D, opt);
+  }
+
   // ====================
   // ポストプロセス
   // ====================
@@ -1772,6 +1788,8 @@ void PipelineManager::RegisterDefaultPipelines() {
   // コンピュートパイプライン
   // ============================================================
   CreateCompute("wave_simulation", L"Resources/Shader/Water/WaveSimulation.CS.hlsl", RootSignatureType::WaveSimulationCS);
+  // 砂の跡（RenderInteractiveSand）。ルートシグネチャは波紋と同じ形（b0 / t0 / t1 / u0）
+  CreateCompute("sand_simulation", L"Resources/Shader/Sand/SandSimulation.CS.hlsl", RootSignatureType::WaveSimulationCS);
 
   // FFT オーシャン（RenderFFTOcean.cpp）。4 パスとも同じルートシグネチャで PSO だけ替える
   CreateCompute("fft_ocean_init", L"Resources/Shader/Water/FFTOceanInit.CS.hlsl", RootSignatureType::FFTOceanCS);

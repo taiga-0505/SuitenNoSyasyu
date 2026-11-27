@@ -19,6 +19,7 @@
 #include "RenderCommon.h"
 #include "RenderContext.h"
 #include "RenderInteractiveWater.h"
+#include "RenderInteractiveSand.h"
 #include "RenderFFTOcean.h"
 #include "Skybox/ProceduralSky.h"
 
@@ -44,6 +45,7 @@ namespace RC {
 void Init(SceneContext &ctx) {
   RenderContext::GetInstance().Init(ctx);
   InitInteractiveWater();
+  InitInteractiveSand();
   InitFFTOcean();
   InitProceduralSky();
 }
@@ -51,6 +53,7 @@ void Init(SceneContext &ctx) {
 void Term() {
   TermProceduralSky();
   TermFFTOcean();
+  TermInteractiveSand();
   TermInteractiveWater();
   RenderContext::GetInstance().Term();
 }
@@ -147,6 +150,7 @@ void BeginFrame() {
 
 void PreDraw3D(SceneContext &ctx, ID3D12GraphicsCommandList *cl) {
   UpdateInteractiveWater();
+  UpdateInteractiveSand();
   UpdateFFTOcean(GetWaterTime());
   RenderContext::GetInstance().PreDraw3D(ctx, cl);
 }
