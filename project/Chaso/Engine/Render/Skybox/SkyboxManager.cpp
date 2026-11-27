@@ -1,4 +1,5 @@
 #include "SkyboxManager.h"
+#include "ProceduralSky.h"
 #include "Skybox/Skybox.h"
 #include "Texture/TextureManager/TextureManager.h"
 #include "Common/Log/Log.h"
@@ -65,6 +66,35 @@ int SkyboxManager::Create(const std::string &ddsPath) {
   return handle;
 }
 
+int SkyboxManager::CreateProcedural() {
+  if (!device_) {
+    return -1;
+  }
+  InitProceduralSky(); // 初期化済みなら何もしない
+  const D3D12_GPU_DESCRIPTOR_HANDLE srv = GetProceduralSkySrv();
+  if (srv.ptr == 0) {
+    Log::Print("[Skybox] ProceduralSky が使えないためプロシージャル空の生成を中止");
+    return -1;
+  }
+
+  const int handle = AllocSlot_();
+
+  auto skybox = std::make_unique<Skybox>();
+  skybox->Initialize(device_);
+  skybox->SetTexture(srv);
+
+  skyboxes_[handle].ptr = std::move(skybox);
+  skyboxes_[handle].inUse = true;
+  skyboxes_[handle].texSrv = srv;
+  skyboxes_[handle].procedural = true;
+
+  return handle;
+}
+
+bool SkyboxManager::IsProcedural(int handle) const {
+  return IsValid(handle) && skyboxes_[handle].procedural;
+}
+
 void SkyboxManager::Unload(int handle) {
   if (!IsValid(handle)) {
     return;
@@ -73,6 +103,7 @@ void SkyboxManager::Unload(int handle) {
   skyboxes_[handle].ptr.reset();
   skyboxes_[handle].inUse = false;
   skyboxes_[handle].texSrv = {};
+  skyboxes_[handle].procedural = false;
 }
 
 bool SkyboxManager::IsValid(int handle) const {

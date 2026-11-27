@@ -1778,6 +1778,9 @@ void PipelineManager::RegisterDefaultPipelines() {
   CreateCompute("fft_ocean_spectrum", L"Resources/Shader/Water/FFTOceanSpectrum.CS.hlsl", RootSignatureType::FFTOceanCS);
   CreateCompute("fft_ocean_row", L"Resources/Shader/Water/FFTOceanRow.CS.hlsl", RootSignatureType::FFTOceanCS);
   CreateCompute("fft_ocean_column", L"Resources/Shader/Water/FFTOceanColumn.CS.hlsl", RootSignatureType::FFTOceanCS);
+
+  // プロシージャル空（ProceduralSky.cpp）。キューブマップ 6 面へ空を描く
+  CreateCompute("procedural_sky_cs", L"Resources/Shader/Skybox/ProceduralSky.CS.hlsl", RootSignatureType::ProceduralSkyCS);
 }
 
 // ============================================================================
@@ -1935,6 +1938,23 @@ void PipelineManager::CreateCompute(const std::string &key,
     }
 
     paramCount = 5;
+  } else if (rootType == RootSignatureType::ProceduralSkyCS) {
+    // ProceduralSkyCS の構成: CBV b0（空のパラメータ）, UAV u0（キューブマップ 6 面。テーブル）
+    params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    params[0].Descriptor.ShaderRegister = 0;
+
+    ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+    ranges[0].BaseShaderRegister = 0;
+    ranges[0].NumDescriptors = 1;
+    ranges[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+    params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    params[1].DescriptorTable.NumDescriptorRanges = 1;
+    params[1].DescriptorTable.pDescriptorRanges = &ranges[0];
+
+    paramCount = 2;
   }
 
   D3D12_ROOT_SIGNATURE_DESC rsDesc{};

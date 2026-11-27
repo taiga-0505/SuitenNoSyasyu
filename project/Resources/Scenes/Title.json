@@ -72,6 +72,7 @@
           "type": "SkyboxComponent",
           "data": {
             "color": [1.0, 1.0, 1.0, 1.0],
+            "procedural": true,
             "skyboxPath": "Resources/SkyBox/skybox.dds",
             "visible": true
           }

@@ -36,6 +36,7 @@ enum class RootSignatureType {
   Water,              ///< 水面シェーダー用（Object3D + WaterParams b6）
   WaveSimulationCS,   ///< 波のシミュレーション CS 用
   FFTOceanCS,         ///< FFT オーシャン CS 用（CBV b0 + UAV u0〜u3）
+  ProceduralSkyCS,    ///< プロシージャル空 CS 用（CBV b0 + UAV u0）
 };
 
 /// @brief Object3D 系ルートシグネチャのパラメータ番号

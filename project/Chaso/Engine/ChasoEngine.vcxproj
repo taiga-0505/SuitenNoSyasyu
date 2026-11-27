@@ -204,6 +204,7 @@
     <ClCompile Include="..\Engine\Render\Systems\RenderFont.cpp" />
     <ClCompile Include="..\Engine\Render\Skydome\SkydomeManager.cpp" />
     <ClCompile Include="..\Engine\Render\Skybox\SkyboxManager.cpp" />
+    <ClCompile Include="..\Engine\Render\Skybox\ProceduralSky.cpp" />
     <ClCompile Include="..\Engine\Render\Systems\RenderSkybox.cpp" />
     <ClCompile Include="..\Engine\Render\Systems\FrameResource.cpp" />
     <ClCompile Include="..\Engine\Render\Mesh\PrimitiveMeshManager.cpp" />
@@ -310,6 +311,8 @@
     <ClInclude Include="..\Engine\Render\FrameResource.h" />
     <ClInclude Include="..\Engine\Render\Skydome\SkydomeManager.h" />
     <ClInclude Include="..\Engine\Render\Skybox\SkyboxManager.h" />
+    <ClInclude Include="..\Engine\Render\Skybox\ProceduralSky.h" />
+    <ClInclude Include="..\Engine\Render\Skybox\ProceduralSkySettings.h" />
     <ClInclude Include="..\Engine\Graphics\Skybox\Skybox.h" />
     <ClInclude Include="..\Engine\Render\Mesh\PrimitiveMeshManager.h" />
     <ClInclude Include="..\Engine\Render\Sprite\SpriteManager.h" />
@@ -353,6 +356,7 @@
     <None Include="..\Resources\Shader\Particle\Particle.hlsli" />
     <None Include="..\Resources\Shader\Particle\GPUParticle.hlsli" />
     <None Include="..\Resources\Shader\Skybox\Skybox.hlsli" />
+    <None Include="..\Resources\Shader\Skybox\ProceduralSky.CS.hlsl" />
     <None Include="..\Resources\Shader\Water\Water.hlsli" />
     <None Include="..\Resources\Shader\Water\OceanWaves.hlsli" />
   </ItemGroup>

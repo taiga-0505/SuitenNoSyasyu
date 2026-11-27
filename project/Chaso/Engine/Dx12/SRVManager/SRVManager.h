@@ -72,6 +72,13 @@ public:
   /// @return 作成された UAV のハンドル
   Handle CreateTexture2DUAV(ID3D12Resource *res, DXGI_FORMAT fmt);
 
+  /// @brief 2D テクスチャ配列（キューブマップの 6 面など）用の UAV を作成する
+  /// @param res       対象リソース（D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS 必須）
+  /// @param fmt       フォーマット
+  /// @param arraySize 配列の要素数（キューブマップなら 6）
+  /// @return 作成された UAV のハンドル（ミップ 0、全スライス）
+  Handle CreateTexture2DArrayUAV(ID3D12Resource *res, DXGI_FORMAT fmt, UINT arraySize);
+
   /// @brief ストラクチャードバッファ用の SRV を作成する
   /// @param res          対象リソース
   /// @param elementCount 要素数

@@ -41,6 +41,16 @@ public:
   /// @note キューブマップとして読めない場合（ファイルが無い・2D テクスチャ等）は生成しない。
   int Create(const std::string &ddsPath);
 
+  /// @brief プロシージャル空（ProceduralSky のキューブマップ）を背景にする Skybox を生成する
+  /// @return スカイボックスハンドル（ProceduralSky が使えなければ -1）
+  /// @note キューブマップはプロセスで 1 枚を共有する。空の見た目は RC::SetProceduralSky で渡す。
+  int CreateProcedural();
+
+  /// @brief プロシージャル空のスカイボックスか
+  /// @param handle スカイボックスハンドル
+  /// @return CreateProcedural で作ったものなら true
+  bool IsProcedural(int handle) const;
+
   /// @brief 指定したハンドルに対応するスカイボックスを解放する
   /// @param handle スカイボックスハンドル
   void Unload(int handle);
@@ -87,6 +97,7 @@ private:
     std::unique_ptr<Skybox> ptr;           ///< スカイボックス実体
     bool inUse = false;                   ///< 使用中フラグ
     D3D12_GPU_DESCRIPTOR_HANDLE texSrv{}; ///< キューブマップの SRV
+    bool procedural = false;              ///< プロシージャル空か（texSrv は ProceduralSky の共有キューブマップ）
   };
 
   /// @brief 未使用スロットを検索・確保する

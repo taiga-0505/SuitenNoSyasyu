@@ -80,7 +80,14 @@ void Skybox::Draw(ID3D12GraphicsCommandList *cmdList, const Matrix4x4 &world) {
 
   auto &ctx = GetRenderContext();
   cbWvp_.dyn.Ptr()->World = world;
-  Matrix4x4 vp = Multiply(ctx.View(), ctx.Proj());
+  // View 行列の平行移動成分を落としてカメラ中心に固定する。
+  // スカイボックスは「無限遠の背景」なので、カメラがステージを進んでも
+  // 箱の外に出て背景が欠けることがないようにする（Skydome と同じ手法）。
+  Matrix4x4 view = ctx.View();
+  view.m[3][0] = 0.0f;
+  view.m[3][1] = 0.0f;
+  view.m[3][2] = 0.0f;
+  Matrix4x4 vp = Multiply(view, ctx.Proj());
   cbWvp_.dyn.Ptr()->WVP = Multiply(world, vp);
   cbWvp_.dyn.Ptr()->worldInverseTranspose = Transpose(Inverse(world));
 

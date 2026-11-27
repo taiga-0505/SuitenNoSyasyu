@@ -30,6 +30,7 @@
 #include "ECS/PrimitiveMeshComponent.h"
 #include "ECS/TextMeshComponent.h"
 #include "ECS/SkyboxComponent.h"
+#include "Skybox/ProceduralSky.h"
 #include "ECS/SkydomeComponent.h"
 #include "ECS/WaterComponent.h"
 #include "ECS/RigidbodyComponent.h"
@@ -274,6 +275,10 @@ public:
                         *sTr = tr->ToTransform();
                     }
                     RC::SetSkyBoxColor(skybox->skyboxHandle, skybox->color);
+                    // プロシージャル空なら見た目の設定を渡す（キューブマップは描画時に必要な分だけ描き直す）
+                    if (skybox->procedural && skybox->visible && skybox->IsEnabled() && e->IsVisible()) {
+                        RC::SetProceduralSky(skybox->sky);
+                    }
                 }
             }
             if (auto* dirLight = e->GetComponent<DirectionalLightComponent>()) {
@@ -1828,7 +1833,8 @@ private:
           }
       }
       if (auto* sb = e.GetComponent<SkyboxComponent>()) {
-          if (!sb->skyboxPath.empty()) sb->skyboxHandle = RC::CreateSkyBox(sb->skyboxPath);
+          if (sb->procedural) sb->skyboxHandle = RC::CreateProceduralSkyBox();
+          else if (!sb->skyboxPath.empty()) sb->skyboxHandle = RC::CreateSkyBox(sb->skyboxPath);
       }
       if (auto* sd = e.GetComponent<SkydomeComponent>()) {
           // テクスチャは texturePath を優先し、無ければ skydomePath を使う

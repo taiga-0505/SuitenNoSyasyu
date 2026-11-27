@@ -109,6 +109,22 @@ SRVManager::Handle SRVManager::CreateTexture2DUAV(ID3D12Resource *res, DXGI_FORM
   return h;
 }
 
+SRVManager::Handle SRVManager::CreateTexture2DArrayUAV(ID3D12Resource *res, DXGI_FORMAT fmt, UINT arraySize) {
+  assert(res);
+  auto h = Allocate();
+
+  D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+  uavDesc.Format = fmt;
+  uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
+  uavDesc.Texture2DArray.MipSlice = 0;
+  uavDesc.Texture2DArray.FirstArraySlice = 0;
+  uavDesc.Texture2DArray.ArraySize = arraySize;
+  uavDesc.Texture2DArray.PlaneSlice = 0;
+
+  device_->CreateUnorderedAccessView(res, nullptr, &uavDesc, h.cpu);
+  return h;
+}
+
 SRVManager::Handle SRVManager::CreateStructuredBuffer(ID3D12Resource *res,
                                                       UINT elementCount,
                                                       UINT strideBytes) {

@@ -3303,6 +3303,44 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
 
                ImGui::ColorEdit4("Color (色)##Skybox", &skybox->color.x);
 
+               // -- プロシージャル空との切り替え（切り替えたらハンドルを作り直す） --
+               if (ImGui::Checkbox("Procedural (プロシージャル空)##Skybox", &skybox->procedural)) {
+                   if (skybox->skyboxHandle >= 0) RC::UnloadSkyBox(skybox->skyboxHandle);
+                   skybox->skyboxHandle = -1;
+                   if (skybox->procedural) skybox->skyboxHandle = RC::CreateProceduralSkyBox();
+                   else if (!skybox->skyboxPath.empty()) skybox->skyboxHandle = RC::CreateSkyBox(skybox->skyboxPath);
+               }
+
+               if (skybox->procedural) {
+                   auto& sky = skybox->sky;
+                   ImGui::SeparatorText("Sky (空)");
+                   ImGui::ColorEdit3("Zenith (天頂)##PSky", &sky.zenithColor.x, ImGuiColorEditFlags_Float);
+                   ImGui::ColorEdit3("Horizon (地平線)##PSky", &sky.horizonColor.x, ImGuiColorEditFlags_Float);
+                   ImGui::ColorEdit3("Ground (地平線より下)##PSky", &sky.groundColor.x, ImGuiColorEditFlags_Float);
+                   ImGui::DragFloat("Gradient Exp (グラデーションの曲がり)##PSky", &sky.gradientExponent, 0.01f, 0.05f, 4.0f);
+                   ImGui::SliderFloat("Horizon Haze (地平線のかすみ)##PSky", &sky.horizonHaze, 0.0f, 1.0f);
+
+                   ImGui::SeparatorText("Sun (太陽)");
+                   ImGui::Checkbox("Follow Light (平行光源に合わせる)##PSky", &sky.sunFollowsLight);
+                   if (!sky.sunFollowsLight) {
+                       ImGui::DragFloat3("Sun Direction (太陽の方向)##PSky", &sky.sunDirection.x, 0.01f, -1.0f, 1.0f);
+                   }
+                   ImGui::ColorEdit3("Sun Color (太陽の色)##PSky", &sky.sunColor.x, ImGuiColorEditFlags_Float);
+                   ImGui::DragFloat("Sun Size (半径・度)##PSky", &sky.sunSizeDeg, 0.05f, 0.1f, 20.0f);
+                   ImGui::DragFloat("Sun Intensity (明るさ)##PSky", &sky.sunIntensity, 0.1f, 0.0f, 50.0f);
+                   ImGui::DragFloat("Sun Glow (まわりの光)##PSky", &sky.sunGlow, 0.01f, 0.0f, 5.0f);
+                   ImGui::DragFloat("Glow Power (光の鋭さ)##PSky", &sky.sunGlowPower, 0.1f, 1.0f, 256.0f);
+
+                   ImGui::SeparatorText("Clouds (雲)");
+                   ImGui::SliderFloat("Coverage (量)##PSky", &sky.cloudCoverage, 0.0f, 1.0f);
+                   ImGui::SliderFloat("Softness (縁のぼかし)##PSky", &sky.cloudSoftness, 0.01f, 1.0f);
+                   ImGui::DragFloat("Scale (細かさ)##PSky", &sky.cloudScale, 0.01f, 0.05f, 10.0f);
+                   ImGui::SliderFloat("Opacity (不透明度)##PSky", &sky.cloudOpacity, 0.0f, 1.0f);
+                   ImGui::ColorEdit3("Lit Color (日なた)##PSky", &sky.cloudColor.x, ImGuiColorEditFlags_Float);
+                   ImGui::ColorEdit3("Shadow Color (影)##PSky", &sky.cloudShadowColor.x, ImGuiColorEditFlags_Float);
+                   ImGui::DragFloat("Speed (流れる速さ)##PSky", &sky.cloudSpeed, 0.001f, -1.0f, 1.0f, "%.3f");
+                   ImGui::DragFloat("Direction (流れる向き・度)##PSky", &sky.cloudDirectionDeg, 1.0f, -360.0f, 360.0f);
+               } else {
                // -- キューブマップテクスチャ --
                ImGui::Text("Cubemap (キューブマップ)");
                ImGui::SameLine();
@@ -3330,6 +3368,7 @@ void EditorManager::DrawUI(D3D12_GPU_DESCRIPTOR_HANDLE viewportSrv, Dx12Core* co
                        skybox->skyboxHandle = -1;
                    }
                }
+               } // procedural でないとき
 
                ImGui::Unindent(8.0f);
             }

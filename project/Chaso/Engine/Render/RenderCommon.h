@@ -891,6 +891,11 @@ void SetSkydomeColor(int skydomeHandle, const Vector4 &color);
 /// @return スカイボックスハンドル（失敗時は -1）
 int CreateSkyBox(const std::string &ddsPath);
 
+/// @brief プロシージャル空（グラデーション・太陽・流れる雲を GPU で描く空）のスカイボックスを生成する
+/// @return スカイボックスハンドル（失敗時は -1）
+/// @note 見た目は SetProceduralSky で渡す。キューブマップは環境マップとして水面の反射にも使われる。
+int CreateProceduralSkyBox();
+
 /// @brief スカイボックスを描画する（3D パス内で使う）
 /// @param skyboxHandle スカイボックスハンドル
 void DrawSkyBox(int skyboxHandle);

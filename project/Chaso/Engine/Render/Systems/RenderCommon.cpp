@@ -20,6 +20,7 @@
 #include "RenderContext.h"
 #include "RenderInteractiveWater.h"
 #include "RenderFFTOcean.h"
+#include "Skybox/ProceduralSky.h"
 
 #include "Dx12/Dx12Core.h"
 #include "PipelineManager.h"
@@ -44,9 +45,11 @@ void Init(SceneContext &ctx) {
   RenderContext::GetInstance().Init(ctx);
   InitInteractiveWater();
   InitFFTOcean();
+  InitProceduralSky();
 }
 
 void Term() {
+  TermProceduralSky();
   TermFFTOcean();
   TermInteractiveWater();
   RenderContext::GetInstance().Term();

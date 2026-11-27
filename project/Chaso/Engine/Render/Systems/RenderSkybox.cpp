@@ -2,6 +2,7 @@
 #include "RenderContext.h"
 #include "Skybox/Skybox.h"
 #include "Skybox/SkyboxManager.h"
+#include "Skybox/ProceduralSky.h"
 
 namespace RC {
 
@@ -10,25 +11,27 @@ int CreateSkyBox(const std::string &ddsPath) {
   return ctx.SkyBoxes().Create(ddsPath);
 }
 
+int CreateProceduralSkyBox() {
+  auto &ctx = GetRenderContext();
+  return ctx.SkyBoxes().CreateProcedural();
+}
+
 void DrawSkyBox(int skyboxHandle) {
   auto &ctx = GetRenderContext();
   auto *skybox = ctx.SkyBoxes().Get(skyboxHandle);
   if (!skybox || !skybox->Visible())
     return;
 
-  // Skybox 用の WVP 行列を計算する
-  // 平行移動を 0 にした View 行列を使う（カメラが動いてもスカイボックスとの位置関係は変わらない）
-  Matrix4x4 view = ctx.View();
-  // View 行列の平行移動成分をゼロにする（回転だけ適用）
-  view.m[3][0] = 0.0f;
-  view.m[3][1] = 0.0f;
-  view.m[3][2] = 0.0f;
+  // プロシージャル空なら、必要に応じてキューブマップを描き直す（3D キューの先頭に積まれる）
+  if (ctx.SkyBoxes().IsProcedural(skyboxHandle)) {
+    UpdateProceduralSky();
+  }
 
-  Matrix4x4 proj = ctx.Proj();
+  // ワールド行列は回転・スケールのみ使う。
+  // カメラ中心への固定（View の平行移動を落とす処理）は Skybox::Draw 側で行う。
+  // translation を入れると方向ベクトルがずれて背景が歪むので無視する。
   Matrix4x4 world = MakeAffineMatrix(skybox->T().scale, skybox->T().rotation,
-                                     skybox->T().translation);
-  Matrix4x4 vp = Multiply(view, proj);
-  Matrix4x4 wvp = Multiply(world, vp);
+                                     Vector3{0.0f, 0.0f, 0.0f});
 
   // Skybox の Cubemap SRV を環境マップとして登録
   D3D12_GPU_DESCRIPTOR_HANDLE envSrv = ctx.SkyBoxes().GetTextureSrv(skyboxHandle);

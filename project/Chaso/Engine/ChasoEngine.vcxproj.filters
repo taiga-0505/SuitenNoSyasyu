@@ -474,6 +474,9 @@
     <ClCompile Include="..\Engine\Render\Skybox\SkyboxManager.cpp">
       <Filter>Render\Skybox</Filter>
     </ClCompile>
+    <ClCompile Include="..\Engine\Render\Skybox\ProceduralSky.cpp">
+      <Filter>Render\Skybox</Filter>
+    </ClCompile>
     <ClCompile Include="..\Engine\Render\Systems\RenderSkybox.cpp">
       <Filter>Render\Systems</Filter>
     </ClCompile>
@@ -794,6 +797,12 @@
     <ClInclude Include="..\Engine\Render\Skybox\SkyboxManager.h">
       <Filter>Render\Skybox</Filter>
     </ClInclude>
+    <ClInclude Include="..\Engine\Render\Skybox\ProceduralSky.h">
+      <Filter>Render\Skybox</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Engine\Render\Skybox\ProceduralSkySettings.h">
+      <Filter>Render\Skybox</Filter>
+    </ClInclude>
     <ClInclude Include="..\Engine\Graphics\Skybox\Skybox.h">
       <Filter>Graphics\Skybox</Filter>
     </ClInclude>
@@ -876,6 +885,9 @@
       <Filter>Resources\Shader\Particle</Filter>
     </None>
     <None Include="..\Resources\Shader\Skybox\Skybox.hlsli">
+      <Filter>Resources\Shader\Skybox</Filter>
+    </None>
+    <None Include="..\Resources\Shader\Skybox\ProceduralSky.CS.hlsl">
       <Filter>Resources\Shader\Skybox</Filter>
     </None>
   </ItemGroup>
